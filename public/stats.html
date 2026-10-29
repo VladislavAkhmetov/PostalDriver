@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Диспетчерская · Статистика рейсов УАЗ-452</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=PT+Mono&family=PT+Sans:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #14171c;
+      --card: #1c212a;
+      --border: #2e3746;
+      --accent: #3b82f6;
+      --accent-gold: #f59e0b;
+      --text: #e2e8f0;
+      --text-dim: #94a3b8;
+      --green: #10b981;
+      --red: #ef4444;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'PT Sans', system-ui, sans-serif;
+      min-height: 100vh;
+      padding: 24px 16px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .container {
+      width: 100%;
+      max-width: 840px;
+    }
+    header {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 24px;
+      position: relative;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+    }
+    .badge {
+      display: inline-block;
+      font-family: 'PT Mono', monospace;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      background: #1e3a5f;
+      color: #60a5fa;
+      padding: 4px 10px;
+      border-radius: 6px;
+      margin-bottom: 12px;
+    }
+    h1 {
+      font-size: 26px;
+      font-weight: 700;
+      margin-bottom: 6px;
+      letter-spacing: -0.5px;
+    }
+    .subtitle {
+      color: var(--text-dim);
+      font-size: 15px;
+    }
+    .top-actions {
+      margin-top: 18px;
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: #2563eb;
+      color: #fff;
+      font-family: 'PT Sans', sans-serif;
+      font-size: 14px;
+      font-weight: 700;
+      padding: 9px 18px;
+      border-radius: 8px;
+      text-decoration: none;
+      border: none;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn:hover { background: #1d4ed8; }
+    .btn-secondary {
+      background: #283344;
+      color: var(--text);
+    }
+    .btn-secondary:hover { background: #334155; }
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--green);
+      display: inline-block;
+      box-shadow: 0 0 10px var(--green);
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(0.85); }
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      position: relative;
+    }
+    .card-label {
+      color: var(--text-dim);
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
+    }
+    .card-val {
+      font-family: 'PT Mono', monospace;
+      font-size: 28px;
+      font-weight: 700;
+      color: #fff;
+    }
+    .card-sub {
+      color: var(--text-dim);
+      font-size: 12px;
+      margin-top: 6px;
+    }
+    .section-title {
+      font-size: 18px;
+      font-weight: 700;
+      margin: 28px 0 14px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .funnel {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 22px;
+      margin-bottom: 24px;
+    }
+    .funnel-step {
+      margin-bottom: 16px;
+    }
+    .funnel-step:last-child { margin-bottom: 0; }
+    .funnel-header {
+      display: flex;
+      justify-content: space-between;
+      font-size: 14px;
+      margin-bottom: 6px;
+    }
+    .funnel-bar-bg {
+      background: #252e3d;
+      height: 10px;
+      border-radius: 5px;
+      overflow: hidden;
+    }
+    .funnel-bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #3b82f6, #60a5fa);
+      border-radius: 5px;
+      width: 0%;
+      transition: width 0.6s ease;
+    }
+    footer {
+      text-align: center;
+      color: var(--text-dim);
+      font-size: 13px;
+      margin-top: 24px;
+      padding: 16px;
+    }
+    .time-val {
+      color: var(--accent-gold);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <span class="badge">Ключевский РУПС · Диспетчерская служба</span>
+      <h1>Сводка рейсов УАЗ-452 «Буханка»</h1>
+      <p class="subtitle">Внутренняя аналитика посещений и длительности игровых сессий</p>
+      
+      <div class="top-actions">
+        <a href="/" class="btn">← Вернуться за руль</a>
+        <button id="refreshBtn" class="btn btn-secondary">
+          <span class="status-dot"></span> Обновить данные
+        </button>
+        <span id="lastUpdated" style="font-size: 12px; color: var(--text-dim);"></span>
+      </div>
+    </header>
+
+    <div class="grid">
+      <div class="card">
+        <div class="card-label">Всего заходов</div>
+        <div class="card-val" id="valVisits">—</div>
+        <div class="card-sub">открытий страницы игры</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Уникальных игроков</div>
+        <div class="card-val" id="valUnique">—</div>
+        <div class="card-sub">новых посетителей</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Суммарное время</div>
+        <div class="card-val time-val" id="valTotalTime">—</div>
+        <div class="card-sub">проведено за рулём всеми</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Средняя сессия</div>
+        <div class="card-val time-val" id="valAvgTime">—</div>
+        <div class="card-sub">длительность одного рейса</div>
+      </div>
+    </div>
+
+    <div class="section-title">⏱️ Удержание игроков по времени</div>
+    <div class="funnel">
+      <div class="funnel-step">
+        <div class="funnel-header">
+          <span>Открыли игру (старт)</span>
+          <span id="textTotal">0 (100%)</span>
+        </div>
+        <div class="funnel-bar-bg"><div class="funnel-bar-fill" id="barTotal" style="width: 100%;"></div></div>
+      </div>
+
+      <div class="funnel-step">
+        <div class="funnel-header">
+          <span>Завели двигатель (ключ зажигания)</span>
+          <span id="textStart">0 (0%)</span>
+        </div>
+        <div class="funnel-bar-bg"><div class="funnel-bar-fill" id="barStart"></div></div>
+      </div>
+
+      <div class="funnel-step">
+        <div class="funnel-header">
+          <span>Играли более 1 минуты</span>
+          <span id="text1m">0 (0%)</span>
+        </div>
+        <div class="funnel-bar-bg"><div class="funnel-bar-fill" id="bar1m"></div></div>
+      </div>
+
+      <div class="funnel-step">
+        <div class="funnel-header">
+          <span>Играли более 3 минут</span>
+          <span id="text3m">0 (0%)</span>
+        </div>
+        <div class="funnel-bar-bg"><div class="funnel-bar-fill" id="bar3m"></div></div>
+      </div>
+
+      <div class="funnel-step">
+        <div class="funnel-header">
+          <span>Играли более 5 минут</span>
+          <span id="text5m">0 (0%)</span>
+        </div>
+        <div class="funnel-bar-bg"><div class="funnel-bar-fill" id="bar5m"></div></div>
+      </div>
+
+      <div class="funnel-step">
+        <div class="funnel-header">
+          <span>Играли более 10 минут (полный рейс)</span>
+          <span id="text10m">0 (0%)</span>
+        </div>
+        <div class="funnel-bar-bg"><div class="funnel-bar-fill" id="bar10m"></div></div>
+      </div>
+    </div>
+
+    <div class="section-title">📬 Игровые события</div>
+    <div class="grid">
+      <div class="card">
+        <div class="card-label">Успешных доставок</div>
+        <div class="card-val" style="color: var(--green);" id="valDelivered">—</div>
+        <div class="card-sub">ритуал в деревнях выполнен</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Встреч с ГАИ</div>
+        <div class="card-val" style="color: var(--red);" id="valPolice">—</div>
+        <div class="card-sub">штрафов и задержаний</div>
+      </div>
+    </div>
+
+    <footer>
+      Рейс в Заречье · Система автономной телеметрии без внешних трекеров
+    </footer>
+  </div>
+
+  <script>
+    const API_BASE = 'https://countapi.mileshilliard.com/api/v1';
+    const PREFIX = 'pd_uaz_2026';
+
+    async function getVal(key) {
+      try {
+        const res = await fetch(`${API_BASE}/get/${PREFIX}_${key}`);
+        if (!res.ok) return 0;
+        const d = await res.json();
+        return d.value || 0;
+      } catch {
+        return 0;
+      }
+    }
+
+    function formatTime(minutes) {
+      if (!minutes) return '0 мин';
+      if (minutes < 60) return `${minutes} мин`;
+      const h = Math.floor(minutes / 60);
+      const m = minutes % 60;
+      return `${h} ч ${m} мин`;
+    }
+
+    async function loadStats() {
+      const btn = document.getElementById('refreshBtn');
+      btn.style.opacity = '0.7';
+
+      const [
+        visits, unique, totalMinutes,
+        engineStart, ret1m, ret3m, ret5m, ret10m,
+        delivered, police
+      ] = await Promise.all([
+        getVal('visits'),
+        getVal('unique'),
+        getVal('total_minutes'),
+        getVal('evt_engine_start'),
+        getVal('ret_1m'),
+        getVal('ret_3m'),
+        getVal('ret_5m'),
+        getVal('ret_10m'),
+        getVal('evt_delivered'),
+        getVal('evt_police_stop')
+      ]);
+
+      document.getElementById('valVisits').textContent = visits.toLocaleString('ru-RU');
+      document.getElementById('valUnique').textContent = unique.toLocaleString('ru-RU');
+      document.getElementById('valTotalTime').textContent = formatTime(totalMinutes);
+
+      const avgMinutes = visits > 0 ? Math.round((totalMinutes / visits) * 10) / 10 : 0;
+      document.getElementById('valAvgTime').textContent = avgMinutes ? `${avgMinutes} мин` : '0 мин';
+
+      document.getElementById('valDelivered').textContent = delivered.toLocaleString('ru-RU');
+      document.getElementById('valPolice').textContent = police.toLocaleString('ru-RU');
+
+      // Funnel
+      const base = Math.max(visits, 1);
+      function updateStep(val, textId, barId) {
+        const pct = Math.min(100, Math.round((val / base) * 100));
+        document.getElementById(textId).textContent = `${val.toLocaleString('ru-RU')} (${pct}%)`;
+        document.getElementById(barId).style.width = `${pct}%`;
+      }
+
+      document.getElementById('textTotal').textContent = `${visits.toLocaleString('ru-RU')} (100%)`;
+      updateStep(engineStart, 'textStart', 'barStart');
+      updateStep(ret1m, 'text1m', 'bar1m');
+      updateStep(ret3m, 'text3m', 'bar3m');
+      updateStep(ret5m, 'text5m', 'bar5m');
+      updateStep(ret10m, 'text10m', 'bar10m');
+
+      const now = new Date();
+      document.getElementById('lastUpdated').textContent = `Обновлено: ${now.toLocaleTimeString('ru-RU')}`;
+      btn.style.opacity = '1';
+    }
+
+    document.getElementById('refreshBtn').addEventListener('click', loadStats);
+    loadStats();
+    // Auto-refresh every 30s
+    setInterval(loadStats, 30000);
+  </script>
+</body>
+</html>
