@@ -83,7 +83,14 @@ export function barrierArm(b: Bucket, p: Place, len: number, angle: number, sign
 
 // ------------------------------------------------------------ AZS
 
-export function gasStation(b: Bucket, p: Place, sign: SignFn, cols: Collider[]): void {
+/**
+ * A rural filling station of the 90s: one island along the road with a single tall two-sided pump,
+ * a car filling on each side of it, nose to tail along the island; a small canopy on two posts,
+ * a drive-through forecourt with a way in and a way out, the operator's brick booth with its pay
+ * hatch behind, the fire board and the sand box. Local x runs along the road, +z towards it;
+ * `edge` is the road's edge on local z.
+ */
+export function gasStation(b: Bucket, p: Place, sign: SignFn, cols: Collider[], edge = 13): void {
   const band = sign(tex(128, 16, (g, w, h) => {
     g.fillStyle = '#e8e4da'; g.fillRect(0, 0, w, h);
     g.fillStyle = '#c82a20'; g.fillRect(0, h - 4, w, 4);
@@ -98,49 +105,116 @@ export function gasStation(b: Bucket, p: Place, sign: SignFn, cols: Collider[]):
       txt(g, v, w - 8, 38 + i * 20, `bold 11px ${NARROW}`, '#b8281e', 'right');
     });
   }));
-  const pumpFace = sign(tex(32, 64, (g, w, h) => {
-    g.fillStyle = '#d8d4c4'; g.fillRect(0, 0, w, h);
-    g.fillStyle = '#1a1a1a'; g.fillRect(4, 6, w - 8, 18);
-    g.fillStyle = '#e8c84a'; for (let i = 0; i < 4; i++) g.fillRect(6 + i * 5, 10, 4, 6);
-    g.fillStyle = '#c82a20'; g.fillRect(0, 30, w, 8);
-    txt(g, '76', w / 2, 34.5, `bold 8px ${SANS}`, '#ffffff');
+  // the pump's face, the same on both sides: grade lamp, the two mechanical counters, the pump's number
+  const pumpFace = sign(tex(40, 80, (g, w, h) => {
+    g.fillStyle = '#dcd8c8'; g.fillRect(0, 0, w, h);
+    g.fillStyle = '#c82a20'; g.fillRect(0, 0, w, 12);
+    txt(g, 'А-76', w / 2, 6.5, `bold 9px ${NARROW}`, '#ffffff');
+    for (const [y, label] of [[18, 'ЛИТРЫ'], [36, 'СУММА']] as [number, string][]) {
+      g.fillStyle = '#1a1a1a'; g.fillRect(4, y, w - 8, 12);
+      g.fillStyle = '#f0e6c0'; for (let i = 0; i < 5; i++) g.fillRect(6 + i * 6, y + 2, 5, 8);
+      txt(g, label, w / 2, y + 15, `bold 5px ${SANS}`, '#3a3a38');
+    }
+    g.fillStyle = '#9a968a'; g.fillRect(0, 58, w, 2);
+    g.fillStyle = '#ffffff'; g.beginPath(); g.arc(w / 2, 69, 7, 0, Math.PI * 2); g.fill();
+    txt(g, '1', w / 2, 69.5, `bold 10px ${SANS}`, '#c82a20');
   }));
-  const kassa = sign(tex(64, 16, (g, w, h) => {
+  const booth = sign(tex(64, 16, (g, w, h) => {
     g.fillStyle = '#f2f0e8'; g.fillRect(0, 0, w, h);
-    txt(g, 'КАССА', w / 2, h / 2 + 1, `bold 11px ${NARROW}`, '#1a1a1a');
+    txt(g, 'ОПЕРАТОР', w / 2, h / 2 + 1, `bold 10px ${NARROW}`, '#1a1a1a');
   }));
-  // forecourt slab, canopy on four columns
-  b.add('concrete', boxGeo(18, 0.2, 12), T(p, 0, 0.05, -1), '#a8a49c');
-  for (const x of [-4.5, 4.5]) for (const z of [-3, 1.5]) {
-    b.add('concrete', boxGeo(0.35, 4.6, 0.35), T(p, x, 2.4, z), '#d8d4c8');
-    cols.push(boxCollider(p, x, z, 0.4, 0.4));
+  const hatch = sign(tex(48, 12, (g, w, h) => {
+    g.fillStyle = '#1d4ea6'; g.fillRect(0, 0, w, h);
+    txt(g, 'ОПЛАТА', w / 2, h / 2 + 1, `bold 8px ${NARROW}`, '#ffffff');
+  }));
+  const noSmoking = sign(tex(32, 32, (g, w, h) => {
+    g.fillStyle = '#f2f0e8'; g.fillRect(0, 0, w, h);
+    g.strokeStyle = '#c82a20'; g.lineWidth = 3; g.beginPath(); g.arc(16, 12, 9, 0, Math.PI * 2); g.stroke();
+    g.beginPath(); g.moveTo(9.6, 5.6); g.lineTo(22.4, 18.4); g.stroke();
+    g.fillStyle = '#1a1a1a'; g.fillRect(9, 11, 12, 2.5);
+    txt(g, 'НЕ КУРИТЬ', w / 2, 27, `bold 6px ${NARROW}`, '#c82a20');
+  }));
+  const fireBoard = sign(tex(32, 32, (g, w, h) => {
+    g.fillStyle = '#c82a20'; g.fillRect(0, 0, w, h);
+    g.fillStyle = '#f2f0e8'; g.fillRect(2, 2, w - 4, 5);
+    txt(g, 'ПОЖАРНЫЙ ЩИТ', w / 2, 4.8, `bold 3.6px ${SANS}`, '#c82a20');
+    g.fillStyle = '#1a1a1a'; g.fillRect(5, 10, 2, 18); g.fillRect(3, 10, 6, 3);
+    g.fillRect(13, 10, 2, 18); g.beginPath(); g.moveTo(11, 26); g.lineTo(17, 26); g.lineTo(14, 30); g.fill();
+    g.fillStyle = '#e8e4d8'; g.beginPath(); g.moveTo(21, 12); g.lineTo(29, 12); g.lineTo(27, 22); g.lineTo(23, 22); g.fill();
+  }));
+
+  const A = '#b8b8b2', K = '#b4b0a6';
+  const slab = (x: number, z: number, w: number, d: number) => b.add('asphalt', boxGeo(w, 1, d, 4), T(p, x, -0.35, z), A);
+  // forecourt, and the two mouths to the road: in at one end, out at the other
+  const D = 6.5, HW = 15, mouth = 6;
+  slab(0, 0, HW * 2, D * 2);
+  const mz0 = D, mz1 = edge + 0.4;
+  for (const sx of [-1, 1]) slab(sx * (HW - mouth / 2), (mz0 + mz1) / 2, mouth, mz1 - mz0);
+  // kerbs round the forecourt: the back, the ends, and the strip of grass between the two mouths
+  b.add('concrete', boxGeo(HW * 2 + 0.4, 0.3, 0.3), T(p, 0, 0.1, -D - 0.15), K);
+  for (const sx of [-1, 1]) {
+    b.add('concrete', boxGeo(0.3, 0.3, D * 2 + (mz1 - mz0)), T(p, sx * (HW + 0.15), 0.1, (mz1 - D) / 2 - 0.2), K);
+    b.add('concrete', boxGeo(0.3, 0.3, mz1 - mz0), T(p, sx * (HW - mouth - 0.15), 0.1, (mz0 + mz1) / 2), K);
   }
-  b.add('plaster', boxGeo(11, 0.5, 6.5), T(p, 0, 4.85, -0.75), '#e8e4da');
-  b.add(band, planeGeo(11, 0.5), T(p, 0, 4.85, 2.53));
-  b.add('flat', boxGeo(10.6, 0.05, 6.1), T(p, 0, 4.58, -0.75), '#f0ecd8');
-  // three pumps on an island
-  b.add('concrete', boxGeo(7, 0.25, 1.2), T(p, 0, 0.25, -0.75), '#c8c4b8');
-  for (const x of [-2.4, 0, 2.4]) {
-    b.add('flat', boxGeo(0.8, 1.7, 0.55), T(p, x, 1.2, -0.75), '#e0dccc');
-    b.add(pumpFace, planeGeo(0.7, 1.4), T(p, x, 1.2, -0.47));
-    b.add('flat', new THREE.CylinderGeometry(0.03, 0.03, 0.9, 5), T(p, x + 0.45, 1.1, -0.6, 0.3, 0, 0), '#1a1a1a');
+  b.add('concrete', boxGeo((HW - mouth) * 2, 0.3, 0.3), T(p, 0, 0.1, D + 0.15), K);
+  // lane lines along the island and arrows: in on the left, out on the right
+  for (const z of [5.0, -5.0]) b.add('flat', boxGeo(18, 0.02, 0.12), T(p, 0, 0.155, z), '#e8e4d0');
+  for (const z of [1.25, -1.25]) for (const sx of [-1, 1]) b.add('flat', boxGeo(0.12, 0.02, 0.8), T(p, sx * 3.6, 0.155, z * 2.2), '#e8d24a');
+  for (const [x, z] of [[-11, 2.9], [11, 2.9], [-11, -2.9], [11, -2.9]] as [number, number][]) {
+    b.add('flat', boxGeo(1.6, 0.02, 0.22), T(p, x, 0.155, z), '#e8e4d0');
+    b.add('flat', new THREE.CylinderGeometry(0.5, 0.5, 0.02, 3), T(p, x + 1.0, 0.155, z, 0, 0, 0), '#e8e4d0');
   }
-  cols.push(boxCollider(p, 0, -0.75, 7, 1.2));
-  // cashier kiosk with a window and its sign
-  b.add('plaster', boxGeo(5, 3, 3.6, 2), T(p, 0, 1.5, -6.5), '#d8e0e4');
-  b.add('slate', boxGeo(5.4, 0.12, 4), T(p, 0, 3.05, -6.5), '#8a8a84');
-  b.add('bigWin', planeGeo(2, 1.2), T(p, 1, 1.6, -4.68));
-  b.add('door', planeGeo(1, 2), T(p, -1.4, 1.0, -4.68));
-  b.add(kassa, planeGeo(1.4, 0.35), T(p, 1, 2.5, -4.67));
-  cols.push(boxCollider(p, 0, -6.5, 5, 3.6));
-  // tall price board by the road
-  b.add('flat', boxGeo(0.15, 4.6, 0.15), T(p, 7.8, 2.3, 4.6), '#5a5a58');
-  b.add(prices, planeGeo(1.6, 2.4), T(p, 7.8, 4.2, 4.7));
-  b.add('flat', boxGeo(1.6, 2.4, 0.06), T(p, 7.8, 4.2, 4.65), '#3a3a38');
-  cols.push(boxCollider(p, 7.8, 4.6, 0.3, 0.3));
-  // fuel drums and a sand box
-  for (let i = 0; i < 3; i++) b.add('rust', new THREE.CylinderGeometry(0.3, 0.3, 0.9, 8), T(p, -7.5 + i * 0.65, 0.5, -4), i === 1 ? '#5a7a4a' : '#7a3a2a');
-  b.add('boards', boxGeo(1.2, 0.6, 0.8), T(p, -7.4, 0.35, -2.4), '#c83a2a');
+
+  // the island: one tall two-sided pump in the middle, a hose and nozzle on each side
+  b.add('concrete', boxGeo(9, 0.22, 1.2), T(p, 0, 0.23, 0), '#c8c4b8');
+  b.add('flat', boxGeo(9.1, 0.06, 1.3), T(p, 0, 0.36, 0), '#e8d24a');
+  b.add('flat', boxGeo(0.95, 0.25, 0.6), T(p, 0, 0.47, 0), '#5a5a58');
+  b.add('flat', boxGeo(0.9, 1.75, 0.52), T(p, 0, 1.47, 0), '#e2ded0');
+  b.add('flat', boxGeo(0.94, 0.3, 0.56), T(p, 0, 2.48, 0), '#c82a20');
+  for (const side of [1, -1]) {
+    b.add(pumpFace, planeGeo(0.8, 1.6), T(p, 0, 1.45, side * 0.265, 0, side < 0 ? Math.PI : 0, 0));
+    // hose from the cabinet's shoulder down to the nozzle hung in its holster
+    b.add('flat', new THREE.CylinderGeometry(0.025, 0.025, 1.1, 5), T(p, side * 0.52, 1.25, side * 0.12, 0.25 * side, 0, 0.15 * side), '#1a1a1a');
+    b.add('flat', boxGeo(0.06, 0.16, 0.2), T(p, side * 0.5, 1.05, side * 0.27), '#3a3a38');
+  }
+  cols.push(boxCollider(p, 0, 0, 9, 1.2));
+  // fire extinguisher and a "no smoking" sign at the island's ends
+  b.add('flat', new THREE.CylinderGeometry(0.09, 0.09, 0.5, 8), T(p, -4.1, 0.6, 0.3), '#c82a20');
+  b.add('flat', boxGeo(0.05, 1.5, 0.05), T(p, 4.2, 1.1, 0), '#5a5a58');
+  b.add(noSmoking, planeGeo(0.4, 0.4), T(p, 4.2, 1.9, 0.03));
+  b.add(noSmoking, planeGeo(0.4, 0.4), T(p, 4.2, 1.9, -0.03, 0, Math.PI, 0));
+
+  // a modest canopy on two posts standing on the island
+  for (const x of [-3.6, 3.6]) b.add('concrete', boxGeo(0.25, 4.3, 0.25), T(p, x, 2.5, 0), '#d8d4c8');
+  b.add('plaster', boxGeo(11, 0.45, 8.6), T(p, 0, 4.8, 0), '#e8e4da');
+  b.add('flat', boxGeo(10.6, 0.05, 8.2), T(p, 0, 4.55, 0), '#f0ecd8');
+  b.add(band, planeGeo(11, 0.45), T(p, 0, 4.8, 4.31));
+  b.add(band, planeGeo(11, 0.45), T(p, 0, 4.8, -4.31, 0, Math.PI, 0));
+
+  // the operator's booth behind the forecourt, its pay hatch facing the pump
+  const bz = -D - 2.2;
+  b.add('brickWhite', boxGeo(4.2, 2.7, 3, 2), T(p, -6, 1.35, bz), '#e4ded0');
+  b.add('slate', boxGeo(4.6, 0.12, 3.4), T(p, -6, 2.76, bz, 0.06, 0, 0), '#8a8a84');
+  b.add('bigWin', planeGeo(1.1, 0.8), T(p, -5.4, 1.45, bz + 1.51));
+  b.add('flat', boxGeo(1.2, 0.06, 0.25), T(p, -5.4, 1.02, bz + 1.6), '#5a5a58');
+  for (let i = 0; i < 4; i++) b.add('flat', boxGeo(0.03, 0.8, 0.03), T(p, -5.85 + i * 0.3, 1.45, bz + 1.53), '#2a2a28');
+  b.add(hatch, planeGeo(0.7, 0.18), T(p, -5.4, 0.85, bz + 1.52));
+  b.add('door', planeGeo(0.9, 2), T(p, -7.4, 1.0, bz + 1.51));
+  b.add(booth, planeGeo(1.6, 0.4), T(p, -6, 2.35, bz + 1.52));
+  b.add(fireBoard, planeGeo(1.1, 1.1), T(p, -3.88, 1.3, bz, 0, Math.PI / 2, 0));
+  cols.push(boxCollider(p, -6, bz, 4.2, 3));
+  // sand box with its scoop, and fuel drums by the booth
+  b.add('boards', boxGeo(1.1, 0.55, 0.7), T(p, -2.6, 0.28, bz + 0.6), '#c83a2a');
+  b.add('flat', boxGeo(1.12, 0.04, 0.72), T(p, -2.6, 0.57, bz + 0.6), '#a83020');
+  for (let i = 0; i < 3; i++) b.add('rust', new THREE.CylinderGeometry(0.3, 0.3, 0.9, 8), T(p, -9 - i * 0.65, 0.45, bz + 0.3), i === 1 ? '#5a7a4a' : '#7a3a2a');
+  cols.push(boxCollider(p, -2.6, bz + 0.6, 1.1, 0.7));
+
+  // tall price board on the grass between the two mouths, facing the road
+  const pz = (mz0 + mz1) / 2 + 1;
+  b.add('flat', boxGeo(0.15, 4.6, 0.15), T(p, 0, 2.3, pz), '#5a5a58');
+  b.add(prices, planeGeo(1.6, 2.4), T(p, 0, 4.2, pz + 0.05));
+  b.add('flat', boxGeo(1.6, 2.4, 0.06), T(p, 0, 4.2, pz), '#3a3a38');
+  cols.push(boxCollider(p, 0, pz, 0.3, 0.3));
 }
 
 // ------------------------------------------------------------ café / truck stop

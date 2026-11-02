@@ -5,11 +5,10 @@ import { rollWheels, VehicleModel } from '../world/Vehicles';
 import { buildUaz } from '../world/Uaz';
 
 /**
- * The title sequence: a post-office UAZ driving the route at dawn, filmed in
- * four slow shots — a tracking shot down the Klyuchevsk street, a crane over
- * the forest track, a wide of the bridge over the Serebryanka, and a high
- * shot as it rolls into Zarechye under the church. Each shot fades in and out
- * through black; the caller lays the fade over the picture.
+ * The title sequence: the post van driving the route in the day's own weather, filmed in
+ * five long, slow, wide shots — the fields past the town, into the forest, the bridge over
+ * the Serebryanka, Zarechye from above, the edge of Sosnovka. Each shot dissolves through
+ * the haze; the caller lays the fade over the picture in the fog's colour.
  */
 interface Shot {
   /** Place caption for the lower third. */
@@ -21,7 +20,8 @@ interface Shot {
 }
 interface Frame { x: number; y: number; z: number; tx: number; tz: number; rx: number; rz: number }
 
-const FADE = 1.3;
+/** Seconds of the dip through the haze at each cut. */
+const FADE = 2.4;
 const _p = new THREE.Vector3(), _l = new THREE.Vector3(), _d = new THREE.Vector3(), _r = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
 
@@ -44,15 +44,18 @@ export class TitleShots {
       out.y = Math.max(v.y, ground.height(out.x, out.z)) + h;
       return out;
     };
+    // long, slow, wide: the van small in the land, the camera barely moving
     this.shots = [
-      // low tracking shot alongside, sliding from the rear wheel to the cab
-      { caption: 'Ключевск · отделение связи', s0: m.town - 150, v: 7, dur: 11, cam: (v, k) => ({ pos: at(v, lerp(-7, 0, k), 7.5, 1.5, _p), look: at(v, 2, 0, 1.2, _l) }) },
-      // crane: high ahead over the forest track, coming down to meet the van
-      { caption: 'Лесная дорога на Сосновку', s0: m.junction + 120, v: 6.5, dur: 12, cam: (v, k) => ({ pos: at(v, lerp(26, 13, k), -3, lerp(15, 4, smoothstep(0, 1, k)), _p), look: at(v, 0, 0, 1, _l) }) },
-      // wide: locked off across the river, panning as it crosses the bridge
-      { caption: 'Мост через Серебрянку', s0: m.bridge - 55, v: 4.5, dur: 13, cam: (v, k) => ({ pos: this.fixed(m.bridge, 26, 5, _p), look: at(v, 0, 0, 1.2, _l) }) },
-      // high behind, rising, the village and church opening up ahead
-      { caption: 'Заречье', s0: m.zarStart - 140, v: 6, dur: 12, cam: (v, k) => ({ pos: at(v, -16 - k * 6, 2, 6 + k * 7, _p), look: at(v, 30, 0, 2, _l) }) },
+      // fields past the town: a camera post far off the road, the van crossing the frame
+      { caption: '', s0: m.town + 360, v: 6.5, dur: 24, cam: (v, k) => ({ pos: this.fixed(m.town + 470, 58, 7 + k * 1.5, _p), look: at(v, 4, 0, 1.4, _l) }) },
+      // into the forest: low behind, falling back slowly as the trees close in
+      { caption: '', s0: m.junction + 40, v: 5, dur: 22, cam: (v, k) => ({ pos: at(v, -11 - k * 5, -2.2, 2.6 + k * 0.8, _p), look: at(v, 22, 0, 1.6, _l) }) },
+      // the bridge over the Serebryanka from the far bank, locked off
+      { caption: '', s0: m.bridge - 70, v: 4, dur: 26, cam: (v, k) => ({ pos: this.fixed(m.bridge + 10, 46, 5.5, _p), look: at(v, 0, 0, 1.2, _l) }) },
+      // high behind the van as Zarechye and its church open up ahead
+      { caption: '', s0: m.zarStart - 170, v: 5.5, dur: 24, cam: (v, k) => ({ pos: at(v, -30 - k * 8, 6, 15 + k * 3, _p), look: at(v, 45, 0, 2, _l) }) },
+      // the edge of Sosnovka, from across a garden
+      { caption: '', s0: m.sosStart - 130, v: 5.5, dur: 22, cam: (v, k) => ({ pos: this.fixed(m.sosStart - 30, 36, 5 + k, _p), look: at(v, 2, 0, 1.3, _l) }) },
     ];
   }
 

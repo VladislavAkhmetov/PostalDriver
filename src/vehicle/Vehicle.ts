@@ -16,6 +16,8 @@ const IZ = 2900, IP = 2700, IR = 950;
 const R = 0.4;
 const K = 33000, C = 2700;
 export const H0 = 0.75;
+/** Tank fractions: per metre driven, per second running (scaled so one run uses roughly half a tank). */
+const FUEL_PER_M = 1 / 9500, FUEL_IDLE = 1 / 9000, FUEL_DRY = 0.025;
 const LFREE = H0 + (MASS * G) / (4 * K);
 const GEARS: Record<number, number> = { [-1]: 5.224, 0: 0, 1: 4.124, 2: 2.641, 3: 1.58, 4: 1.0 };
 const FINAL = 4.625;
@@ -86,7 +88,28 @@ export class Vehicle {
   wheels: Wheel[] = [[-0.72, -1.15], [0.72, -1.15], [-0.72, 1.15], [0.72, 1.15]].map(([lx, lz]) => ({ lx, lz, len: H0, F: (MASS * G) / 4, g: newGround(), vel: 0, hit: 0, stop: 0, ph: NaN }));
 
   onBump?: (s: number) => void;
-  onImpact?: (v: number) => void;
+  /** Crash speed along the contact normal, and where/how it happened (world contact point, normal away from the obstacle). */
+  onImpact?: (v: number, hit?: { x: number; z: number; nx: number; nz: number; soft: boolean; arm: number }) => void;
+  /** 0…1 accumulated crash damage (body and engine): weaker engine, steam and smoke from the hood. */
+  damage = 0;
+  /**
+   * 0…1 wear of the steering linkage from knocks on the wheels' corners: the van pulls toward the
+   * side that was hit (`pullDir`, −1 left, 1 right). A roadside tightening takes most of it out.
+   */
+  steerWear = 0;
+  pullDir: -1 | 1 = 1;
+  /** 0…1 wear of the radiator from knocks on the nose: it leaks coolant while the engine runs. */
+  radWear = 0;
+  /** Coolant in the radiator, 0…1 (topped up every morning, or from the canister on the roadside). */
+  coolant = 1;
+  /** Coolant temperature, 0 cold … ~0.55 normal (86 °C) … 1 boiling. */
+  heat = 0;
+  /** 0…1 of a full tank. Burns with distance and idling; near empty the engine runs on fumes. */
+  fuel = 1;
+  /** A punctured front tyre: the van pulls to one side, drags and rumbles until the spare goes on. */
+  flat = false;
+  /** False in the sandbox: the tank never runs down. */
+  burnFuel = true;
   onShift?: () => void;
   onSplash?: (s: number) => void;
   onPlank?: () => void;
@@ -158,8 +181,15 @@ export class Vehicle {
       this.crankT += dt;
       if (this.crankT > this.crankDur) { this.engine = 'running'; this.rpm = 1450; }
     }
-    this.steer = c.steer;
+    // a bent track rod pulls toward the side that took the knock, a cracked head loses power
+    this.steer = clamp(c.steer + Math.max(0, this.steerWear - 0.05) * 0.2 * this.pullDir + (this.flat ? 0.09 : 0), -1, 1);
     this.mapPedals(dt, c);
+    this.throttle *= 1 - 0.45 * this.damage * this.damage;
+    this.cool(dt);
+    // boiling over: the engine loses its breath
+    if (this.heat > 0.9) this.throttle *= 0.55;
+    // an empty tank: coughing along on what is left in the pipes
+    if (this.fuel < FUEL_DRY) this.throttle *= 0.3 + 0.7 * clamp(this.fuel / FUEL_DRY, 0, 1);
 
     // Decide on road speed (rpm each gear would impose), not on engine rpm,
     // which is still flared from the declutched shift window.
@@ -241,6 +271,8 @@ export class Vehicle {
       rough += w.g.rough * 0.25;
       if (w.g.surface === 'water') water = true;
     }
+    // a flat drags like soft ground and shakes the cab
+    if (this.flat) { crr += 0.035; rough += 0.25; }
     this.rough = rough;
 
     const speed = Math.abs(this.vx);
@@ -251,7 +283,8 @@ export class Vehicle {
     this.sideF = side;
     if (Math.abs(dSide) < 0.5) this.kick += dSide * 0.13 * clamp(speed / 10, 0, 1.7);
     this.kick = clamp(this.kick * Math.exp(-h * 5), -0.12, 0.12);
-    let delta = this.steer * lerp(0.6, 0.16, clamp(speed / 24, 0, 1)) + this.kick;
+    // full lock about 30° at a crawl, narrowing with speed
+    let delta = this.steer * lerp(0.52, 0.14, clamp(speed / 24, 0, 1)) + this.kick;
     const g0 = this.wheels[0].g, g1 = this.wheels[1].g;
     let rutF = 0;
     if ((g0.surface === 'mud' || g0.surface === 'dirt') && g0.onRoad) {
@@ -301,8 +334,11 @@ export class Vehicle {
     const vxa = Math.max(speed, 2.2);
     const aF = Math.atan((this.vy + this.r * A) / vxa) - delta * (this.vx >= 0 ? 1 : -1);
     const aR = Math.atan((this.vy - this.r * B) / vxa);
-    let FyF = -muF * Nf * tire(aF);
-    let FyR = -muR * Nr * tire(aR) * (this.handbrake && speed > 2 ? 0.45 : 1.06);
+    // at a crawl the slip angle above is not real: a tyre turned on the spot rolls the way it points
+    // (the low-speed yaw below steers the van). Without this the full-lock "slip" stood the van still.
+    const crawl = clamp(0.12 + speed / 3, 0.12, 1);
+    let FyF = -muF * Nf * tire(aF) * crawl;
+    let FyR = -muR * Nr * tire(aR) * (this.handbrake && speed > 2 ? 0.45 : 1.06) * crawl;
     const limF = muF * Nf, limR = muR * Nr;
     let slip = 0;
     const magF = Math.hypot(FxF, FyF);
@@ -375,8 +411,43 @@ export class Vehicle {
     this.z += wvz * h;
     this.yaw -= this.r * h;
     this.odometer += speed * h;
+    if (this.burnFuel && this.engine === 'running') {
+      this.fuel = Math.max(0, this.fuel - speed * h * FUEL_PER_M - h * FUEL_IDLE * (0.5 + this.thrEff));
+    }
   }
 
+  /**
+   * Where a knock lands decides what it breaks: the nose takes the radiator, a corner by a wheel
+   * the steering. `along` / `lat`: the contact point from the centre, metres forward / to the right.
+   */
+  private wear(d: number, along: number, lat: number): void {
+    const front = clamp((along - 0.4) / 1.4, 0, 1);
+    const corner = clamp(Math.abs(lat) / 0.8, 0, 1) * (Math.abs(along) > 0.7 ? 1 : 0.4);
+    const ds = d * (0.35 + corner * 1.3);
+    if (ds > 0.008 && Math.abs(lat) > 0.25) this.pullDir = lat < 0 ? -1 : 1;
+    this.steerWear = clamp(this.steerWear + ds, 0, 1);
+    this.radWear = clamp(this.radWear + d * front * 1.5, 0, 1);
+  }
+
+  /**
+   * The cooling system: a leaking radiator loses coolant while the engine runs; with less of it the
+   * engine runs hotter, the more so under load, until it boils.
+   */
+  private cool(dt: number): void {
+    const running = this.engine === 'running';
+    if (running) this.coolant = Math.max(0, this.coolant - Math.max(0, this.radWear - 0.08) * 0.0035 * dt);
+    const short = 1 - this.coolant;
+    const target = running ? 0.55 + short * short * 1.1 * (0.5 + clamp(this.load, 0, 1)) : 0.08;
+    this.heat = damp(this.heat, clamp(target, 0, 1.05), running ? 0.06 : 0.025, dt);
+  }
+
+  /**
+   * Impulse-based collisions. Three circles along the body probe the obstacles;
+   * each contact applies a rigid-body impulse at the actual contact point, so a
+   * hit off-centre spins the van (yaw), a nose-on hit dips the nose and a side
+   * hit rolls it. Soft obstacles absorb it, movable ones (traffic, people) take
+   * part of it and are told to react. Hard hits cost damage.
+   */
   private collide(ci: ColliderIndex): void {
     const sy = Math.sin(this.yaw), cy = Math.cos(this.yaw);
     const fx = -sy, fz = -cy, rx = cy, rz = -sy;
@@ -409,17 +480,41 @@ export class Vehicle {
           nx = cs * lnx + sn * lnz;
           nz = -sn * lnx + cs * lnz;
         }
-        this.x += nx * pen;
-        this.z += nz * pen;
+        // light movable things (people) are brushed aside rather than pushed back against
+        const light = c.mass !== undefined && c.mass < 500;
+        if (!light) { this.x += nx * pen; this.z += nz * pen; }
+        // contact point relative to the centre of mass, and the point's world velocity
+        const px = cx - nx * rad - this.x, pz = cz - nz * rad - this.z;
+        const w = -this.r;
         let wvx = fx * this.vx + rx * this.vy, wvz = fz * this.vx + rz * this.vy;
-        const vn = wvx * nx + wvz * nz;
-        if (vn < 0) {
-          wvx -= nx * vn * 1.2; wvz -= nz * vn * 1.2;
-          wvx *= 0.9; wvz *= 0.9;
-          this.vx = wvx * fx + wvz * fz;
-          this.vy = wvx * rx + wvz * rz;
-          this.r *= 0.6;
-          if (-vn > 0.8) this.onImpact?.(-vn);
+        const vcx = wvx + w * pz, vcz = wvz - w * px;
+        const ovx = 0, ovz = 0;
+        const vn = (vcx - ovx) * nx + (vcz - ovz) * nz;
+        if (vn >= 0) continue;
+        const arm = pz * nx - px * nz;
+        const invM = 1 / MASS + (arm * arm) / IZ + (c.mass ? 1 / c.mass : 0);
+        const e = c.soft ? 0.04 : c.mass ? 0.25 : -vn > 4 ? 0.12 : 0.2;
+        const j = Math.min(MASS * 22, (-(1 + e) * vn) / invM);
+        const ovxL = this.vx, ovyL = this.vy;
+        wvx += (j * nx) / MASS; wvz += (j * nz) / MASS;
+        this.r -= clamp((arm * j) / IZ, -1.1, 1.1) * 0.55;
+        // scrubbing along the contact: paint on paint, tyre on kerb
+        const tx = -nz, tz = nx;
+        const vt = vcx * tx + vcz * tz;
+        const jt = clamp(-vt * MASS * 0.35, -0.4 * j, 0.4 * j);
+        wvx += (jt * tx) / MASS; wvz += (jt * tz) / MASS;
+        this.vx = wvx * fx + wvz * fz;
+        this.vy = wvx * rx + wvz * rz;
+        // the body answers the jolt the way it answers braking and cornering
+        this.pitchRate += clamp((MASS * (this.vx - ovxL) * HCG) / IP, -1.6, 1.6) * 0.4;
+        this.rollRate += clamp((-MASS * (this.vy - ovyL) * HCG) / IR, -2.2, 2.2) * 0.4;
+        c.hit?.(-nx, -nz, j, -vn);
+        const speed = -vn;
+        if (speed > 0.8) {
+          const d = ((0.5 * MASS * speed * speed) / 420000) * (c.soft ? 0.15 : 1);
+          this.damage = clamp(this.damage + d, 0, 1);
+          this.wear(d, px * fx + pz * fz, px * rx + pz * rz);
+          this.onImpact?.(speed, { x: cx - nx * rad, z: cz - nz * rad, nx, nz, soft: !!c.soft, arm });
         }
       }
     }

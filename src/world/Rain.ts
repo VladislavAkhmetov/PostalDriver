@@ -3,6 +3,8 @@ import { clamp } from '../core/math';
 
 export interface RainFrame {
   rain: number; wind: number; wet: number; dark: number;
+  /** Falling snow 0…1: the same particles as slow, swaying flakes. */
+  snow?: number;
   cam: THREE.Vector3;
   /** Ground height under the camera: a single query, splashes treat the ground as flat locally. */
   groundY: number;
@@ -37,6 +39,8 @@ export class Rain {
   private time = 0;
   private m = new THREE.Matrix4();
   private c = new THREE.Color();
+  /** This frame's particles are flakes, not drops. */
+  private snowing = false;
 
   constructor() {
     for (let i = 0; i < N; i++) {
@@ -63,9 +67,12 @@ export class Rain {
 
   update(dt: number, f: RainFrame): void {
     this.time += dt;
-    const on = f.rain > 0.02;
+    const snow = f.snow ?? 0;
+    const amount = Math.max(f.rain, snow);
+    const on = amount > 0.02;
     this.lines.visible = on;
-    const active = on ? Math.floor(N * this.density * clamp(f.rain * 1.15, 0, 1)) : 0;
+    this.snowing = snow > f.rain;
+    const active = on ? Math.floor(N * this.density * clamp(amount * 1.15, 0, 1)) : 0;
     if (on) this.streaks(dt, f, active);
     this.ripples(dt, f);
   }
@@ -74,7 +81,9 @@ export class Rain {
     const H = this.heads, P = this.pos, C = this.col;
     // gusting wind from the north-west
     const gust = f.wind * (0.75 + 0.35 * Math.sin(this.time * 0.7) + 0.15 * Math.sin(this.time * 2.3));
-    const wx = 5.5 * gust, wz = 3.2 * gust;
+    // flakes ride the wind further than drops do
+    const snow = this.snowing, wk = snow ? 1.7 : 1;
+    const wx = 5.5 * gust * wk, wz = 3.2 * gust * wk;
     // spawn volume leads the van so it never drives out of the rain
     const cx = f.cam.x + f.vx * 0.55, cz = f.cam.z + f.vz * 0.55;
     // visible band through the glass: a little above the roof down to the road
@@ -86,8 +95,10 @@ export class Rain {
     let splashes = 0;
     for (let i = 0; i < n; i++) {
       const k = i * 3;
-      const vy = -this.fall[i] * (0.85 + f.rain * 0.25);
-      let x = H[k] + wx * dt, y = H[k + 1] + vy * dt, z = H[k + 2] + wz * dt;
+      // flakes drift down at a walking pace, each swaying on its own
+      const vy = snow ? -this.fall[i] * 0.11 : -this.fall[i] * (0.85 + f.rain * 0.25);
+      const sway = snow ? Math.sin(this.time * 1.3 + i * 0.37) * 0.7 : 0;
+      let x = H[k] + (wx + sway) * dt, y = H[k + 1] + vy * dt, z = H[k + 2] + (wz + Math.cos(this.time * 1.1 + i) * sway * 0.6) * dt;
       // wrap horizontally around the moving centre
       let dx = x - cx, dz = z - cz;
       // modulo, so drops catch up at once after a teleport or a stale stretch
@@ -96,7 +107,7 @@ export class Rain {
       if (y > top + 4) y = floor + Math.random() * (top - floor);
       if (y < floor) {
         dx = x - f.cam.x; dz = z - f.cam.z;
-        if (splashes < 5 && f.wet > 0.35 && dx * dx + dz * dz < near * near && Math.random() < 0.35) { this.splash(x, floor + 0.03, z); splashes++; }
+        if (!snow && splashes < 5 && f.wet > 0.35 && dx * dx + dz * dz < near * near && Math.random() < 0.35) { this.splash(x, floor + 0.03, z); splashes++; }
         y = top - Math.random() * 3;
       }
       H[k] = x; H[k + 1] = y; H[k + 2] = z;
@@ -105,7 +116,10 @@ export class Rain {
       const rx = wx - f.vx, rz = wz - f.vz;
       let ex = rx * 0.04, ey = vy * 0.04, ez = rz * 0.04;
       const len = Math.hypot(ex, ey, ez);
-      if (len > 2.2) { const s = 2.2 / len; ex *= s; ey *= s; ez *= s; }
+      // a flake is a short tick standing still, a streak only at speed
+      const cap = snow ? 0.9 : 2.2, min = snow ? 0.07 : 0;
+      if (len > cap) { const s = cap / len; ex *= s; ey *= s; ez *= s; }
+      else if (len < min) { ey -= min - len; }
       const o = i * 6;
       P[o] = x; P[o + 1] = y; P[o + 2] = z;
       P[o + 3] = x - ex; P[o + 4] = y - ey; P[o + 5] = z - ez;
@@ -113,7 +127,7 @@ export class Rain {
       // fade with distance; hide drops inside the van body
       dx = x - f.cam.x; dz = z - f.cam.z;
       const d = Math.sqrt(dx * dx + dz * dz + (y - f.cam.y) ** 2);
-      let a = clamp(1.35 - d / 26, 0.3, 1) * clamp((d - 0.8) / 2.5, 0, 1) * (0.6 + f.rain * 0.35);
+      let a = clamp(1.35 - d / 26, 0.3, 1) * clamp((d - 0.8) / 2.5, 0, 1) * (snow ? 0.95 : 0.6 + f.rain * 0.35);
       const lx = x - f.px, lz = z - f.pz;
       const fwd = -(lx * sy + lz * cy), lat = lx * cy - lz * sy;
       if (Math.abs(lat) < 1.25 && fwd > -2.8 && fwd < 2.6 && y < roof) a = 0;

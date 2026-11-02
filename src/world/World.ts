@@ -1,8 +1,8 @@
 import * as THREE from 'three';
-import { Bucket, boxGeo, crossQuads } from '../core/geom';
+import { Bucket, boxGeo, cellKey, crossQuads, planeGeo } from '../core/geom';
 import { clamp, fbm, lerp, mulberry32, noise2, rand, RNG, smoothstep } from '../core/math';
 import { BLUE, blueSign, directionSign, kmPost, paint, settlementSign, Textures, warningSign } from '../core/textures';
-import { Ground, Road, Surface } from './Ground';
+import { Ground, Poi, Road, Surface } from './Ground';
 import {
   boardFence, busStop, church, Collider, farm, fence, garages, yardGate, haystack, izba, khrushchyovka, makeCow, Place,
   pole, postOffice, shed, shop, signPost, streetLamp, waterTower, well, woodpile, bench, T, boxCollider,
@@ -14,7 +14,12 @@ import { buildVehicle, setVehicleLamps } from './Vehicles';
 import { buildCar } from './Cars';
 import type { GaiPatrol } from './Police';
 import { Officer } from './Officer';
-import { makePerson, Person } from './People';
+import { Muha } from './Muha';
+import { SawmillBlock } from './Sawmill';
+import { snowCover, snowy } from './Snow';
+import { makeMan, makePerson, Person } from './People';
+import { Villagers } from './Villagers';
+import { Animal, AnimalKind } from './Animals';
 
 export class ColliderIndex {
   private cells = new Map<number, Collider[]>();
@@ -57,6 +62,10 @@ export interface Stop {
   line: string;
   cargo: string;
   done: boolean;
+  /** For an addressee off the main road: the name on the board at the turn-off, and where it is. */
+  turn?: { name: string; s: number };
+  /** Out along the branch road straight on from the fork (Kainly, the pioneer camp). */
+  branch?: boolean;
 }
 
 type TreeKind = 'birch' | 'spruce' | 'pine' | 'bush' | 'reeds';
@@ -69,8 +78,38 @@ export class World {
   readonly colliders = new ColliderIndex();
   readonly stops: Stop[] = [];
   readonly people: Person[] = [];
+  /** Timur's friend Muha, hanging about by the shop with his tinted saloon. */
+  muha: Muha | null = null;
+  /** Muha's saloon by the shop (it can be taken away), and where he stands by it. */
+  muhaCar!: { group: THREE.Group; col: Collider };
+  private muhaAt!: Place & { col: Collider };
+  /** The district hospital across from the post office, and әсәй at its door. */
+  hospital!: { pos: THREE.Vector3; nurse: Person };
+  /** Timur's family home on the edge of Klyuchevsk: where the prologue's drive ends, өләсәй at the gate. */
+  home!: { pos: THREE.Vector3; person: Person; s: number; grandpa?: Person };
+  /** The cars and men across the forest road by the sawmill, out on the day of Muha's second chapter. */
+  readonly sawmill: SawmillBlock;
+  /** Strolling roadside villagers (they react to the van). */
+  villagers!: Villagers;
+  /** The player's horn is sounding (set by the game loop). */
+  honk = false;
+  private honkWas = false;
+  private rainNow = 0;
+  private darkNow = 0;
+  /** Where a siren is, for villagers to turn and look (set by the game loop). */
+  watch: { x: number; z: number } | null = null;
+  /** Rain intensity for the villagers (set by the game loop). */
+  setWeather(rain: number): void { this.rainNow = rain; }
   readonly cowSpots: THREE.Vector3[] = [];
+  /** The filling station's origin: a van parked in its pump bays is refuelled. */
+  fuelBay: { x: number; z: number; rot: number } | null = null;
   readonly startPose: { x: number; z: number; yaw: number };
+  /** The van's place in the family's yard, where the mornings start. */
+  homePose!: { x: number; z: number; yaw: number };
+  /** Where Zinaida Pavlovna stands at the post office door: the morning's route sheet is had here. */
+  postDoor!: THREE.Vector3;
+  /** The grandfather on the post office porch, seen off to the Ufa bus the first morning (away the rest of the time). */
+  postGrandpa!: Person;
   private mats: Record<string, THREE.Material> = {};
   private wetMats: THREE.MeshLambertMaterial[] = [];
   private litMats: { m: THREE.MeshLambertMaterial; k: number }[] = [];
@@ -78,19 +117,35 @@ export class World {
   private puddles!: THREE.Mesh;
   private waterMat: THREE.MeshLambertMaterial;
   private waterTex: THREE.Texture;
-  private trees: Record<TreeKind, { m: THREE.Matrix4[]; c: THREE.Color[] }> = {
-    birch: { m: [], c: [] }, spruce: { m: [], c: [] }, pine: { m: [], c: [] }, bush: { m: [], c: [] }, reeds: { m: [], c: [] },
-  };
+  /** Tree instances by kind and ground cell (one instanced mesh each, so far cells are culled). */
+  private trees = new Map<string, { kind: TreeKind; m: THREE.Matrix4[]; c: THREE.Color[] }>();
   private exclusions: { x: number; z: number; r: number }[] = [];
   /** Stretches of road lined with private houses (villages, hamlets, town outskirts). */
   readonly hamlets: [number, number][] = [];
-  private cows: THREE.Group[] = [];
+  /** Cows, horses, sheep, pigs and dogs. */
+  readonly fauna: Animal[] = [];
+  /** Set by the game: animal hit / dog barking / road events worth a line on screen. */
+  onAnimalHit?: (kind: AnimalKind, speed: number) => void;
+  onBark?: () => void;
+  onEvent?: (text: string) => void;
+  private events: RoadEvent[] = [];
   private signCount = 0;
   readonly farRing: THREE.Mesh;
   readonly rail: Railway;
   readonly traffic: Traffic;
   private smoke: { sprite: THREE.Sprite; age: number; life: number }[] = [];
   private smokeSrc = new THREE.Vector3();
+  /** Family and the postmistress: they wave the van by, once each time it comes near. */
+  private readonly greeters: Person[] = [];
+  private readonly greeted = new Set<Person>();
+  /** Figures a scene has taken out of the world for now (the grandfather in the cab in the prologue). */
+  private readonly away = new Set<Person>();
+  /** Take a figure out of the world for a while, or put it back. */
+  setAway(p: Person, on: boolean): void {
+    if (on) { this.away.add(p); p.group.visible = false; this.culled.delete(p); } else if (this.away.delete(p)) p.group.visible = true;
+  }
+  /** Figures hidden for being too far away (see update). */
+  private readonly culled = new Set<Person>();
   /** Patrol car and inspector at the GAI post, driven by Police. */
   gai!: GaiPatrol;
 
@@ -102,12 +157,13 @@ export class World {
     this.waterTex.needsUpdate = true;
     this.waterTex.repeat.set(2, 1);
     this.waterMat = new THREE.MeshLambertMaterial({ map: this.waterTex, color: 0x8fa0a8, emissive: 0x1a2428 });
+    snowy(this.waterMat, 'ice');
 
     const sf = ground.main.frame(22);
     this.startPose = { x: sf.x + sf.rx * 1.7, z: sf.z + sf.rz * 1.7, yaw: Math.atan2(-sf.tx, -sf.tz) };
 
     const r = mulberry32(1997);
-    const b = new Bucket();
+    const b = new Bucket(PROP_CELL);
     const m = ground.marks;
     // known up front: terrain colouring and tree layout keep these yards clear
     const villages: [number, number, number | null, number[]][] = [
@@ -124,17 +180,25 @@ export class World {
     // single-track railway crossing the asphalt a little past the GAI post
     this.rail = new Railway(ground, m.town + 520);
     this.buildRoads();
+    this.planStation();
+    this.planHome();
     this.buildTerrain();
     this.buildRiver(b);
     this.buildTown(b, r);
     for (const [from, to, stop, sides] of villages) this.buildVillage(b, r, from, to, stop, sides);
     this.buildStops(b);
+    this.buildHome(b, r);
     const railCols: Collider[] = [];
     this.rail.buildStatic(b, railCols, (t) => this.signMat(t));
     railCols.forEach((c) => this.colliders.add(c));
     this.group.add(this.rail.group);
     this.buildRoadside(b, r);
     this.buildLandmarks(b, r);
+    this.buildPOIs(b, r);
+    this.buildSawmill(b, r);
+    this.buildBranch(b, r);
+    this.buildEvents(r);
+    this.buildVillagers(r);
     this.buildPoles(b, r);
     this.buildSigns(b);
     this.buildVegetation(r);
@@ -157,6 +221,8 @@ export class World {
     }, { repeat: false });
     this.traffic = new Traffic(ground, this.rail, this.colliders.dynamic, spray);
     this.group.add(this.traffic.group);
+    this.sawmill = new SawmillBlock(ground, m.sawmill, this.people, this.colliders.dynamic, this.traffic);
+    this.group.add(this.sawmill.group);
   }
 
   private makeMaterials(): void {
@@ -182,6 +248,9 @@ export class World {
       asphalt: wet(L(T.asphalt)), gravel: wet(L(T.gravel)), dirt: wet(L(T.dirt)), mud: wet(L(T.mud)), wood: wet(L(T.planks)),
       shoulder: wet(L(T.grass)), terrain: wet(L(T.grass)),
     };
+    // winter: whatever faces the sky can take the snow; the roads take it packed and grey
+    const roads = new Set(['asphalt', 'gravel', 'dirt', 'mud', 'wood']);
+    for (const [k, m] of Object.entries(this.mats)) snowy(m, roads.has(k) ? 'road' : 'ground');
   }
 
   private signMat(tex: THREE.Texture): string {
@@ -201,7 +270,7 @@ export class World {
     const get = (k: string) => (buf[k] ??= { p: [], u: [], c: [] });
     const g = this.ground;
     for (const road of g.roads) {
-      const off = road === g.stub ? -0.015 : 0;
+      const off = road !== g.main ? -0.015 : 0;
       // rows every 2 m, every metre where the relief is rough enough to need it
       const ss: number[] = [];
       for (let s = 0; s < road.length; ) {
@@ -239,7 +308,10 @@ export class World {
         const zone = road.zoneAt((A.s + B.s) / 2);
         const surf = road.surfaceAt((A.s + B.s) / 2, zone);
         const tl = tile[surf];
-        const dst = get(surf);
+        // split by area so the stretches behind the van and past the fog are culled
+        const mid = A.pts[LAT.length >> 1];
+        const cell = cellKey(mid[0], mid[2], CELL);
+        const dst = get(`${surf}@${cell}`);
         for (let j = 0; j < LAT.length - 1; j++) {
           const a = A.pts[j], bb = A.pts[j + 1], c = B.pts[j + 1], d = B.pts[j];
           const u0 = (LAT[j] + 1) / 2, u1 = (LAT[j + 1] + 1) / 2;
@@ -248,7 +320,7 @@ export class World {
           for (const v of [A.cols[j], A.cols[j + 1], B.cols[j], A.cols[j + 1], B.cols[j + 1], B.cols[j]]) dst.c.push(v, v, v);
         }
         if (zone.surface === 'wood') continue;
-        const sh = get('shoulder');
+        const sh = get(`shoulder@${cell}`);
         const strips: [number[], number[], number[], number[]][] = [
           [A.outer[0], A.pts[0], B.pts[0], B.outer[0]],
           [A.pts[LAT.length - 1], A.outer[1], B.outer[1], B.pts[LAT.length - 1]],
@@ -266,7 +338,7 @@ export class World {
       geo.setAttribute('uv', new THREE.Float32BufferAttribute(v.u, 2));
       geo.setAttribute('color', new THREE.Float32BufferAttribute(v.c, 3));
       geo.computeVertexNormals();
-      const mesh = new THREE.Mesh(geo, this.mats[k]);
+      const mesh = new THREE.Mesh(geo, this.mats[k.split('@')[0]]);
       mesh.name = `road:${k}`;
       this.group.add(mesh);
     }
@@ -352,20 +424,29 @@ export class World {
     const g = this.ground;
     const f = g.field(x, z);
     const main = f.road === g.main;
-    const tag = main ? g.main.zoneAt(f.s).tag : 'rural';
+    const tag = f.road.zoneAt(f.s).tag;
     const d = f.d;
     let dens = smoothstep(0.5, 0.64, fbm(x * 0.0032, z * 0.0032, 3, 5));
-    if (main && tag === 'forest') dens = Math.max(dens, 1 - smoothstep(170, 300, d));
+    if (tag === 'forest' || tag === 'bor') dens = Math.max(dens, 1 - smoothstep(170, 300, d));
     if (main && tag === 'mud') dens = Math.max(dens * 0.7, d > 30 && d < 220 ? 0.45 : 0);
     let belt = false;
-    if (tag === 'rural' || tag === 'gravel' || tag === 'fields' || tag === 'bridge') {
+    if (tag === 'rural' || tag === 'gravel' || tag === 'fields' || tag === 'bridge' || tag === 'steppe' || tag === 'meadow') {
       dens *= smoothstep(45, 130, d);
-      if (d > 52 && d < 64 && noise2(f.s * 0.012, x > 0 ? 1 : 2, 33) > 0.38) { dens = 0.95; belt = true; }
+      // shelter belts along the fields; the open steppe under the shikhan has none
+      if (tag !== 'steppe' && d > 52 && d < 64 && noise2(f.s * 0.012, x > 0 ? 1 : 2, 33) > 0.38) { dens = 0.95; belt = true; }
     }
     if (main && this.inVillage(f.s) && d < 95) dens = 0;
     if (main && tag === 'town' && d < 170) dens = 0;
     if (main && Math.abs(f.s - g.marks.junction) < 40 && d < 40) dens = 0;
-    return { dens, belt, tag, d, s: f.s, main };
+    // the branch road: Kainly's yards, the open steppe under the shikhan (bare above, birches at its foot), the lake shore
+    if (f.road === g.stub && f.s > g.branch.kaiStart - 40 && d < 95) dens = 0;
+    // the steppe stays open: a lone birch here and there
+    if (tag === 'steppe') dens *= 0.12;
+    const sh = g.shikhan, dsh = Math.hypot(x - sh.x, z - sh.z);
+    if (dsh < sh.r * 1.15) dens *= smoothstep(sh.r * 0.65, sh.r * 1.15, dsh);
+    const lk = g.lake, dl = Math.hypot(x - lk.x, z - lk.z) - lk.r;
+    if (dl < 40) dens *= smoothstep(10, 40, dl);
+    return { dens, belt, tag, d, s: f.s, main: main || tag === 'forest' };
   }
 
   private buildTerrain(): void {
@@ -378,6 +459,7 @@ export class World {
     const cA = new THREE.Color('#7f8c3e'), cB = new THREE.Color('#a8a058'), cDark = new THREE.Color('#56632c');
     const cField = new THREE.Color('#6e5642'), cStubble = new THREE.Color('#b8a868'), cForest = new THREE.Color('#4a562a');
     const cBank = new THREE.Color('#5f6440'), cBed = new THREE.Color('#4a4636'), cDust = new THREE.Color('#9a9068');
+    const cLime = new THREE.Color('#a8a596'), cSand = new THREE.Color('#e6cf94');
     for (let iz = 0; iz < nz; iz++) {
       for (let ix = 0; ix < nx; ix++) {
         const i = iz * nx + ix;
@@ -392,7 +474,17 @@ export class World {
         c.lerp(cForest, smoothstep(0.3, 0.9, lay.dens) * 0.8);
         const dr = g.riverDist(x, z);
         if (dr < 30) c.lerp(cBank, 1 - smoothstep(10, 30, dr));
-        if (h < g.waterY) c.copy(cBed);
+        // the lake's shore; the shikhan's dry grass and bare limestone crown; the quarry's sand
+        const dl = Math.hypot(x - g.lake.x, z - g.lake.z) - g.lake.r;
+        if (dl < 25) c.lerp(cBank, 1 - smoothstep(0, 25, dl));
+        const dsh = Math.hypot(x - g.shikhan.x, z - g.shikhan.z);
+        if (dsh < g.shikhan.r * 1.3) {
+          c.lerp(cStubble, (1 - smoothstep(g.shikhan.r * 0.6, g.shikhan.r * 1.3, dsh)) * 0.55);
+          if (dsh < 80) c.lerp(cLime, (1 - smoothstep(25, 80, dsh)) * (0.45 + noise2(x * 0.08, z * 0.08, 41) * 0.5));
+        }
+        const dq = Math.hypot(x - g.quarryPit.x, z - g.quarryPit.z);
+        if (dq < g.quarryPit.r + 14) c.lerp(cSand, 1 - smoothstep(g.quarryPit.r - 6, g.quarryPit.r + 14, dq));
+        if (h < g.waterAt(x, z)) c.copy(cBed);
         if (lay.d < 10) c.lerp(cDust, 0.5);
         col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
       }
@@ -480,6 +572,46 @@ export class World {
 
   // ------------------------------------------------------------ settlements
 
+  /** Where the filling station stands, with its ground levelled before the terrain mesh is built. */
+  station!: { ap: Place; edge: number };
+
+  private planStation(): void {
+    const g = this.ground, m = g.marks;
+    // the quiet stretch of rural asphalt between the town's yards and the railway crossing
+    const sA = m.town + 395;
+    const half = g.main.zoneAt(sA).width / 2;
+    const ap = this.place(sA, -(half + 13));
+    // the road's edge, on the station's local z
+    const edge = 13;
+    // the mouths meet the road at the height of its edge
+    const c = Math.cos(ap.rot), s = Math.sin(ap.rot);
+    const ex = ap.x + (edge + 0.4) * s, ez = ap.z + (edge + 0.4) * c;
+    const roadY = g.height(ex, ez);
+    ap.y = roadY - 0.13;
+    const top = ap.y + 0.15;
+    const at = (lx: number, lz: number) => [ap.x + lx * c + lz * s, ap.z - lx * s + lz * c] as const;
+    // forecourt, the two mouths, and the ground under the operator's booth
+    const [fx, fz] = at(0, 0);
+    g.addPad(fx, fz, ap.rot, 15, 6.5, top, 14, edge - 1);
+    for (const sx of [-1, 1]) {
+      const [dx, dz] = at(sx * 12, (6.5 + edge + 0.4) / 2);
+      g.addPad(dx, dz, ap.rot, 3, (edge + 0.4 - 6.5) / 2, top, 14, edge - 1);
+    }
+    const [bx, bz] = at(-6, -8.7);
+    g.addPad(bx, bz, ap.rot, 3.4, 2.2, top, 10, edge - 1);
+    this.station = { ap, edge };
+  }
+
+  /** True when (x, z) is in one of the two lanes beside the pump island. */
+  inFuelBay(x: number, z: number): boolean {
+    const f = this.fuelBay;
+    if (!f) return false;
+    const dx = x - f.x, dz = z - f.z, c = Math.cos(f.rot), s = Math.sin(f.rot);
+    const lx = dx * c - dz * s, lz = dx * s + dz * c;
+    // a lane on either side of the island, the van nose to tail along it by the pump
+    return Math.abs(lx) < 3.4 && Math.abs(lz) > 1.3 && Math.abs(lz) < 4.6;
+  }
+
   private place(s: number, lat: number, faceRoad = true, extraRot = 0): Place {
     const f = this.ground.main.frame(s);
     const x = f.x + f.rx * lat, z = f.z + f.rz * lat;
@@ -497,14 +629,450 @@ export class World {
     return m;
   }
 
-  private fenceAlong(b: Bucket, s0: number, s1: number, lat: number, r: RNG, solid = false): void {
+  private fenceAlong(b: Bucket, s0: number, s1: number, lat: number, r: RNG, solid = false, road: Road = this.ground.main): void {
     if (s1 - s0 < 0.8) return;
     const sm = (s0 + s1) / 2;
-    const f = this.ground.main.frame(sm);
+    const f = road.frame(sm);
     const x = f.x + f.rx * lat, z = f.z + f.rz * lat;
     const fp = { x, y: this.ground.terrainAt(x, z), z, rot: Math.atan2(-f.tz, f.tx) };
     if (solid) boardFence(b, fp, s1 - s0, r); else fence(b, fp, s1 - s0, r);
     this.colliders.add({ x, z, r: (s1 - s0) / 2 + 0.3, hw: (s1 - s0) / 2, hd: 0.15, rot: Math.atan2(-f.tz, f.tx), box: true });
+  }
+
+  /**
+   * The branch road straight on from the fork (Ground.buildBranch): the shikhan with a geodetic
+   * tripod on its crown, the sand quarry with a rusted excavator, the lake with a jetty, a boat and a
+   * fisherman, the closed pioneer camp «Звёздочка» with its caretaker, and the Tatar village of Kainly
+   * with its wooden mosque. Two addressees: Farida-apa at Kainly's medical post, Mikhalych at the camp.
+   */
+  private buildBranch(b: Bucket, r: RNG): void {
+    const g = this.ground, st = g.stub, B = g.branch;
+    const cols: Collider[] = [];
+    const clear = (x: number, z: number, rad: number) => this.exclusions.push({ x, z, r: rad });
+    const on = (road: Road, s: number, lat: number, face = true, rot = 0) => this.placeOn(road, s, lat, face, rot);
+    /** A point in a place's own frame (local +Z as the Place faces). */
+    const local = (p: Place, lx: number, lz: number, rot = 0): Place => {
+      const c = Math.cos(p.rot), sn = Math.sin(p.rot);
+      const x = p.x + lx * c + lz * sn, z = p.z - lx * sn + lz * c;
+      return { x, y: g.terrainAt(x, z), z, rot: p.rot + rot };
+    };
+    const post = (x: number, z: number, rad = 0.2) => cols.push({ x, z, r: rad, hw: 0, hd: 0, rot: 0, box: false });
+    const board = (text: string, bg = '#1f4e8a', fg = '#f2f2ea', w = 192, h = 40) => this.signMat(paint(w, h, (c, cw, ch) => {
+      c.fillStyle = bg; c.fillRect(0, 0, cw, ch);
+      c.fillStyle = fg; c.fillRect(3, 3, cw - 6, ch - 6);
+      c.fillStyle = bg; c.fillRect(5, 5, cw - 10, ch - 10);
+      c.fillStyle = fg; c.font = `bold ${Math.round(ch * 0.42)}px "PT Sans Narrow", "Arial Narrow", sans-serif`; c.textAlign = 'center'; c.textBaseline = 'middle';
+      c.fillText(text, cw / 2, ch / 2 + 1, cw - 16);
+    }, { repeat: false }));
+    /** Which side of the branch road a spur leaves on (1 = the road's right). */
+    const sideOf = (spur: Road, s0: number) => {
+      const f = st.frame(s0), q = spur.samples[Math.min(spur.samples.length - 1, 15)];
+      return (q.x - f.x) * f.rx + (q.z - f.z) * f.rz > 0 ? 1 : -1;
+    };
+    /** A sign by the branch road, on its right (side 1) or left, facing the traffic that reads it. */
+    const sign = (road: Road, s: number, key: string, w: number, h: number, height = 2.2, posts = 1, side = 1) => {
+      const half = road.zoneAt(s).width / 2;
+      const f = road.frame(s);
+      const lat = side * (half + 1.9);
+      const x = f.x + f.rx * lat, z = f.z + f.rz * lat;
+      const rot = side > 0 ? Math.atan2(-f.tx, -f.tz) : Math.atan2(f.tx, f.tz);
+      signPost(b, { x, y: g.terrainAt(x, z), z, rot }, key, w, h, height, posts);
+      post(x, z);
+    };
+
+    // ---- the shikhan: grass and bare limestone, boulders on the crown, a geodetic tripod on top
+    {
+      const sh = g.shikhan;
+      for (let i = 0; i < 34; i++) {
+        const a = r() * Math.PI * 2, d = Math.sqrt(r()) * 85;
+        const x = sh.x + Math.cos(a) * d, z = sh.z + Math.sin(a) * d;
+        const s = rand(r, 0.8, 3.2);
+        b.add('flat', new THREE.DodecahedronGeometry(1, 0), T({ x, y: g.terrainAt(x, z) - s * 0.35, z, rot: r() * 6 }, 0, 0, 0, r(), r(), r(), s * rand(r, 1, 1.6), s, s * rand(r, 0.8, 1.3)), '#a6a497');
+      }
+      let top = { x: sh.x, z: sh.z, y: -1e9 };
+      for (let i = 0; i < 60; i++) {
+        const x = sh.x + (r() - 0.5) * 60, z = sh.z + (r() - 0.5) * 60, y = g.terrainAt(x, z);
+        if (y > top.y) top = { x, z, y };
+      }
+      const tp: Place = { ...top, rot: 0.4 };
+      for (const [lx, lz] of [[-1.6, -1.6], [1.6, -1.6], [1.6, 1.6], [-1.6, 1.6]]) {
+        b.add('boards', boxGeo(0.14, 6.6, 0.14), T(tp, lx * 0.55, 3.1, lz * 0.55, lz * 0.09, 0, -lx * 0.09), '#7a6a58');
+      }
+      b.add('boards', boxGeo(1.1, 0.6, 1.1), T(tp, 0, 6.2, 0), '#8a7a66');
+      b.add('flat', boxGeo(0.1, 1.6, 0.1), T(tp, 0, 7.2, 0), '#5a4a3a');
+      clear(sh.x, sh.z, 20);
+    }
+    sign(st, B.gravel - 30, this.signMat(blueSign(['Кайынлы 2', 'п/л «Звёздочка» 1'], 128, 48)), 1.9, 0.72, 2.1, 2);
+
+    // ---- the sand quarry at the end of its track: a pit, heaps of sand, an excavator left to rust
+    {
+      const q = g.branchSpurs.find((x) => x.id === 'quarry')!;
+      sign(st, B.quarry - 12, board('КАРЬЕР', '#6a5030', '#f0e4c8', 128, 32), 1.2, 0.3, 1.9, 1, sideOf(q, B.quarry));
+      const pit = g.quarryPit;
+      clear(pit.x, pit.z, pit.r + 20);
+      // the sand itself: a skin laid over the pit's floor and walls (the terrain's grass texture would turn any tint olive)
+      {
+        const R = pit.r + 6;
+        const geo = new THREE.RingGeometry(0.5, R, 36, 12);
+        geo.rotateX(-Math.PI / 2);
+        const pos = geo.attributes.position;
+        for (let i = 0; i < pos.count; i++) {
+          const x = pit.x + pos.getX(i), z = pit.z + pos.getZ(i);
+          pos.setXYZ(i, x, g.terrainAt(x, z) + 0.06, z);
+        }
+        geo.computeVertexNormals();
+        b.add('flat', geo, undefined, '#d9be84');
+      }
+      for (let i = 0; i < 4; i++) {
+        const a = 0.6 + i * 1.3, d = pit.r * 0.55;
+        const x = pit.x + Math.cos(a) * d, z = pit.z + Math.sin(a) * d;
+        const rad = rand(r, 3, 5.5);
+        b.add('flat', new THREE.ConeGeometry(rad, rad * 0.55, 10), T({ x, y: g.terrainAt(x, z) - 0.2, z, rot: 0 }, 0, rad * 0.27, 0), '#cfb47c');
+        cols.push({ x, z, r: rad * 0.8, hw: 0, hd: 0, rot: 0, box: false, soft: true });
+      }
+      const ex = on(q, q.length - 6, 9, false, 1.1);
+      ex.y -= 0.1;
+      b.add('rust', boxGeo(2.6, 0.9, 4.2), T(ex, 0, 0.45, 0), '#7a5a40');
+      b.add('rust', boxGeo(2.4, 1.0, 3.2), T(ex, 0, 1.4, -0.3), '#8a6040');
+      b.add('rust', boxGeo(1.4, 1.5, 1.5), T(ex, -0.4, 2.6, 0.5), '#8e6a48');
+      b.add('rust', boxGeo(0.45, 0.45, 6.5), T(ex, 0.6, 2.9, 3.6, -0.55, 0, 0), '#6e4e36');
+      b.add('rust', boxGeo(0.4, 0.4, 3.4), T(ex, 0.6, 2.4, 7.4, 0.9, 0, 0), '#6e4e36');
+      b.add('rust', boxGeo(1.2, 0.9, 1.0), T(ex, 0.6, 0.8, 8.4, 0.3, 0, 0), '#5e4430');
+      cols.push(boxCollider(ex, 0, 0, 2.8, 4.4));
+    }
+
+    // ---- the lake: water, a jetty from the shore by the track, a boat turned over, a fisherman
+    {
+      const L = g.lake;
+      const water = new THREE.Mesh(new THREE.CircleGeometry(L.r + 4, 48), this.waterMat);
+      water.rotation.x = -Math.PI / 2;
+      water.position.set(L.x, L.y, L.z);
+      this.group.add(water);
+      const lf = st.frame(B.lake);
+      const dx = lf.x - L.x, dz = lf.z - L.z, dl = Math.hypot(dx, dz);
+      const ux = dx / dl, uz = dz / dl;
+      // the jetty: planks on posts from the shore out over the water, toward the lake's middle
+      const jp: Place = { x: L.x + ux * (L.r - 3), y: L.y + 0.45, z: L.z + uz * (L.r - 3), rot: Math.atan2(ux, uz) };
+      b.add('planks', boxGeo(1.4, 0.08, 11), T(jp, 0, 0, 0), '#8a7a62');
+      for (const lz of [-5, -1.5, 2, 5]) for (const lx of [-0.6, 0.6]) b.add('boards', boxGeo(0.1, 1.6, 0.1), T(jp, lx, -0.7, lz), '#4a3e30');
+      const fisher = makeMan('#5a6a50', '#2e2a30', '#6a5a4a');
+      const fp = local(jp, 0.2, -4.4);
+      fisher.group.position.set(fp.x, L.y + 0.49, fp.z);
+      fisher.group.rotation.y = jp.rot + Math.PI;
+      this.group.add(fisher.group);
+      this.people.push(fisher);
+      // his rod, out over the water
+      const rod = local(jp, 0.5, -5.2);
+      b.add('flat', new THREE.CylinderGeometry(0.012, 0.02, 3.4, 4), T({ ...rod, y: L.y + 1.3 }, 0, 0, -1.2, -0.95, 0, 0), '#3a2e22');
+      // a boat bottom-up on the grass, a bench, an old fire ring
+      const shore = (lat: number, out: number): Place => {
+        const px = -uz, pz = ux;
+        const x = L.x + ux * (L.r + out) + px * lat, z = L.z + uz * (L.r + out) + pz * lat;
+        return { x, y: g.terrainAt(x, z), z, rot: Math.atan2(ux, uz) };
+      };
+      const boat = shore(9, 3);
+      // the upper half of a cylinder laid along the shore: a hull, keel up
+      b.add('boards', new THREE.CylinderGeometry(0.62, 0.62, 3.8, 8, 1, false, -Math.PI / 2, Math.PI), T(boat, 0, 0.05, 0, -Math.PI / 2, 0, 0), '#4a6a7a');
+      cols.push(boxCollider(boat, 0, 0, 1.3, 3.9));
+      bench(b, shore(-7, 6));
+      const fire = shore(-4, 9);
+      for (let i = 0; i < 7; i++) {
+        const a = (i / 7) * Math.PI * 2;
+        b.add('flat', new THREE.DodecahedronGeometry(0.18, 0), T(fire, Math.cos(a) * 0.55, 0.08, Math.sin(a) * 0.55), '#7a7a72');
+      }
+      b.add('flat', boxGeo(0.7, 0.06, 0.7), T(fire, 0, 0.03, 0), '#2a2620');
+      sign(st, B.lake - 60, this.signMat(blueSign(['оз. Кайынкуль'])), 2.0, 0.5, 2.0);
+    }
+
+    // ---- the pioneer camp «Звёздочка», closed since '92: gate and fence, the dormitories, the flagpole, a caretaker
+    {
+      const cr = g.branchSpurs.find((x) => x.id === 'camp-road')!;
+      const end = cr.length;
+      sign(st, B.camp - 14, board('П/Л «ЗВЁЗДОЧКА»', '#9a2a22', '#f2e8d8', 192, 40), 1.6, 0.36, 2.0, 2, sideOf(cr, B.camp));
+      // the gate across the end of the track, facing up it
+      const gp = on(cr, end - 1, 0, false, Math.PI);
+      signPost(b, gp, board('ЗВЁЗДОЧКА', '#b0302a', '#f4ecd8', 256, 48), 6.2, 1.0, 3.6, 2);
+      // the camp's own frame: local +Z away from the gate, into the camp
+      const cp: Place = { ...gp, rot: gp.rot + Math.PI };
+      const inner = (lx: number, lz: number, rot = 0) => local(cp, lx, lz, rot);
+      clear(inner(0, 22).x, inner(0, 22).z, 42);
+      for (const side of [-1, 1]) {
+        const fp = inner(side * 13, 0.2);
+        fence(b, fp, 18, r);
+        this.colliders.add({ x: fp.x, z: fp.z, r: 9.3, hw: 9, hd: 0.15, rot: fp.rot, box: true });
+        post(inner(side * 2.2, 0).x, inner(side * 2.2, 0).z);
+      }
+      // the dormitories: long timber blocks with faded paint, roofs of grey slate
+      const tints = ['#8fa8c0', '#a8c094', '#c8b888', '#a8b4c0'];
+      [[-11, 16], [11, 16], [-11, 32], [11, 32]].forEach(([lx, lz], i) => {
+        const hp = { ...inner(lx, lz, Math.PI / 2), y: inner(lx, lz).y };
+        b.add('boards', boxGeo(11, 2.8, 5), T(hp, 0, 1.3, 0), tints[i]);
+        b.add('slate', boxGeo(11.6, 0.07, 3.2), T(hp, 0, 3.15, 1.3, 0.5, 0, 0), '#9a9a92');
+        b.add('slate', boxGeo(11.6, 0.07, 3.2), T(hp, 0, 3.15, -1.3, -0.5, 0, 0), '#9a9a92');
+        for (const wx of [-3.6, -1.2, 1.2, 3.6]) b.add('flat', boxGeo(0.9, 0.8, 0.04), T(hp, wx, 1.6, 2.52), '#2e3a44');
+        cols.push(boxCollider(hp, 0, 0, 11, 5));
+      });
+      // the parade ground: the flagpole and its stand for the morning line-up, a sun shelter, the slogan
+      const flag = inner(0, 24);
+      b.add('flat', new THREE.CylinderGeometry(0.05, 0.07, 9, 6), T(flag, 0, 4.5, 0), '#c8c8c0');
+      b.add('flat', boxGeo(2.4, 0.4, 1.4), T(flag, 0, 0.2, 0), '#b8b4a8');
+      post(flag.x, flag.z, 0.6);
+      const mush = inner(6, 9);
+      b.add('flat', new THREE.CylinderGeometry(0.1, 0.1, 2.2, 6), T(mush, 0, 1.1, 0), '#c8c0b0');
+      b.add('flat', new THREE.ConeGeometry(1.5, 0.9, 10), T(mush, 0, 2.5, 0), '#b8443a');
+      post(mush.x, mush.z);
+      signPost(b, inner(-6, 9, Math.PI), board('БУДЬ ГОТОВ!', '#b0302a', '#f4ecd8', 160, 40), 2.4, 0.6, 1.6, 2);
+      // the caretaker's hut by the gate, and the caretaker
+      shed(b, inner(-6, 3.5), r, cols);
+      const mp = inner(1.6, 1.8);
+      const keeper = makeMan('#4a5240', '#2e2a30', '#9a9488');
+      keeper.group.position.set(mp.x, mp.y, mp.z);
+      keeper.group.rotation.y = cp.rot + Math.PI;
+      this.group.add(keeper.group);
+      this.people.push(keeper);
+      this.stops.push({ id: 'camp', name: 'Пионерлагерь «Звёздочка»', s: g.marks.junction - 1 + B.camp * 1e-4, pos: new THREE.Vector3(mp.x, mp.y, mp.z), person: keeper,
+        speaker: 'Михалыч, сторож лагеря', line: 'О, почта! Сюда уж года три никто не заезжал, кроме меня и ворон. Давай газеты — почитаю горнисту. Он у нас один остался, гипсовый.',
+        cargo: '', done: false, branch: true });
+    }
+
+    // ---- Kainly: houses along the end of the road, the mosque, the medical post's Farida-apa by the bus stop
+    {
+      this.buildVillage(b, r, B.kaiStart, B.end - 15, B.kaiStop, [-1, 1], st);
+      const half = st.zoneAt(B.kaiStop).width / 2;
+      sign(st, B.kaiStart - 10, this.signMat(settlementSign('Кайынлы', false)), 2.2, 0.82, 2.1, 2);
+      busStop(b, on(st, B.kaiStop - 14, half + 3.8), cols);
+      // the wooden mosque behind the stop: a white prayer house, green iron roof, an octagonal minaret with a crescent
+      const mq = on(st, B.kaiStop + 4, half + 22);
+      mq.y = this.groundMin(mq, 10, 12);
+      clear(mq.x, mq.z, 16);
+      b.add('boards', boxGeo(9, 3.6, 11), T(mq, 0, 1.7, 0), '#e6e0d0');
+      // two roof slopes meeting in a ridge along the hall
+      for (const sx of [-1, 1]) b.add('metalRoof', boxGeo(5.6, 0.08, 11.8), T(mq, sx * 2.35, 4.85, 0, 0, 0, -sx * 0.55), '#4a7a5a');
+      for (const wz of [-3.5, 0, 3.5]) for (const sx of [-1, 1]) b.add('flat', boxGeo(0.04, 1.3, 0.9), T(mq, sx * 4.52, 2.0, wz), '#3a5a6a');
+      const mn = local(mq, 0, 4.2);
+      mn.y = mq.y;
+      b.add('boards', new THREE.CylinderGeometry(1.05, 1.2, 3.2, 8), T(mn, 0, 5.4, 0), '#e6e0d0');
+      b.add('flat', new THREE.CylinderGeometry(1.5, 1.5, 0.18, 8), T(mn, 0, 7.1, 0), '#4a7a5a');
+      b.add('boards', new THREE.CylinderGeometry(0.75, 0.85, 2.4, 8), T(mn, 0, 8.4, 0), '#e6e0d0');
+      b.add('metalRoof', new THREE.ConeGeometry(0.95, 3.2, 8), T(mn, 0, 11.2, 0), '#4a7a5a');
+      b.add('flat', new THREE.CylinderGeometry(0.03, 0.03, 1.0, 4), T(mn, 0, 13.2, 0), '#d8b850');
+      b.add('flat', new THREE.TorusGeometry(0.28, 0.045, 4, 10, Math.PI * 1.5), T(mn, 0, 13.85, 0, 0, 0, Math.PI * 0.5), '#d8b850');
+      cols.push(boxCollider(mq, 0, 0, 9, 11));
+      const fp = on(st, B.kaiStop, half + 2.3);
+      const farida = makePerson('#3a5a6a', '#e0c050', true, 'dress');
+      farida.group.position.set(fp.x, fp.y, fp.z);
+      farida.group.rotation.y = fp.rot;
+      this.group.add(farida.group);
+      this.people.push(farida);
+      this.stops.push({ id: 'kainly', name: 'Кайынлы', s: g.marks.junction - 1 + B.kaiStop * 1e-4, pos: new THREE.Vector3(fp.x, fp.y, fp.z), person: farida,
+        speaker: 'Фарида-апа, медпункт', line: 'Әйдә, улым, почта килде! Рәхмәт. Чай эчеп китәсеңме? Чак-чак свежий, сама пекла — бери, бери, не стесняйся.',
+        cargo: '', done: false, branch: true });
+    }
+    cols.forEach((c) => this.colliders.add(c));
+  }
+
+  /**
+   * The sawmill in the forest past Sosnovka: a board-fenced yard beside the track with an
+   * open saw shed, a stack of sawlogs, boards drying, a heap of sawdust and the workers' hut. The
+   * gate stands open onto the road — where, one day, the cars stand across it (SawmillBlock).
+   */
+  private buildSawmill(b: Bucket, r: RNG): void {
+    const g = this.ground, s = g.marks.sawmill;
+    const half = g.main.zoneAt(s).width / 2;
+    const cols: Collider[] = [];
+    const yard = this.place(s + 18, half + 17);
+    yard.y = this.groundMin(yard, 22, 16);
+    this.exclusions.push({ x: yard.x, z: yard.z, r: 22 });
+    // yard frame: local +Z toward the road, X along it
+    const c = Math.cos(yard.rot), sn = Math.sin(yard.rot);
+    const at = (lx: number, lz: number, rot = 0): Place => {
+      const x = yard.x + lx * c + lz * sn, z = yard.z - lx * sn + lz * c;
+      return { x, y: g.terrainAt(x, z), z, rot: yard.rot + rot };
+    };
+    // the saw shed: four posts, a slate roof, the bench with its round blade
+    const shedP = { ...at(0, -1), y: yard.y };
+    for (const [px, pz] of [[-4.5, -2.8], [4.5, -2.8], [-4.5, 2.8], [4.5, 2.8]]) {
+      b.add('boards', boxGeo(0.2, 3.3, 0.2), T(shedP, px, 1.6, pz), '#6a5440');
+      const q = at(px, pz - 1);
+      cols.push({ x: q.x, z: q.z, r: 0.2, hw: 0, hd: 0, rot: 0, box: false });
+    }
+    b.add('slate', boxGeo(10.4, 0.07, 6.8), T(shedP, 0, 3.3, 0, 0.12, 0, 0), '#8e8e86');
+    b.add('boards', boxGeo(7, 0.85, 1.1), T(shedP, 0, 0.42, 0), '#5a4a3a');
+    b.add('flat', new THREE.CylinderGeometry(0.55, 0.55, 0.03, 18), T(shedP, 0.6, 1.0, 0, Math.PI / 2, 0, 0), '#a8aeb2');
+    cols.push(boxCollider(shedP, 0, 0, 7, 1.1));
+    // sawlogs waiting, stacked in rows
+    const logs = { ...at(-9.5, -1), y: yard.y };
+    for (let i = 0; i < 12; i++) {
+      const row = i < 5 ? 0 : i < 9 ? 1 : 2;
+      const k = i < 5 ? i : i < 9 ? i - 5 : i - 9;
+      b.add('boards', new THREE.CylinderGeometry(0.3, 0.3, 7, 7), T(logs, -1.2 + k * 0.6 + row * 0.3, 0.3 + row * 0.52, 0, Math.PI / 2, 0, 0), '#8a6a4a');
+    }
+    cols.push(boxCollider(logs, 0, 0, 3.2, 7));
+    // fresh boards on spacers, and the sawdust heap
+    const boardsP = { ...at(7.5, 3.5), y: yard.y };
+    b.add('planks', boxGeo(1.4, 0.9, 5.5), T(boardsP, 0, 0.45, 0), '#c0a078');
+    cols.push(boxCollider(boardsP, 0, 0, 1.4, 5.5));
+    const heap = at(7.5, -3);
+    b.add('flat', new THREE.ConeGeometry(2.4, 1.5, 10), T(heap, 0, 0.7, 0), '#c8a46a');
+    cols.push({ x: heap.x, z: heap.z, r: 2, hw: 0, hd: 0, rot: 0, box: false, soft: true });
+    shed(b, at(-3, -10), r, cols);
+    // board fence along the road with the gate open, and the board over it
+    this.fenceAlong(b, s - 14, s + 2, half + 3, r, true);
+    this.fenceAlong(b, s + 9, s + 40, half + 3, r, true);
+    const tex = paint(160, 40, (cx, w, h) => {
+      cx.fillStyle = '#5a4630'; cx.fillRect(0, 0, w, h);
+      cx.fillStyle = '#e8dcc0'; cx.font = 'bold 22px "PT Sans Narrow", "Arial Narrow", sans-serif'; cx.textAlign = 'center'; cx.textBaseline = 'middle';
+      cx.fillText('ПИЛОРАМА', w / 2, h / 2 + 1, w - 12);
+    }, { repeat: false });
+    signPost(b, this.place(s - 2, half + 2.2, false, Math.PI / 2), this.signMat(tex), 1.4, 0.35, 1.9, 2);
+    cols.forEach((col) => this.colliders.add(col));
+  }
+
+  /**
+   * The yard's frame (local +Z back down the lane to the road, the gate at z = +11, the lane's end at
+   * +14), and the yard levelled to the lane's end before the terrain is built: the house stands on a
+   * slope, and an unmade road's dead end would otherwise leave a step the van can't climb out of.
+   */
+  private yard!: { cx: number; cz: number; rot: number };
+  private planHome(): void {
+    const g = this.ground;
+    const lane = g.homeRoad.samples, end = lane[lane.length - 1];
+    const rot = Math.atan2(-end.tx, -end.tz);
+    const cx = end.x + end.tx * 14, cz = end.z + end.tz * 14;
+    this.yard = { cx, cz, rot };
+    // level with the lane's end (a hair under, so the terrain never shows through its ruts)
+    const y = end.y - 0.05;
+    const c = Math.cos(rot), s = Math.sin(rot);
+    g.addPad(cx + 0.5 * s, cz + 0.5 * c, rot, 13.6, 13.6, y, 12, Infinity, 'dirt');
+  }
+
+  /**
+   * The family's yard at the far end of the forest road, in Urmanly (Ground.buildHomeRoad): a picket
+   * fence round it with the gate standing open, the blue mailbox and the house plate by the gate,
+   * the house with a TV aerial, the grandfather's garage where the van is mended in the evenings, a
+   * woodpile and a bench, and өләсәй and the grandfather by the porch; the village's yards along the
+   * street before it, a neighbour at her gate. In the mornings the van stands in the yard (homePose);
+   * the day's route sheet is at the post office in Klyuchevsk, a kilometre away through the wood.
+   */
+  private buildHome(b: Bucket, r: RNG): void {
+    const g = this.ground, road = g.homeRoad;
+    const cols: Collider[] = [];
+    const lane = road.samples, end = lane[lane.length - 1];
+    const { cx, cz, rot } = this.yard;
+    const c = Math.cos(rot), sn = Math.sin(rot);
+    const at = (lx: number, lz: number, turn = 0): Place => {
+      const x = cx + lx * c + lz * sn, z = cz - lx * sn + lz * c;
+      return { x, y: g.terrainAt(x, z), z, rot: rot + turn };
+    };
+    const yard = at(0, 0);
+    this.exclusions.push({ x: yard.x, z: yard.z, r: 21 });
+    for (let i = 0; i < lane.length; i += 4) this.exclusions.push({ x: lane[i].x, z: lane[i].z, r: 6 });
+    const fenceAt = (lx: number, lz: number, len: number, turn: number) => {
+      const p = at(lx, lz, turn);
+      fence(b, p, len, r);
+      cols.push({ x: p.x, z: p.z, r: len / 2 + 0.3, hw: len / 2, hd: 0.15, rot: p.rot, box: true });
+    };
+    // the fence: the front either side of the gate, the sides and the back
+    fenceAt(-7.7, 11, 10.6, 0);
+    fenceAt(7.7, 11, 10.6, 0);
+    fenceAt(-13, -1, 24, Math.PI / 2);
+    fenceAt(13, -1, 24, Math.PI / 2);
+    fenceAt(0, -13, 26, 0);
+    // the gate: posts, a beam high enough for the van, both leaves swung open into the yard
+    for (const x of [-2.5, 2.5]) {
+      const gp = at(x, 11);
+      b.add('flat', boxGeo(0.22, 2.9, 0.22), T(gp, 0, 1.45, 0), '#4c4236');
+      cols.push({ x: gp.x, z: gp.z, r: 0.2, hw: 0, hd: 0, rot: 0, box: false });
+      const leaf = at(x * 0.96, 9.8, Math.PI / 2);
+      b.add('boards', boxGeo(2.3, 1.7, 0.06, 1), T(leaf, 0, 1.0, 0), '#5f7f9e');
+      cols.push(boxCollider(leaf, 0, 0, 2.3, 0.2));
+    }
+    b.add('boards', boxGeo(5.4, 0.14, 0.5), T(at(0, 11), 0, 2.85, 0), '#6a5a48');
+    // the house, the aerial on its roof, a bench by the porch
+    const hp = at(-5, -6.5);
+    hp.y = this.groundMin(hp, 7, 8.6);
+    izba(b, hp, r, true, cols);
+    b.add('flat', new THREE.CylinderGeometry(0.03, 0.04, 3.4, 5), T(hp, 1.2, 6.8, -1.5), '#8a8a86');
+    for (const [y, w] of [[7.9, 1.6], [8.2, 1.1], [8.45, 0.7]] as [number, number][]) b.add('flat', boxGeo(w, 0.03, 0.03), T(hp, 1.2, y, -1.5), '#8a8a86');
+    bench(b, at(-8.5, -1.3));
+    // the garage: a corrugated-iron box with a pitched roof, its doors to the yard
+    const gp = at(7.5, -5.5);
+    gp.y = this.groundMin(gp, 4, 6.5);
+    b.add('metalRoof', boxGeo(4, 2.5, 6.2), T(gp, 0, 1.2, 0), '#7a8a96');
+    b.add('slate', boxGeo(4.6, 0.07, 7), T(gp, 0, 2.6, 0, 0.12, 0, 0), '#9a9a92');
+    b.add('flat', boxGeo(3.2, 2.1, 0.06), T(gp, 0, 1.05, 3.12), '#5a6a74');
+    cols.push(boxCollider(gp, 0, 0, 4, 6.2));
+    // the woodpile along the back fence
+    const wp = at(-9, -11.6);
+    for (let i = 0; i < 3; i++) b.add('boards', new THREE.CylinderGeometry(0.16, 0.16, 5, 6), T(wp, 0, 0.2 + i * 0.3, -i * 0.05, 0, 0, Math.PI / 2), '#8a6a4a');
+    b.add('slate', boxGeo(5.4, 0.05, 1.2), T(wp, 0, 1.1, 0, 0.15, 0, 0), '#8a8a82');
+    cols.push(boxCollider(wp, 0, 0, 5.2, 0.9));
+    // birches either side of the gate, outside
+    this.addTree('birch', at(-5.5, 14).x, at(-5.5, 14).z, rand(r, 11, 14), r, true);
+    this.addTree('birch', at(6.5, 15).x, at(6.5, 15).z, rand(r, 10, 13), r, true);
+    // the van's place in the mornings: inside the gate, nose to it and square on it (the opening between
+    // the open leaves is ~4.6 m), clear of the two at the porch
+    const vp = at(0.3, 4);
+    this.homePose = { x: vp.x, z: vp.z, yaw: Math.atan2(end.tx, end.tz) };
+    // by the gate: the blue mailbox on its post and the house plate on the fence
+    {
+      const mp = at(3.4, 11.6);
+      b.add('flat', boxGeo(0.08, 1.1, 0.08), T(mp, 0, 0.55, 0), '#5c5040');
+      b.add('flat', boxGeo(0.42, 0.5, 0.24), T(mp, 0, 1.3, 0), '#2a5aa8');
+      b.add('flat', boxGeo(0.3, 0.03, 0.02), T(mp, 0, 1.42, 0.125), '#1a2a48');
+      cols.push({ x: mp.x, z: mp.z, r: 0.2, hw: 0, hd: 0, rot: 0, box: false });
+      const tex = paint(160, 48, (cx2, w, h) => {
+        cx2.fillStyle = '#2a4a8a'; cx2.fillRect(0, 0, w, h);
+        cx2.strokeStyle = '#e8ecf0'; cx2.lineWidth = 3; cx2.strokeRect(4, 4, w - 8, h - 8);
+        cx2.fillStyle = '#e8ecf0'; cx2.font = 'bold 20px "PT Sans Narrow", "Arial Narrow", sans-serif'; cx2.textAlign = 'center'; cx2.textBaseline = 'middle';
+        cx2.fillText('ЛЕСНАЯ · 14', w / 2, h / 2 + 1, w - 14);
+      }, { repeat: false });
+      signPost(b, at(-4.2, 11.3), this.signMat(tex), 0.9, 0.27, 1.5, 1);
+    }
+    // Urmanly: a dozen yards along the last stretch of the road, the signs at either end of the street
+    {
+      const hm = g.homeMarks, L = road.length;
+      this.buildVillage(b, r, hm.village + 6, L - 36, null, [-1, 1], road);
+      const half = road.zoneAt(hm.village).width / 2;
+      const sign = (s: number, side: number, exit: boolean) => {
+        const f = road.frame(s), lat = side * (half + 1.8);
+        const x = f.x + f.rx * lat, z = f.z + f.rz * lat;
+        const rot = side > 0 ? Math.atan2(-f.tx, -f.tz) : Math.atan2(f.tx, f.tz);
+        signPost(b, { x, y: g.terrainAt(x, z), z, rot }, this.signMat(settlementSign('Урманлы', exit)), 2.2, 0.82, 2.1, 2);
+        cols.push({ x, z, r: 0.2, hw: 0, hd: 0, rot: 0, box: false });
+      };
+      sign(hm.village - 6, 1, false);
+      sign(hm.village - 2, -1, true);
+      // the neighbour at her gate, who sees the post van off every morning (the first morning's horn lesson)
+      const np = this.placeOn(road, L - 120, half + 3.4);
+      const apai = makePerson('#4a5a3a', '#d8c8a0', false, 'dress');
+      apai.group.position.set(np.x, np.y, np.z);
+      apai.group.rotation.y = np.rot;
+      this.group.add(apai.group);
+      this.people.push(apai);
+      this.greeters.push(apai);
+      cols.push({ x: np.x, z: np.z, r: 0.35, hw: 0, hd: 0, rot: 0, box: false });
+    }
+    // өләсәй by the porch, and the grandfather by her, leaning on his stick
+    const pp = at(-3.4, -0.6);
+    const ebi = makePerson('#6a4a5a', '#c84a3a', true, 'dress');
+    ebi.group.position.set(pp.x, pp.y, pp.z);
+    ebi.group.rotation.y = pp.rot;
+    this.group.add(ebi.group);
+    this.people.push(ebi);
+    cols.push({ x: pp.x, z: pp.z, r: 0.35, hw: 0, hd: 0, rot: 0, box: false });
+    this.home = { pos: new THREE.Vector3(pp.x, pp.y, pp.z), person: ebi, s: road.length };
+    const kp = at(-1.8, -0.2);
+    const kartatay = new Person('kartatay', {});
+    kartatay.group.position.set(kp.x, kp.y, kp.z);
+    kartatay.group.rotation.y = kp.rot;
+    this.group.add(kartatay.group);
+    this.people.push(kartatay);
+    b.add('flat', new THREE.CylinderGeometry(0.018, 0.022, 0.95, 5), T(kp, -0.32, 0.47, 0.18, 0.12, 0, 0.1), '#5a4632');
+    cols.push({ x: kp.x, z: kp.z, r: 0.35, hw: 0, hd: 0, rot: 0, box: false });
+    this.greeters.push(ebi, kartatay);
+    this.home.grandpa = kartatay;
+    cols.forEach((col) => this.colliders.add(col));
   }
 
   private buildTown(b: Bucket, r: RNG): void {
@@ -514,6 +1082,27 @@ export class World {
     const po = this.place(40, half + 14);
     po.y = this.groundMin(po, 16, 10);
     postOffice(b, po, cols);
+    {
+      // Zinaida Pavlovna at the post office door in the mornings, seeing the van off (a stand-in in the post's blue)
+      const zp = this.place(40, half + 3.4);
+      const zinaida = makePerson('#2a4a8a', '#4a3a32', false, 'woman');
+      zinaida.group.position.set(zp.x, zp.y, zp.z);
+      zinaida.group.rotation.y = zp.rot;
+      this.group.add(zinaida.group);
+      this.people.push(zinaida);
+      cols.push({ x: zp.x, z: zp.z, r: 0.35, hw: 0, hd: 0, rot: 0, box: false });
+      this.greeters.push(zinaida);
+      this.postDoor = new THREE.Vector3(zp.x, zp.y, zp.z);
+      // the grandfather by her the first morning, waiting on the porch for the Ufa bus (the story shows him: main.ts)
+      const kp = this.place(38.6, half + 3.9);
+      const kartatay = new Person('kartatay', {});
+      kartatay.group.position.set(kp.x, kp.y, kp.z);
+      kartatay.group.rotation.y = kp.rot;
+      this.group.add(kartatay.group);
+      this.people.push(kartatay);
+      this.postGrandpa = kartatay;
+      this.setAway(kartatay, true);
+    }
     this.exclusions.push({ x: po.x, z: po.z, r: 16 });
     for (const [s, lat] of [[100, -(half + 32)], [205, -(half + 34)], [175, half + 40]] as [number, number][]) {
       const p = this.place(s, lat);
@@ -526,6 +1115,56 @@ export class World {
     const sp = this.place(70, -(half + 13));
     sp.y = this.groundMin(sp, 10, 8);
     shop(b, sp, cols);
+    {
+      // Muha by the shop: a dark saloon with no badges pulled up on the verge, him beside it smoking
+      const cp = this.place(80, -(half + 2.6), false);
+      const car = buildCar('sedan', '#1c1e22', 4);
+      if (car.lights) car.lights.visible = false;
+      car.group.position.set(cp.x, cp.y + 0.02, cp.z);
+      car.group.rotation.y = cp.rot;
+      this.group.add(car.group);
+      // the saloon can go (Lysyi takes it back): its collider is one that can be lifted out
+      const carCol = boxCollider({ x: cp.x, y: 0, z: cp.z, rot: cp.rot }, 0, 0, car.width, car.length);
+      this.colliders.dynamic.push(carCol);
+      this.muhaCar = { group: car.group, col: carCol };
+      const muha = new Muha();
+      const mp = this.place(76.5, -(half + 4.4));
+      muha.group.position.set(mp.x, mp.y, mp.z);
+      muha.group.rotation.y = mp.rot;
+      this.group.add(muha.group);
+      this.people.push(muha);
+      this.muha = muha;
+      const muhaCol: Collider = { x: mp.x, z: mp.z, r: 0.35, hw: 0, hd: 0, rot: 0, box: false };
+      this.colliders.dynamic.push(muhaCol);
+      this.muhaAt = { x: mp.x, y: mp.y, z: mp.z, rot: mp.rot, col: muhaCol };
+    }
+    {
+      // the district hospital across from the post office: two white storeys, a red cross, әсәй on her shift at the door
+      const hp = this.place(26, -(half + 19));
+      hp.y = this.groundMin(hp, 18, 11);
+      b.add('plaster', boxGeo(18, 7.4, 11, 2), T(hp, 0, 3.5, 0), '#ebe7de');
+      b.add('flat', boxGeo(18.6, 0.35, 11.6), T(hp, 0, 7.3, 0), '#6a6a66');
+      for (const fy of [1.6, 4.9]) for (const fx of [-7, -4.2, -1.4, 4.2, 7]) b.add('flat', boxGeo(1.3, 1.4, 0.06), T(hp, fx, fy, 5.53), '#3a4a5a');
+      b.add('flat', boxGeo(2.2, 2.4, 0.08), T(hp, 1.4, 1.2, 5.54), '#5a6a74');
+      b.add('flat', boxGeo(3.2, 0.12, 1.6), T(hp, 1.4, 2.6, 6.2), '#b8b4aa');
+      const sign = paint(192, 48, (c, w, h2) => {
+        c.fillStyle = '#f2f0ea'; c.fillRect(0, 0, w, h2);
+        c.fillStyle = '#c4281e'; c.fillRect(14, 12, 24, 8); c.fillRect(22, 4, 8, 24);
+        c.fillStyle = '#1f2a3a'; c.font = 'bold 20px "PT Sans Narrow", "Arial Narrow", sans-serif'; c.textBaseline = 'middle';
+        c.fillText('РАЙБОЛЬНИЦА', 50, h2 / 2 + 1, w - 58);
+      }, { repeat: false });
+      b.add(this.signMat(sign), planeGeo(4.6, 1.15), T(hp, 1.4, 3.4, 5.6));
+      cols.push(boxCollider(hp, 0, 0, 18, 11));
+      this.exclusions.push({ x: hp.x, z: hp.z, r: 15 });
+      const np = this.place(26, -(half + 3.2));
+      const nurse = makePerson('#e8e6e0', '#e8e6e0', false, 'woman');
+      nurse.group.position.set(np.x, np.y, np.z);
+      nurse.group.rotation.y = np.rot;
+      this.group.add(nurse.group);
+      this.people.push(nurse);
+      cols.push({ x: np.x, z: np.z, r: 0.35, hw: 0, hd: 0, rot: 0, box: false });
+      this.hospital = { pos: new THREE.Vector3(np.x, np.y, np.z), nurse };
+    }
     const bs = this.place(125, half + 3.6);
     busStop(b, bs, cols);
     const bsSign = this.signMat(busSignTex());
@@ -548,8 +1187,9 @@ export class World {
     cols.forEach((c) => this.colliders.add(c));
   }
 
-  private buildVillage(b: Bucket, r: RNG, from: number, to: number, stopS: number | null, sides = [-1, 1]): void {
-    const main = this.ground.main;
+  private buildVillage(b: Bucket, r: RNG, from: number, to: number, stopS: number | null, sides = [-1, 1], road: Road = this.ground.main): void {
+    const main = road;
+    const at = (s: number, lat: number) => this.placeOn(road, s, lat);
     const cols: Collider[] = [];
     for (const side of sides) {
       let s = from + rand(r, 4, 14);
@@ -560,7 +1200,7 @@ export class World {
         if (stopS !== null && side > 0 && Math.abs(c - stopS) < 28) { s += plotW; continue; }
         const half = main.zoneAt(c).width / 2;
         if (r() < 0.84) {
-          const hp = this.place(c, side * (half + rand(r, 13, 16.5)));
+          const hp = at(c, side * (half + rand(r, 13, 16.5)));
           hp.y = this.groundMin(hp, 7, 8.6);
           izba(b, hp, r, r() < 0.62, cols);
           this.exclusions.push({ x: hp.x, z: hp.z, r: 20 });
@@ -579,17 +1219,17 @@ export class World {
           if (r() < 0.45) {
             // solid board fence with tall gates beside the house
             const gs = c + 5.2;
-            this.fenceAlong(b, s + 1, c - 1.6, fl, r, true);
-            this.fenceAlong(b, c + 1.6, gs - 3.0, fl, r, true);
-            const gp = this.place(gs, fl);
+            this.fenceAlong(b, s + 1, c - 1.6, fl, r, true, road);
+            this.fenceAlong(b, c + 1.6, gs - 3.0, fl, r, true, road);
+            const gp = at(gs, fl);
             yardGate(b, gp, r, cols);
-            this.fenceAlong(b, gs + 3.0, s + plotW - 1, fl, r, true);
+            this.fenceAlong(b, gs + 3.0, s + plotW - 1, fl, r, true, road);
           } else {
-            this.fenceAlong(b, s + 1, c - 1.6, fl, r);
-            this.fenceAlong(b, c + 1.6, s + plotW - 1, fl, r);
+            this.fenceAlong(b, s + 1, c - 1.6, fl, r, false, road);
+            this.fenceAlong(b, c + 1.6, s + plotW - 1, fl, r, false, road);
           }
-          if (r() < 0.5) bench(b, this.place(c + 2.6, side * (half + 5.9)));
-          if (!wellDone && r() < 0.3) { well(b, this.place(c + plotW / 2, side * (half + 4)), cols); wellDone = true; }
+          if (r() < 0.5) bench(b, at(c + 2.6, side * (half + 5.9)));
+          if (!wellDone && r() < 0.3) { well(b, at(c + plotW / 2, side * (half + 4)), cols); wellDone = true; }
         }
         s += plotW;
       }
@@ -621,11 +1261,171 @@ export class World {
       this.stops.push({ id, name, s, pos: new THREE.Vector3(p.x, p.y, p.z), person, speaker, line, cargo, done: false });
     };
     mk('sosnovka', 'Сосновка', m.sosStop + 1, halfS + 2.0, '#5a4a6a', '#c8452e', false, 'dress', 'Нина Петровна',
-      'Ой, сынок, приехал! А я уж думала — по такой дороге и не доберёшься. Пенсия да «Сельская новь» — вот и вся радость. Возьми яблок, своих, антоновка.',
+      'Ой, сынок, приехал! А я уж думала — по такой дороге и не доберёшься. Пенсия да районка — вот и вся радость. Возьми яблок, своих, антоновка.',
       'пенсия, газеты');
     mk('zarechye', 'Заречье', m.zarStop + 1, halfZ + 2.3, '#3a4a5a', '#e8e0d0', true, 'woman', 'Валентина, продавщица сельпо',
       'Через Серебрянку перебрался? Молодец. Посылки сюда, накладные — мне. Чай будешь? Ливень-то какой, переждёшь хоть.',
       'посылки, накладные');
+  }
+
+  /** A Place beside any road (not only the main one), `lat` metres to its right. */
+  private placeOn(road: Road, s: number, lat: number, faceRoad = true, extraRot = 0): Place {
+    const f = road.frame(clamp(s, 0, road.length));
+    const x = f.x + f.rx * lat, z = f.z + f.rz * lat;
+    const side = Math.sign(lat) || 1;
+    const rot = faceRoad ? Math.atan2(-side * f.rx, -side * f.rz) : Math.atan2(f.tx, f.tz);
+    return { x, y: this.ground.terrainAt(x, z), z, rot: rot + extraRot };
+  }
+
+  /**
+   * The places off the route, at the ends and bends of the new back roads: a farmstead,
+   * the forestry, an apiary, the old kolkhoz farm and the cemetery, each with a name board
+   * where its road leaves the main one.
+   */
+  private buildPOIs(b: Bucket, r: RNG): void {
+    const g = this.ground;
+    const cols: Collider[] = [];
+    const nameTex = (text: string) => paint(192, 40, (c, w, h) => {
+      c.fillStyle = '#1f4e8a'; c.fillRect(0, 0, w, h);
+      c.fillStyle = '#e8e8e0'; c.fillRect(3, 3, w - 6, h - 6);
+      c.fillStyle = '#1f4e8a'; c.fillRect(5, 5, w - 10, h - 10);
+      c.fillStyle = '#f2f2ea'; c.font = 'bold 17px "PT Sans Narrow", "Arial Narrow", sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+      c.fillText(text.toUpperCase(), w / 2, h / 2 + 1, w - 16);
+    }, { repeat: false });
+    const clear = (p: Place, rad: number) => this.exclusions.push({ x: p.x, z: p.z, r: rad });
+    for (const poi of g.pois) {
+      const road = poi.road;
+      const half = road.zoneAt(poi.s).width / 2;
+      // the board on the main road at the turn-off, facing traffic from both ways
+      const mh = g.main.zoneAt(poi.mainS).width / 2;
+      const f0 = road.frame(8);
+      const mf = g.main.frame(poi.mainS);
+      const sideSign = Math.sign((f0.x - mf.x) * mf.rx + (f0.z - mf.z) * mf.rz) || 1;
+      const sp = this.place(poi.mainS - 14, sideSign * (mh + 2.2), false, Math.PI / 2);
+      signPost(b, sp, this.signMat(nameTex(poi.name)), 1.6, 0.4, 2.2, 2);
+      const at = (s: number, lat: number, face = true, rot = 0) => this.placeOn(road, s, lat, face, rot);
+      const S = poi.s;
+      // the one who comes out to the post van
+      const addressee = (p: Place, person: Person, speaker: string, line: string) => {
+        p.y = this.ground.terrainAt(p.x, p.z);
+        person.group.position.set(p.x, p.y, p.z);
+        person.group.rotation.y = p.rot;
+        this.group.add(person.group);
+        this.people.push(person);
+        this.stops.push({ id: poi.kind, name: poi.name[0].toUpperCase() + poi.name.slice(1), s: poi.mainS, pos: new THREE.Vector3(p.x, p.y, p.z), person, speaker, line, cargo: '', done: false, turn: { name: poi.name, s: poi.mainS } });
+      };
+      const ADDRESSEE: Partial<Record<Poi['kind'], () => void>> = {
+        khutor: () => addressee(at(S - 30, half + 2), makeMan('#5a6a4a', '#2e2a30', '#b8b4ac'), 'Василий Степанович, хутор Берёзки',
+          'О, почта! Я уж думал, про хутор забыли. Давай сюда, давай. Молоко будешь? Своё, утреннее.'),
+        kolkhoz: () => addressee(at(S - 14, -(half + 2)), makePerson('#7a5a3a', '#d8c8a0', false, 'woman'), 'Галина Ивановна, зоотехник',
+          'Наконец-то! Без бумаг у нас ни одна корова не доится, — шучу. Давай, распишусь. Ты на ферме-то не застрял?'),
+        forestry: () => addressee(at(S - 6, half + 2), makeMan('#4a5a3a', '#3a3a30', '#5a4232'), 'Фёдор, лесник',
+          'Здорово. Ты через лес — и ни одного дерева не задел? Уважаю. Давай газеты, а то я тут совсем одичал.'),
+        apiary: () => addressee(at(S - 20, half + 2), makeMan('#c8b890', '#4a4038', '#9a9488'), 'Рашит-агай, пасечник',
+          'Тихо, тихо, не гуди — пчёлы гудок не любят. Давай, улым, что привёз. Мёду баночку возьмёшь? Или кумыса?'),
+      };
+      switch (poi.kind) {
+        case 'khutor': {
+          for (const [ds, lat] of [[-75, 14], [-42, -15], [-12, 14]] as [number, number][]) {
+            const p = at(S + ds, lat * (1 + (half > 2 ? 0.1 : 0)));
+            p.y = this.groundMin(p, 8, 8);
+            izba(b, p, r, r() < 0.4, cols);
+            clear(p, 10);
+          }
+          well(b, at(S - 58, 7), cols);
+          woodpile(b, at(S - 26, -9));
+          for (let i = 0; i < 3; i++) { const hp = at(S - 110 + i * 22, -26 - i * 4); haystack(b, hp, r, cols); clear(hp, 4); }
+          break;
+        }
+        case 'forestry': {
+          const house = at(S, 12);
+          house.y = this.groundMin(house, 8, 8);
+          izba(b, house, r, true, cols);
+          clear(house, 12);
+          for (const ds of [-22, 24]) { const sh = at(S + ds, -11); shed(b, sh, r, cols); clear(sh, 6); }
+          for (let i = 0; i < 4; i++) woodpile(b, at(S - 14 + i * 3.2, -15, true, 0.05 * i));
+          for (let i = 0; i < 7; i++) b.add('boards', new THREE.CylinderGeometry(0.26, 0.26, 5.5, 7), T(at(S + 30, -10 - i * 0.2), -0.8 + (i % 4) * 0.52, 0.26 + Math.floor(i / 4) * 0.45, 0, Math.PI / 2, 0, 0), '#8a6a4a');
+          break;
+        }
+        case 'apiary': {
+          const hut = at(S - 34, 9);
+          shed(b, hut, r, cols);
+          clear(hut, 8);
+          const tints = ['#e0c860', '#6a8aa8', '#d4ccba', '#b0704c', '#7a9a5a'];
+          for (let row = 0; row < 2; row++) for (let i = 0; i < 6; i++) {
+            const hp = at(S - 40 + i * 2.2, -8 - row * 3.4, true, (r() - 0.5) * 0.3);
+            b.add('flat', boxGeo(0.5, 0.42, 0.62), T(hp, 0, 0.5, 0), tints[(i + row * 2) % tints.length]);
+            b.add('flat', boxGeo(0.56, 0.05, 0.7), T(hp, 0, 0.74, 0), '#9a9a90');
+            for (const x of [-0.2, 0.2]) b.add('flat', boxGeo(0.06, 0.28, 0.06), T(hp, x, 0.14, 0), '#5c5040');
+          }
+          well(b, at(S - 70, 7), cols);
+          break;
+        }
+        case 'kolkhoz': {
+          const fp = at(S - 50, 20);
+          fp.y = this.groundMin(fp, 44, 11);
+          farm(b, fp, r, cols);
+          clear(fp, 30);
+          const gp = at(S - 8, 15);
+          garages(b, gp, 3, r, cols);
+          // a silo and a pile of straw
+          const sl = at(S - 20, -13);
+          b.add('concrete', new THREE.CylinderGeometry(2.2, 2.2, 9, 12), T(sl, 0, 4.5, 0), '#b8b4a6');
+          b.add('metalRoof', new THREE.ConeGeometry(2.4, 1.4, 12), T(sl, 0, 9.7, 0), '#8a8a82');
+          cols.push({ x: sl.x, z: sl.z, r: 2.4, hw: 0, hd: 0, rot: 0, box: false });
+          for (let i = 0; i < 3; i++) { const hp = at(S - 90 + i * 16, -24 - i * 3); haystack(b, hp, r, cols); clear(hp, 4); }
+          break;
+        }
+        case 'cemetery': {
+          const c0 = at(S, 16 + 9);
+          clear(c0, 20);
+          const fy = c0.rot;
+          const P = (lx: number, lz: number): Place => ({ x: c0.x + lx * Math.cos(fy) + lz * Math.sin(fy), y: c0.y, z: c0.z - lx * Math.sin(fy) + lz * Math.cos(fy), rot: fy });
+          for (const [lx, lz, len, rot] of [[0, -9, 20, 0], [0, 9, 20, 0], [-10, 0, 18, Math.PI / 2], [10, 0, 18, Math.PI / 2]] as [number, number, number, number][]) {
+            const q = P(lx, lz); q.rot = fy + rot; q.y = this.groundMin(q, len, 1);
+            fence(b, q, len, r);
+          }
+          for (let ix = -3; ix <= 3; ix++) for (let iz = -2; iz <= 2; iz++) {
+            if (r() < 0.25) continue;
+            const q = P(ix * 2.6 + (r() - 0.5) * 0.5, iz * 3 + 1);
+            q.y = this.ground.terrainAt(q.x, q.z);
+            const tint = r() < 0.5 ? '#6a5a44' : '#d8d4c6';
+            b.add('flat', boxGeo(0.07, 1.25, 0.07), T(q, 0, 0.62, 0), tint);
+            b.add('flat', boxGeo(0.5, 0.07, 0.07), T(q, 0, 0.98, 0), tint);
+            b.add('flat', boxGeo(0.9, 0.12, 1.6), T(q, 0, 0.06, 0.7), '#9a9488');
+          }
+          break;
+        }
+      }
+      ADDRESSEE[poi.kind]?.();
+    }
+    cols.forEach((c) => this.colliders.add(c));
+  }
+
+  /** Strollers along the verges of every village and hamlet. */
+  private buildVillagers(r: RNG): void {
+    const g = this.ground;
+    this.villagers = new Villagers(g, this.colliders.dynamic);
+    this.group.add(this.villagers.group);
+    const COATS = ['#5a4a6a', '#6a4a3a', '#3a4a5a', '#7a5a3a', '#4a5a3a', '#8a3a3a', '#5a5a62'];
+    const SCARVES = ['#c8452e', '#d8c8a0', '#e8e0d0', '#2e5a8a', '#8a6a2e', '#c8a0a0'];
+    const SHIRTS = ['#6a6a5a', '#4a5a7a', '#7a4a3a', '#8a8a78', '#3a4a3a', '#a89a78'];
+    const pickOf = <T>(l: T[]) => l[Math.floor(r() * l.length)];
+    for (const [a, b] of this.hamlets) {
+      const n = clamp(Math.round((b - a) / 80), 1, 4);
+      for (let i = 0; i < n; i++) {
+        const s = a + 8 + r() * Math.max(1, b - a - 16);
+        const half = g.main.zoneAt(s).width / 2;
+        const side = r() < 0.5 ? -1 : 1;
+        const lat = side * (half + 3.6 + r() * 3.4);
+        const p = this.place(s, lat);
+        if (this.exclusions.some((e) => Math.hypot(e.x - p.x, e.z - p.z) < e.r)) continue;
+        const k = r();
+        const person = k < 0.4 ? makePerson(pickOf(COATS), pickOf(SCARVES), r() < 0.4, r() < 0.6 ? 'dress' : 'woman')
+          : makeMan(pickOf(SHIRTS), r() < 0.5 ? '#2e2a30' : '#3a3a32', r() < 0.4 ? '#8e8880' : '#3a2e26');
+        this.villagers.add(person, s, lat, [a, b]);
+      }
+    }
   }
 
   private buildLandmarks(b: Bucket, r: RNG): void {
@@ -656,7 +1456,7 @@ export class World {
       if (tag === 'forest' || tag === 'mud' || this.inVillage(s)) continue;
       const lat = (r() < 0.5 ? -1 : 1) * rand(r, 30, 170);
       const p = this.place(s, lat, false, r() * 6);
-      if (this.layout(p.x, p.z).dens > 0.15 || this.rail.dist(p.x, p.z) < 15 || this.exclusions.some((e) => Math.hypot(e.x - p.x, e.z - p.z) < e.r + 3)) continue;
+      if (g.nearestRoad(p.x, p.z, 16) || this.layout(p.x, p.z).dens > 0.15 || this.rail.dist(p.x, p.z) < 15 || this.exclusions.some((e) => Math.hypot(e.x - p.x, e.z - p.z) < e.r + 3)) continue;
       haystack(b, p, r, cols);
       this.exclusions.push({ x: p.x, z: p.z, r: 4 });
       n++;
@@ -719,6 +1519,10 @@ export class World {
       this.colliders.add({ x, z, r: 0.2, hw: 0, hd: 0, rot: 0, box: false });
     };
     put(m.town, settlementSign('Ключевск', true), 2.2, 0.82, 2.1, 2);
+    // the turn into the wood for Urmanly, for those coming up the highway from the fork
+    put(m.home + 25, directionSign([['Урманлы', '1']], 'right'), 2.0, 1.0, 2.2, 2, -1);
+    // …and for those coming out of town past the GAI post
+    put(m.home - 30, directionSign([['Урманлы', '1']], 'left'), 2.0, 1.0, 2.2, 2);
     put(m.potholesFrom - 40, warningSign('uneven'), 1.0, 1.0, 2.2);
     // 60 zone around the GAI post, both directions
     put(m.town + 170, limitSign(60), 0.9, 0.9, 2.2);
@@ -726,6 +1530,8 @@ export class World {
     put(m.town + 470, limitSign(60, true), 0.9, 0.9, 2.2);
     put(m.junction - 150, directionSign([['Сосновка', '1'], ['Заречье', '3']], 'right'), 2.4, 1.2, 2.3, 2);
     put(m.junction + 60, directionSign([['Сосновка', '1'], ['Заречье', '3']], 'up'), 2.0, 1.0, 2.2, 2);
+    // straight on at the fork, along the branch road
+    put(m.junction - 125, directionSign([['Кайынлы', '2'], ['оз. Кайынкуль', '1']], 'up'), 2.2, 1.1, 2.3, 2);
     put(m.sosStart, settlementSign('Сосновка', false), 2.2, 0.82, 2.1, 2);
     put(m.sosEnd, settlementSign('Сосновка', true), 2.2, 0.82, 2.1, 2);
     put(m.mud - 50, warningSign('slippery'), 1.0, 1.0, 2.2);
@@ -747,12 +1553,14 @@ export class World {
       new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), r() * Math.PI),
       new THREE.Vector3(h * aspect, h, h * aspect),
     );
-    const t = this.trees[kind];
+    const key = `${kind}@${cellKey(x, z, PROP_CELL)}`;
+    let t = this.trees.get(key);
+    if (!t) { t = { kind, m: [], c: [] }; this.trees.set(key, t); }
     t.m.push(m);
     const v = 0.82 + r() * 0.22;
     t.c.push(kind === 'birch' ? new THREE.Color(v, v * (0.92 + r() * 0.1), v * (0.8 + r() * 0.2)) : new THREE.Color(v, v, v));
     const f = this.ground.field(x, z);
-    if (f.d < 45 && kind !== 'reeds') this.colliders.add({ x, z, r: kind === 'bush' ? 0.6 : 0.35, hw: 0, hd: 0, rot: 0, box: false });
+    if (f.d < 45 && kind !== 'reeds') this.colliders.add({ x, z, r: kind === 'bush' ? 0.6 : 0.35, hw: 0, hd: 0, rot: 0, box: false, soft: kind === 'bush' });
   }
 
   private buildVegetation(r: RNG): void {
@@ -771,12 +1579,20 @@ export class World {
           if (dr > 9 && r() < 0.35 && lay.d > 6) this.addTree('reeds', px, pz, rand(r, 1.5, 2.2), r);
           continue;
         }
+        // reeds round the lake, thickest at the water's edge; nothing else on the shore
+        const dl = Math.hypot(px - g.lake.x, pz - g.lake.z) - g.lake.r;
+        if (dl < 12) {
+          if (dl > -9 && r() < 0.55 - Math.abs(dl + 2) * 0.03 && lay.d > 6) this.addTree('reeds', px, pz, rand(r, 1.6, 2.4), r);
+          continue;
+        }
+        if (Math.hypot(px - g.quarryPit.x, pz - g.quarryPit.z) < g.quarryPit.r + 14) continue;
         const far = lay.d > 330 ? 0.4 : 1;
         if (lay.d < 16 && lay.tag !== 'town' && !this.inVillage(lay.s) && r() < 0.05) { this.addTree('bush', px, pz, rand(r, 2.2, 3.6), r); continue; }
         if (r() > lay.dens * 0.5 * far) continue;
         let kind: TreeKind;
         const k = r();
         if (lay.belt) kind = k < 0.85 ? 'birch' : 'bush';
+        else if (lay.tag === 'bor') kind = k < 0.78 ? 'pine' : k < 0.95 ? 'birch' : 'spruce';
         else if (lay.tag === 'forest' && lay.main) kind = k < 0.45 ? 'spruce' : k < 0.8 ? 'birch' : 'pine';
         else if (lay.tag === 'mud') kind = k < 0.5 ? 'bush' : k < 0.85 ? 'birch' : 'spruce';
         else kind = k < 0.6 ? 'birch' : k < 0.72 ? 'pine' : k < 0.86 ? 'spruce' : 'bush';
@@ -786,37 +1602,184 @@ export class World {
     }
     const geo = crossQuads(3);
     const texFor: Record<TreeKind, THREE.Texture> = { birch: this.T.birch, spruce: this.T.spruce, pine: this.T.pine, bush: this.T.bush, reeds: this.T.reeds };
-    for (const kind of Object.keys(this.trees) as TreeKind[]) {
-      const t = this.trees[kind];
+    const mats = new Map<TreeKind, THREE.MeshLambertMaterial>();
+    for (const [key, t] of this.trees) {
       if (!t.m.length) continue;
-      const mtl = new THREE.MeshLambertMaterial({ map: texFor[kind], alphaTest: 0.5, side: THREE.DoubleSide });
+      let mtl = mats.get(t.kind);
+      if (!mtl) {
+        mtl = new THREE.MeshLambertMaterial({ map: texFor[t.kind], alphaTest: 0.5, side: THREE.DoubleSide });
+        snowy(mtl, 'dust');
+        mats.set(t.kind, mtl);
+        if (t.kind === 'birch' || t.kind === 'bush') this.leafy.push(mtl);
+      }
       const mesh = new THREE.InstancedMesh(geo, mtl, t.m.length);
       t.m.forEach((m, i) => { mesh.setMatrixAt(i, m); mesh.setColorAt(i, t.c[i]); });
       mesh.instanceMatrix.needsUpdate = true;
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-      mesh.frustumCulled = false;
-      mesh.name = `trees:${kind}`;
+      // the bounds of this cell's trees, for culling
+      mesh.computeBoundingSphere();
+      mesh.name = `trees:${key}`;
       this.group.add(mesh);
     }
+    this.trees.clear();
   }
 
   private buildFauna(r: RNG): void {
-    const m = this.ground.marks;
-    const herd = (s: number, n: number) => {
-      for (let i = 0; i < n; i++) {
-        const p = this.place(s + rand(r, -40, 40), -rand(r, 38, 85), false, r() * 6);
-        const cow = makeCow(r);
-        cow.position.set(p.x, p.y, p.z);
-        cow.rotation.y = p.rot;
-        this.group.add(cow);
-        this.cows.push(cow);
-        this.colliders.add({ x: p.x, z: p.z, r: 1.0, hw: 0, hd: 0, rot: 0, box: false });
-      }
-      const c = this.place(s, -60, false);
-      this.cowSpots.push(new THREE.Vector3(c.x, c.y, c.z));
+    const g = this.ground, m = g.marks;
+    const add = (kind: AnimalKind, p: Place, leash = 14, block = false, dir?: { x: number; z: number }) => {
+      const a = new Animal(kind, p.x, p.z, p.rot + r() * 6, g, leash);
+      a.onHit = (an, sp) => { this.onAnimalHit?.(an.kind, sp); };
+      a.onBark = () => this.onBark?.();
+      if (block) { a.roadDir = dir; a.block(); }
+      this.group.add(a.group);
+      this.fauna.push(a);
+      this.colliders.dynamic.push(a.col);
+      return a;
     };
-    herd(m.sosStart - 170, 5);
-    herd(m.bridge + 140, 3);
+    const herd = (kind: AnimalKind, s: number, lat: number, n: number, spread = 40, leash = 18, road?: Road) => {
+      for (let i = 0; i < n; i++) {
+        const p = road ? this.placeOn(road, s + rand(r, -spread, spread), lat * rand(r, 0.8, 1.3), false) : this.place(s + rand(r, -spread, spread), lat * rand(r, 0.8, 1.3), false);
+        add(kind, p, leash);
+      }
+    };
+    // pastures along the route
+    herd('cow', m.sosStart - 170, -60, 5);
+    herd('cow', m.bridge + 140, -60, 3);
+    herd('sheep', m.sosStart - 60, 55, 6, 25, 10);
+    herd('horse', m.zarStart - 80, 70, 2, 20, 20);
+    herd('horse', m.town + 1000, -75, 2, 20, 20);
+    herd('sheep', m.zarStart + 140, -50, 4, 20, 8);
+    // out along the branch: cows on the lake meadow, sheep and a dog at Kainly
+    const br = g.branch;
+    const lf = g.stub.frame(br.lake);
+    const lakeSide = (g.lake.x - lf.x) * lf.rx + (g.lake.z - lf.z) * lf.rz > 0 ? 1 : -1;
+    herd('cow', (br.borEnd + br.lake) / 2, -lakeSide * 55, 4, 40, 18, g.stub);
+    herd('sheep', br.kaiStart + 40, -60, 5, 25, 10, g.stub);
+    add('dog', this.placeOn(g.stub, br.kaiStop + 30, -16, false), 8);
+    // yards: pigs and a watch-dog in every hamlet
+    for (const [a, b] of this.hamlets) {
+      const s = (a + b) / 2;
+      const side = r() < 0.5 ? -1 : 1;
+      const half = g.main.zoneAt(s).width / 2;
+      add('dog', this.place(s + rand(r, -20, 20), side * (half + 7), false), 9);
+      if (r() < 0.7) add('pig', this.place(s + rand(r, -30, 30), side * (half + 18), false), 5);
+    }
+    // the back roads have their own herds
+    for (const poi of g.pois) {
+      if (poi.kind === 'kolkhoz') { herd('cow', poi.s, 38, 5, 30, 16, poi.road); herd('horse', poi.s, -45, 2, 20, 18, poi.road); }
+      if (poi.kind === 'khutor') { herd('pig', poi.s, 20, 3, 15, 5, poi.road); add('dog', this.placeOn(poi.road, poi.s, 11, false), 8); herd('sheep', poi.s, -30, 4, 20, 8, poi.road); }
+      if (poi.kind === 'apiary') add('dog', this.placeOn(poi.road, poi.s, 12, false), 8);
+    }
+    // a cow that has wandered onto a track and will not budge until hooted off
+    for (const s of [m.forest + 380, m.forest + 900, m.bridge + 100]) {
+      const f = g.main.frame(s);
+      add('cow', { x: f.x + f.rx * 0.5, y: 0, z: f.z + f.rz * 0.5, rot: Math.atan2(f.rx, f.rz) }, 6, true, { x: f.tx, z: f.tz });
+    }
+    for (const poi of g.pois) if (poi.kind === 'forestry') {
+      const f = poi.road.frame(poi.s * 0.5);
+      add('cow', { x: f.x, y: 0, z: f.z, rot: Math.atan2(f.rx, f.rz) }, 5, true, { x: f.tx, z: f.tz });
+    }
+  }
+
+  /**
+   * Things that happen on the road: a tractor parked across the track at the river meadow,
+   * a broken-down lorry on the forest bypass with its driver waving a spanner.
+   */
+  private buildEvents(r: RNG): void {
+    const g = this.ground, m = g.marks;
+    // ---- tractor across the track after the bridge
+    {
+      const s = m.bridge + 125;
+      const f = g.main.frame(s);
+      const x = f.x + f.rx * 1.0, z = f.z + f.rz * 1.0;
+      const yaw = Math.atan2(f.tx, f.tz) + Math.PI / 2;
+      const model = buildVehicle('tractor', '#3a6aa8', 2);
+      model.lights && (model.lights.visible = false);
+      model.group.position.set(x, g.height(x, z), z);
+      model.group.rotation.y = yaw;
+      this.group.add(model.group);
+      const col: Collider = { x, z, r: model.length / 2, hw: model.width / 2, hd: model.length / 2, rot: yaw, box: true, mass: 4500 };
+      this.colliders.dynamic.push(col);
+      const farmer = makeMan('#5a5a48', '#2e2a30', '#8e8880');
+      const fp = { x: x + Math.sin(yaw + 1.6) * 2.4 + f.tx * 1.5, z: z + Math.cos(yaw + 1.6) * 2.4 + f.tz * 1.5 };
+      this.group.add(farmer.group);
+      farmer.group.position.set(fp.x, g.height(fp.x, fp.z), fp.z);
+      farmer.group.rotation.y = yaw + 0.8;
+      this.people.push(farmer);
+      this.events.push({ id: 'tractor', s, state: 'wait', t: 0, honks: 0, model, col, yaw, dir: { x: Math.sin(yaw), z: Math.cos(yaw) }, farmer, told: false, x, z, x0: x, z0: z, away: 0 });
+    }
+    // ---- broken lorry on the forest bypass, half in the lane, its driver beside it
+    {
+      const road = g.sideRoads.find((q) => q.id === 'forest-bypass');
+      if (road) {
+        const s = road.length * 0.45;
+        const f = road.frame(s);
+        const x = f.x + f.rx * 0.9, z = f.z + f.rz * 0.9;
+        const yaw = Math.atan2(f.tx, f.tz) + 0.06;
+        const model = buildVehicle('zil', '#6a8a5a', 1);
+        if (model.lights) model.lights.visible = false;
+        model.group.position.set(x, g.height(x, z), z);
+        model.group.rotation.y = yaw;
+        this.group.add(model.group);
+        const col: Collider = { x, z, r: 4, hw: model.width / 2, hd: model.length / 2, rot: yaw, box: true, mass: 5000 };
+        this.colliders.dynamic.push(col);
+        const driver = makeMan('#6a4a3a', '#2e2a30');
+        const dp = { x: x - f.rx * 2.5 - f.tx * 1.0, z: z - f.rz * 2.5 - f.tz * 1.0 };
+        driver.group.position.set(dp.x, g.height(dp.x, dp.z), dp.z);
+        driver.group.rotation.y = Math.atan2(f.rx, f.rz) + Math.PI;
+        this.group.add(driver.group);
+        this.people.push(driver);
+        // a warning triangle on the road behind it
+        const tri = new THREE.Mesh(new THREE.ConeGeometry(0.28, 0.5, 3), new THREE.MeshLambertMaterial({ color: '#c8281e', emissive: '#601008' }));
+        tri.position.set(x - f.tx * 22 + f.rx * 0.3, g.height(x - f.tx * 22, z - f.tz * 22) + 0.3, z - f.tz * 22 + f.rz * 0.3);
+        this.group.add(tri);
+        this.events.push({ id: 'lorry', s, state: 'wait', t: 0, honks: 0, model, col, yaw, dir: { x: 0, z: 0 }, farmer: driver, told: false, x, z, x0: x, z0: z, away: 0 });
+      }
+    }
+  }
+
+  /** A new run: the tractor is back across the track, the lorry still broken. */
+  resetEvents(): void {
+    for (const e of this.events) {
+      e.state = 'wait'; e.t = 0; e.honks = 0; e.away = 0; e.told = false;
+      e.x = e.x0; e.z = e.z0;
+      e.model.group.position.set(e.x, this.ground.height(e.x, e.z), e.z);
+      e.col.x = e.x; e.col.z = e.z;
+      e.farmer.group.visible = true;
+    }
+  }
+
+  /** Per frame: animals, and the events waiting for the van. */
+  private updateEvents(dt: number, van: { x: number; z: number; vx: number; vz: number; honk: boolean }, honkEdge: boolean): void {
+    for (const e of this.events) {
+      const d = Math.hypot(van.x - e.x, van.z - e.z);
+      const vsp = Math.hypot(van.vx, van.vz);
+      if (!e.told && d < 70) {
+        e.told = true;
+        this.onEvent?.(e.id === 'tractor' ? 'Трактор перегородил дорогу. Посигналь или подожди — трактористу ехать надо.' : 'Впереди сломался грузовик: водитель машет — объезжай по краю, осторожно.');
+      }
+      if (e.id === 'lorry') {
+        // the driver waves a spanner as the van comes by or hoots
+        if (honkEdge && d < 45) e.farmer.wave = 2.5;
+        continue;
+      }
+      if (e.state === 'wait') {
+        if (honkEdge && d < 50) e.honks++;
+        if (d < 14 && vsp < 1.5) e.t += dt; else e.t = Math.max(0, e.t - dt * 0.5);
+        if (e.honks >= 2 || e.t > 18) { e.state = 'go'; e.farmer.wave = 2; }
+      } else if (e.state === 'go') {
+        // he climbs aboard and clears the track, straight off the road
+        e.away += dt;
+        if (e.away > 2.2 && e.away < 11) {
+          const sp = 1.6;
+          e.x += e.dir.x * sp * dt; e.z += e.dir.z * sp * dt;
+          e.model.group.position.set(e.x, this.ground.height(e.x, e.z), e.z);
+          e.col.x = e.x; e.col.z = e.z;
+          rollWheelsBy(e.model, sp * dt);
+          e.farmer.group.visible = false;
+        } else if (e.away >= 11) { e.state = 'done'; e.col.x += 0; }
+      }
+    }
   }
 
   // ------------------------------------------------------------ per-frame
@@ -877,7 +1840,18 @@ export class World {
       this.group.add(insp.group);
       const insCol: Collider = { x: ip.x, z: ip.z, r: 0.4, hw: 0, hd: 0, rot: 0, box: false };
       this.colliders.dynamic.push(insCol);
-      this.gai = { models, col, park, inspector: insp, insCol, post: { x: ip.x, z: ip.z, yaw: ip.rot }, sPost: sG + 6 };
+      // the roadblock car: parked out of sight until a chase calls for it
+      const bm = buildCar('militia', '#ecece6', 9, { label: 'ГАИ' });
+      bm.group.visible = false;
+      this.group.add(bm.group);
+      const bcol: Collider = { x: 1e9, z: 1e9, r: 3, hw: bm.width / 2, hd: bm.length / 2, rot: 0, box: true };
+      this.colliders.dynamic.push(bcol);
+      this.gai = { block: { model: bm, col: bcol }, models, col, park, inspector: insp, insCol, post: { x: ip.x, z: ip.z, yaw: ip.rot }, sPost: sG + 6 };
+    }
+    {
+      // a clear verge in the village before the fork: some days the post's radar goes out there (Police.setPost)
+      const sa = m.junction - 180;
+      for (const ds of [-10, 0]) { const ap = this.place(sa + ds, half(sa) + 3); this.exclusions.push({ x: ap.x, z: ap.z, r: 7 }); }
     }
 
     // crossing keeper's booth
@@ -886,12 +1860,12 @@ export class World {
     this.exclusions.push({ x: bp.x, z: bp.z, r: 6 });
 
     // filling station on the left, a sedan at the pump
-    const sA = m.town + 700;
-    const ap = this.place(sA, -(half(sA) + 13));
-    ap.y = this.groundMin(ap, 18, 12);
-    gasStation(b, ap, sign, cols);
-    park('sedan', '#c8b890', ap, -1.2, 0.9, Math.PI / 2);
-    this.exclusions.push({ x: ap.x, z: ap.z, r: 20 });
+    const ap = this.station.ap;
+    gasStation(b, ap, sign, cols, this.station.edge);
+    // a car already filling on the far side of the pump, along the island
+    park('vaz2105', 'baklaj', ap, -0.4, -2.9, Math.PI / 2);
+    this.fuelBay = { x: ap.x, z: ap.z, rot: ap.rot };
+    this.exclusions.push({ x: ap.x, z: ap.z, r: 26 });
 
     // babushka with buckets of potatoes opposite the hamlet before the fork
     const sB = m.junction - 190;
@@ -912,6 +1886,7 @@ export class World {
     this.smokeSrc.copy(cafe(b, cp, sign, cols));
     park('kamaz', '#d8822a', cp, -2, 12, Math.PI / 2 + 0.05);
     park('zil', '#5a7aa0', cp, 10, 11, Math.PI / 2 - 0.1);
+    park('bobik', 'khaki', cp, -13, 9, Math.PI / 2 + 0.3);
     b.add('gravel', boxGeo(30, 0.1, 14, 4), T(cp, 2, 0.02, 11), '#a89e8a');
     this.exclusions.push({ x: cp.x, z: cp.z, r: 26 });
     const smokeTex = paint(16, 16, (c) => {
@@ -981,6 +1956,11 @@ export class World {
   /** Traffic, train, crossing and mangal smoke; returns what the audio needs. */
   updateLife(dt: number, t: number, px: number, pz: number, pvx: number, pvz: number, dark: number, pyaw = 0): { rail: RailSound; traffic: TrafficSound } {
     const rail = this.rail.update(dt, t, px, pz, pvx, pvz, dark);
+    const van = { x: px, z: pz, vx: pvx, vz: pvz, honk: this.honk };
+    this.villagers.update(dt, t, van, { rain: this.rainNow, dark: this.darkNow, watch: this.watch });
+    for (const a of this.fauna) a.update(dt, van);
+    this.updateEvents(dt, van, this.honk && !this.honkWas);
+    this.honkWas = this.honk;
     const traffic = this.traffic.update(dt, t, px, pz, pvx, pvz, this.wetNow, pyaw);
     setVehicleLamps(smoothstep(0.3, 0.7, dark));
     for (const s of this.smoke) {
@@ -997,6 +1977,7 @@ export class World {
   setAtmosphere(darkness: number, wet: number, sky: THREE.Color, fog: THREE.Color): void {
     const glow = smoothstep(0.3, 0.8, darkness);
     this.wetNow = wet;
+    this.darkNow = darkness;
     for (const { m, k } of this.litMats) m.emissiveIntensity = glow * k;
     const w = lerp(1, 0.62, clamp(wet, 0, 1));
     for (const m of this.wetMats) m.color.setScalar(w);
@@ -1009,17 +1990,87 @@ export class World {
     (this.farRing.material as THREE.MeshBasicMaterial).color.copy(new THREE.Color(0x3c4a34)).lerp(fog, 0.62);
   }
 
+  /** How much snow lies, 0 (none) … 1 (deep winter): ground, roofs and roads white, water frozen, puddles iced over. */
+  setSnow(k: number): void {
+    snowCover.value = k;
+    this.snowNow = k;
+    // the leaves fall: only the densest of the foliage texture (trunk, branches) stays standing
+    for (const m of this.leafy) m.alphaTest = 0.5 + 0.43 * clamp(k, 0, 1);
+    if (k > 0.05) {
+      this.puddleMat.color.lerp(ICE, clamp(k, 0, 1));
+      this.puddleMat.opacity = lerp(this.puddleMat.opacity, 0.85, k);
+    }
+  }
+  private snowNow = 0;
+  /** Birch and bush foliage: thinned to bare twigs as the winter comes. */
+  private readonly leafy: THREE.MeshLambertMaterial[] = [];
+
+  /** Muha's saloon at the shop or gone. */
+  setMuhaCar(on: boolean): void {
+    this.muhaCar.group.visible = on;
+    const d = this.colliders.dynamic, i = d.indexOf(this.muhaCar.col);
+    if (on && i < 0) d.push(this.muhaCar.col);
+    if (!on && i >= 0) d.splice(i, 1);
+  }
+
+  /** Muha by the shop (`null`), somewhere else for the day, or nowhere to be seen (`'away'`). */
+  placeMuha(at: Place | 'away' | null): void {
+    const m = this.muha;
+    if (!m) return;
+    const p = at && at !== 'away' ? at : this.muhaAt;
+    m.group.position.set(p.x, p.y, p.z);
+    m.group.rotation.y = p.rot;
+    m.group.visible = at !== 'away';
+    // the distance culling must not bring him back where he no longer is
+    this.culled.delete(m);
+    const c = this.muhaAt.col;
+    c.x = at === 'away' ? 1e9 : p.x; c.z = at === 'away' ? 1e9 : p.z;
+  }
+
+  /** A place on the main road, `lat` metres to its right (for set pieces placed by the story). */
+  roadside(s: number, lat: number, faceRoad = true): Place { return this.place(s, lat, faceRoad); }
+
   update(dt: number, t: number, cam: THREE.Vector3): void {
     this.waterTex.offset.y -= dt * 0.04;
     this.farRing.position.set(cam.x, cam.y - 12, cam.z);
-    for (const p of this.people) p.update(dt, t);
-    this.cows.forEach((c, i) => { c.children[2].rotation.x = 0.5 + Math.sin(t * 0.6 + i * 2) * 0.15; });
+    this.muha?.van.copy(cam);
+    this.sawmill.update(dt, cam);
+    for (const p of this.greeters) {
+      const d = Math.hypot(p.group.position.x - cam.x, p.group.position.z - cam.z);
+      if (d < 22 && !this.greeted.has(p)) { this.greeted.add(p); p.wave = 2.6; }
+      if (d > 60) this.greeted.delete(p);
+    }
+    for (const p of this.people) {
+      // past the fog a figure is not drawn and not animated (skinned meshes are never frustum-culled);
+      // only figures hidden here are shown again, so a scene that hides someone keeps them hidden
+      const g = p.group;
+      if (this.away.has(p)) continue;
+      if (Math.hypot(g.position.x - cam.x, g.position.z - cam.z) > PEOPLE_FAR) {
+        if (g.visible) { g.visible = false; this.culled.add(p); }
+        continue;
+      }
+      if (this.culled.delete(p)) g.visible = true;
+      p.update(dt, t);
+    }
   }
 }
 
 function main(g: Ground): Road { return g.main; }
 
+/** Where the family's yard is, metres past the town limit along the main road. */
+/** Size of the ground cells the roads are split into for culling, metres (as the terrain chunks). */
+const CELL = 240;
+/**
+ * Cells for buildings, props and trees: coarser, since they come in many materials and every
+ * material in a cell is a draw call of its own.
+ */
+const PROP_CELL = 480;
+/** Beyond this, metres, people are not drawn or animated: past the thickest fog's far end, a few pixels at most. */
+const PEOPLE_FAR = 420;
+
 const MUD_WATER = new THREE.Color(0x4a4232);
+/** A puddle frozen over. */
+const ICE = new THREE.Color(0x9aa8b0);
 
 function busSignTex(): THREE.Texture {
   return paint(32, 32, (g, w, h) => {
@@ -1048,4 +2099,23 @@ function limitSign(n: number, end = false): THREE.Texture {
       for (const o of [-6, 0, 6]) { c.beginPath(); c.moveTo(14 + o, 50 + o); c.lineTo(50 + o, 14 + o); c.stroke(); }
     }
   }, { repeat: false });
+}
+
+interface RoadEvent {
+  id: 'tractor' | 'lorry';
+  s: number;
+  state: 'wait' | 'go' | 'done';
+  t: number; honks: number; away: number;
+  model: import('./Vehicles').VehicleModel;
+  col: Collider;
+  yaw: number;
+  dir: { x: number; z: number };
+  farmer: Person;
+  told: boolean;
+  x: number; z: number;
+  x0: number; z0: number;
+}
+
+function rollWheelsBy(m: import('./Vehicles').VehicleModel, ds: number): void {
+  for (const a of m.axles) a.pivot.rotation.x += ds / a.r;
 }

@@ -5,6 +5,10 @@ import { clamp, damp } from '../core/math';
 import manUrl from '../assets/people/man.glb?url';
 import womanUrl from '../assets/people/woman.glb?url';
 import dressUrl from '../assets/people/woman-dress.glb?url';
+import gaiUrl from '../assets/people/militsioner.glb?url';
+import timurUrl from '../assets/people/timur.glb?url';
+import muhaUrl from '../assets/people/muha.glb?url';
+import kartatayUrl from '../assets/people/kartatay.glb?url';
 
 /**
  * Skinned, animated people built on Quaternius' CC0 "BaseHuman" figures (see
@@ -16,10 +20,16 @@ import dressUrl from '../assets/people/woman-dress.glb?url';
  * two-bone IK for waving, saluting, pointing a baton or holding a wheel.
  * Local forward is +Z, feet at the origin, sizes in metres.
  */
-export type Body = 'man' | 'woman' | 'dress';
+/**
+ * Textured, modelled characters on the same skeleton and clips as `man`: `gai` the traffic-police
+ * officer, `timur` the hero (the driver's own arms and legs), `muha` his friend from before the army,
+ * `kartatay` the grandfather (cap, moustache, an old jacket over a patterned sweater, boots).
+ */
+export type Body = 'man' | 'woman' | 'dress' | 'gai' | 'timur' | 'muha' | 'kartatay';
 
-const URLS: Record<Body, string> = { man: manUrl, woman: womanUrl, dress: dressUrl };
-const HEIGHT: Record<Body, number> = { man: 1.78, woman: 1.64, dress: 1.6 };
+const URLS: Record<Body, string> = { man: manUrl, woman: womanUrl, dress: dressUrl, gai: gaiUrl, timur: timurUrl, muha: muhaUrl, kartatay: kartatayUrl };
+// the officer, Timur and the grandfather are measured to the top of their caps (he is 72 and stoops a little)
+const HEIGHT: Record<Body, number> = { man: 1.78, woman: 1.64, dress: 1.6, gai: 1.86, timur: 1.8, muha: 1.76, kartatay: 1.72 };
 
 interface MeshInfo { raw: Float32Array; joint: string[]; index: ArrayLike<number> | null }
 interface Template {
@@ -71,6 +81,7 @@ export const lam = (c: string): THREE.MeshLambertMaterial => {
   return m;
 };
 let vcMat: THREE.MeshLambertMaterial | null = null;
+const texMats = new Map<string, THREE.MeshLambertMaterial>();
 
 export interface Outfit {
   /** Colour per model material (Shirt, Pants, Skin, Hair, Dress, Jacket, Shoes…). */
@@ -81,6 +92,11 @@ export interface Outfit {
    * skinned to a matching bone are painted (e.g. sleeves).
    */
   paint?: { mat: string; below: number; color: string; joints?: RegExp }[];
+  /**
+   * Keep only the triangles whose three vertices are skinned to a matching joint: a first-person
+   * figure that is just arms and legs, with no torso, shoulders or head to get in the way.
+   */
+  keep?: RegExp;
 }
 
 export type Side = 'L' | 'R';
@@ -107,6 +123,8 @@ export class Human {
   private action: THREE.AnimationAction | null = null;
   /** Bones the procedural layer rotates, with their rest pose (not every clip animates them). */
   private readonly driven: [THREE.Bone, THREE.Quaternion][] = [];
+  /** Each skinned mesh of this figure with its template data, for `trim()`. */
+  private readonly parts: [THREE.SkinnedMesh, MeshInfo][] = [];
   clip = '';
 
   constructor(readonly body: Body, outfit: Outfit = {}) {
@@ -123,26 +141,24 @@ export class Human {
       const m = o as THREE.SkinnedMesh;
       if (!m.isSkinnedMesh) return;
       const info = tpl.meshes[mi++];
+      this.parts.push([m, info]);
       const src = m.material as THREE.MeshStandardMaterial;
-      const base = outfit.colors?.[src.name] ?? `#${src.color.getHexString()}`;
-      const paints = outfit.paint?.filter((p) => p.mat === src.name) ?? [];
-      if (paints.length) {
-        // per-vertex colour: the geometry is cloned for this figure only
+      // a painted model keeps its texture, matte like the rest of the world
+      if (src.map) {
+        // generated meshes are not consistently wound: they come marked double-sided, and stay so
+        const key = `${src.map.uuid}:${src.side}`;
+        m.material = texMats.get(key) ?? texMats.set(key, new THREE.MeshLambertMaterial({ map: src.map, side: src.side })).get(key)!;
+      } else this.recolor(m, src, info, outfit);
+      if (outfit.keep) {
         const geo = m.geometry.clone();
-        const n = geo.attributes.position.count, col = new Float32Array(n * 3), c = new THREE.Color();
-        for (let i = 0; i < n; i++) {
-          const y = info.raw[i * 3 + 1] * this.s;
-          let hex = base;
-          // hands hang below the knees; only the legs and torso get repainted
-          const j = info.joint[i];
-          for (const p of paints) if (y < p.below && (p.joints ? p.joints.test(j) : !ARM.test(j))) hex = p.color;
-          c.set(hex);
-          col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
+        const src = geo.index ? Array.from(geo.index.array) : Array.from({ length: geo.attributes.position.count }, (_, i) => i);
+        const out: number[] = [];
+        for (let t = 0; t + 2 < src.length; t += 3) {
+          if (outfit.keep.test(info.joint[src[t]]) && outfit.keep.test(info.joint[src[t + 1]]) && outfit.keep.test(info.joint[src[t + 2]])) out.push(src[t], src[t + 1], src[t + 2]);
         }
-        geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+        geo.setIndex(out);
         m.geometry = geo;
-        m.material = vcMat ??= new THREE.MeshLambertMaterial({ vertexColors: true });
-      } else m.material = lam(base);
+      }
       // skinned bounds are computed in the bind pose; seated figures would be culled
       m.frustumCulled = false;
     });
@@ -162,7 +178,63 @@ export class Human {
     });
   }
 
+  /** Flat model colours from the outfit, or per-vertex paint where it asks for it. */
+  private recolor(m: THREE.SkinnedMesh, src: THREE.MeshStandardMaterial, info: MeshInfo, outfit: Outfit): void {
+    const base = outfit.colors?.[src.name] ?? `#${src.color.getHexString()}`;
+    const paints = outfit.paint?.filter((p) => p.mat === src.name) ?? [];
+    if (paints.length) {
+      // per-vertex colour: the geometry is cloned for this figure only
+      const geo = m.geometry.clone();
+      const n = geo.attributes.position.count, col = new Float32Array(n * 3), c = new THREE.Color();
+      for (let i = 0; i < n; i++) {
+        const y = info.raw[i * 3 + 1] * this.s;
+        let hex = base;
+        // hands hang below the knees; only the legs and torso get repainted
+        const j = info.joint[i];
+        for (const p of paints) if (y < p.below && (p.joints ? p.joints.test(j) : !ARM.test(j))) hex = p.color;
+        c.set(hex);
+        col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
+      }
+      geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+      m.geometry = geo;
+      m.material = vcMat ??= new THREE.MeshLambertMaterial({ vertexColors: true });
+    } else m.material = lam(base);
+  }
+
   bone(name: string): THREE.Bone { return this.bones[name]; }
+
+  /**
+   * Drop the triangles that have a vertex failing `keep(joint, bindPos)`: its main bone and its
+   * bind-pose position in metres (the space of `bindAt()`). For cutting a first-person figure cleanly.
+   */
+  trim(keep: (joint: string, p: THREE.Vector3) => boolean): void {
+    const p = new THREE.Vector3();
+    for (const [m, info] of this.parts) {
+      const geo = m.geometry.clone();
+      const idx = geo.index ? Array.from(geo.index.array) : Array.from({ length: geo.attributes.position.count }, (_, i) => i);
+      const ok = (i: number) => keep(info.joint[i], p.set(info.raw[i * 3], info.raw[i * 3 + 1], info.raw[i * 3 + 2]).multiplyScalar(this.s));
+      const out: number[] = [];
+      for (let t = 0; t + 2 < idx.length; t += 3) if (ok(idx[t]) && ok(idx[t + 1]) && ok(idx[t + 2])) out.push(idx[t], idx[t + 1], idx[t + 2]);
+      geo.setIndex(out);
+      m.geometry = geo;
+    }
+  }
+
+  /** A bone's frame in the bind pose, group space (scaled by the model): see `bindAt()`. */
+  bindFrame(name: string): THREE.Matrix4 | undefined { return this.bind[name]; }
+
+  /** Farthest bind-pose vertex skinned to one of `joints` from a bone's origin, metres (a hand's length). */
+  span(from: string, joints: string[]): number {
+    const o = this.bindAt(from, _h);
+    let best = 0;
+    for (const m of this.tpl.meshes) {
+      for (let i = 0; i < m.joint.length; i++) {
+        if (!joints.includes(m.joint[i])) continue;
+        best = Math.max(best, Math.hypot(m.raw[i * 3] * this.s - o.x, m.raw[i * 3 + 1] * this.s - o.y, m.raw[i * 3 + 2] * this.s - o.z));
+      }
+    }
+    return best;
+  }
 
   /** Bone origin in group space (metres), as currently posed. */
   at(name: string, out = new THREE.Vector3()): THREE.Vector3 {
@@ -257,11 +329,17 @@ export class Human {
     this.clip = name;
   }
 
+  private hidden: THREE.Bone[] = [];
+
+  /** Collapse bones (and the mesh skinned to them): a first-person figure has no head to see. */
+  hideBones(names: string[]): void { this.hidden = names.map((n) => this.bones[n]).filter(Boolean); }
+
   /** Advance the clips; procedural overrides (look, reach) go after this. */
   tick(dt: number): void {
     // overrides are absolute per frame: undo last frame's before the clips apply
     for (const [b, q] of this.driven) b.quaternion.copy(q);
     this.mixer.update(dt);
+    for (const b of this.hidden) b.scale.setScalar(0.001);
     this.group.updateMatrixWorld(true);
   }
 
@@ -310,7 +388,8 @@ export class Human {
     this.rot(bone, _qd.setFromUnitVectors(u, v));
   }
 
-  private spin(name: string, axisGroup: THREE.Vector3, angle: number): void {
+  /** Rotate a bone about a group-space axis through its origin (after the clips, like `look`). */
+  spin(name: string, axisGroup: THREE.Vector3, angle: number): void {
     const bone = this.bones[name];
     this.group.getWorldQuaternion(_q);
     const ax = axisGroup.clone().applyQuaternion(_q).normalize();
@@ -460,4 +539,9 @@ export function makePerson(coat: string, scarf: string, withApron = false, body:
   // the long dress ends at the knee, so the apron stops at its hem
   if (withApron) apron(p.human, body === 'dress' ? 0.63 : undefined);
   return p;
+}
+
+/** A village man: work jacket or a shirt, dark trousers, a bit of grey in the hair. */
+export function makeMan(shirt: string, trousers: string, hair = '#3a2e26'): Person {
+  return new Person('man', { colors: { Shirt: shirt, Pants: trousers, Hair: hair, Skin: '#d2a083', Socks: '#2a2420' } });
 }

@@ -34,6 +34,8 @@ class EngineProcessor extends AudioWorkletProcessor {
       { name: 'load', defaultValue: 0, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
       { name: 'throttle', defaultValue: 0, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
       { name: 'on', defaultValue: 0, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
+      // 1 = the synthesised exhaust and cab boom (no recordings), 0 = only the mechanical layers
+      { name: 'exh', defaultValue: 1, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
     ];
   }
   constructor() {
@@ -70,7 +72,7 @@ class EngineProcessor extends AudioWorkletProcessor {
     const out = outputs[0][0];
     if (!out) return true;
     const n = out.length, sr = sampleRate;
-    const rpmT = params.rpm[0], loadT = params.load[0], thrT = params.throttle[0], on = params.on[0];
+    const rpmT = params.rpm[0], loadT = params.load[0], thrT = params.throttle[0], on = params.on[0], exh = params.exh[0];
     // k-rate: retune the muffler with load and revs (brighter and louder when pulling)
     if ((this.k++ & 3) === 0) {
       const L = this.loadS, rp = this.rpmS;
@@ -147,7 +149,7 @@ class EngineProcessor extends AudioWorkletProcessor {
 
       // the cab rings: a boom near 96 Hz, panels and the engine cover
       const body = run(this.boom, exhaust) * 1.2 + run(this.panel, exhaust) * 0.6 + run(this.cover, ex) * 0.12 * (0.4 + load);
-      const mix = exhaust * 1.25 + body + intake * 0.9 + tap * 0.11 + gears + fan;
+      const mix = (exhaust * 1.25 + body) * exh + intake * 0.9 + tap * (0.11 + 0.1 * (1 - exh)) + gears + fan;
       out[i] = run(this.out, Math.tanh(mix * 1.6)) * 0.62 * this.onS;
     }
     return true;

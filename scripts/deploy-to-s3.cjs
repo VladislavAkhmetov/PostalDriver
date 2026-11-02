@@ -2,11 +2,19 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 
-const TOKEN = process.env.YC_IAM_TOKEN || '';
+let TOKEN = process.env.YC_IAM_TOKEN || '';
+if (!TOKEN) {
+  try {
+    const { execSync } = require('child_process');
+    TOKEN = execSync('yc iam create-token', { encoding: 'utf-8' }).trim();
+  } catch (e) {
+    // ignore
+  }
+}
 if (!TOKEN && process.argv.includes('--check')) {
   console.warn('Warning: YC_IAM_TOKEN environment variable is not set.');
 }
-const BUCKET = 'postaldriver';
+const BUCKET = process.env.YC_BUCKET || 'selskaya-pochta';
 const DIST_DIR = path.resolve(__dirname, '..', 'dist');
 
 const MIME_TYPES = {
@@ -139,7 +147,7 @@ async function main() {
     await Promise.all(workers);
 
     console.log(`\n🎉 Successfully uploaded ${completed}/${files.length} files!`);
-    console.log(`🌐 Live URL: http://${BUCKET}.website.yandexcloud.net`);
+    console.log(`🌐 Live URL: https://${BUCKET}.website.yandexcloud.net`);
   } catch (err) {
     console.error('Error during deployment:', err.message);
     process.exit(1);

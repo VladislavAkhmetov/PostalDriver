@@ -135,7 +135,7 @@ export function settlementSign(name: string, exit: boolean): THREE.CanvasTexture
   }, { repeat: false });
 }
 
-export function directionSign(lines: [string, string][], arrow: 'right' | 'up'): THREE.CanvasTexture {
+export function directionSign(lines: [string, string][], arrow: 'right' | 'left' | 'up'): THREE.CanvasTexture {
   return paint(128, 64, (g, w, h) => {
     g.fillStyle = BLUE; g.fillRect(0, 0, w, h);
     g.strokeStyle = '#f2f2f2'; g.lineWidth = 2; g.strokeRect(3, 3, w - 6, h - 6);
@@ -147,6 +147,8 @@ export function directionSign(lines: [string, string][], arrow: 'right' | 'up'):
     g.fillStyle = '#fff';
     if (arrow === 'right') {
       g.fillRect(w - 26, 28, 12, 4); g.beginPath(); g.moveTo(w - 14, 22); g.lineTo(w - 7, 30); g.lineTo(w - 14, 38); g.fill();
+    } else if (arrow === 'left') {
+      g.fillRect(w - 21, 28, 12, 4); g.beginPath(); g.moveTo(w - 21, 22); g.lineTo(w - 28, 30); g.lineTo(w - 21, 38); g.fill();
     } else {
       g.fillRect(w - 18, 30, 4, 22); g.beginPath(); g.moveTo(w - 24, 32); g.lineTo(w - 16, 22); g.lineTo(w - 8, 32); g.fill();
     }
@@ -509,7 +511,8 @@ export function createTextures() {
       g.fillStyle = '#fff';
       g.fillRect(10, 8, 26, 17); g.fillStyle = BLUE;
       g.beginPath(); g.moveTo(10, 8); g.lineTo(23, 18); g.lineTo(36, 8); g.lineTo(34, 8); g.lineTo(23, 15); g.lineTo(12, 8); g.fill();
-      label(g, 'ПОЧТА РОССИИ', w / 2 + 16, h / 2 + 1, `bold 22px ${NARROW}`, '#fff');
+      // a district communications office in 1997: «Почта России» is a name from 2002
+      label(g, 'ПОЧТА · ТЕЛЕГРАФ', w / 2 + 16, h / 2 + 1, `bold 22px ${NARROW}`, '#fff');
     }, { repeat: false }),
     shopSign: paint(128, 32, (g, w, h) => {
       g.fillStyle = '#ece6d6'; g.fillRect(0, 0, w, h);
@@ -573,7 +576,7 @@ export function createTextures() {
     }, { seed: 152 }),
     seat: paint(32, 32, (g, w, h) => {
       // dark grey leatherette with sewn flutes
-      noiseFill(g, w, h, 153, [66, 66, 68], 7, 8, 0.8);
+      noiseFill(g, w, h, 153, [92, 94, 96], 7, 8, 0.8);
       g.fillStyle = 'rgba(0,0,0,0.38)'; for (let x = 4; x < w; x += 8) g.fillRect(x, 0, 1, h);
       g.fillStyle = 'rgba(255,255,255,0.06)'; for (let x = 5; x < w; x += 8) g.fillRect(x, 0, 1, h);
     }, { seed: 153 }),
@@ -582,7 +585,7 @@ export function createTextures() {
       g.fillStyle = 'rgba(30,30,30,0.7)'; for (let x = 4; x < w; x += 14) { g.fillRect(x, 4, 1, 1); g.fillRect(x, h - 5, 1, 1); }
     }, { seed: 154 }),
     // black instrument strip: five separate round gauges, speedometer in the middle
-    cluster: paint(384, 96, (g, w, h) => {
+    cluster: paint(384, 120, (g, w, h) => {
       g.fillStyle = '#141414'; g.fillRect(0, 0, w, h);
       g.strokeStyle = '#2e2e2e'; g.lineWidth = 2; g.strokeRect(1, 1, w - 2, h - 2);
       const dial = (cx: number, cy: number, rad: number, a0: number, a1: number, ticks: number, labels: string[], title: string) => {
@@ -599,24 +602,24 @@ export function createTextures() {
         }
         labels.forEach((l, i) => {
           const a = a0 + ((a1 - a0) * i) / (labels.length - 1);
-          label(g, l, cx + Math.cos(a) * rad * 0.54, cy + Math.sin(a) * rad * 0.54, `bold ${rad > 30 ? 10 : 8}px ${SANS}`, '#f0f0ea');
+          label(g, l, cx + Math.cos(a) * rad * 0.55, cy + Math.sin(a) * rad * 0.55, `bold 9px ${SANS}`, '#f0f0ea');
         });
-        label(g, title, cx, cy + rad * 0.42, `bold ${rad > 30 ? 9 : 9}px ${SANS}`, '#d8d8d0');
+        label(g, title, cx, cy + rad * 0.5, `bold 9px ${SANS}`, '#d8d8d0');
       };
       const D = Math.PI / 180;
-      dial(192, 48, 40, 135 * D, 405 * D, 12, ['0', '20', '40', '60', '80', '100', '120'], 'км/ч');
-      g.fillStyle = '#242424'; g.fillRect(176, 66, 32, 10);
-      label(g, '041787', 192, 71.5, `8px ${SANS}`, '#e8e8e0');
-      dial(40, 48, 21, 225 * D, 315 * D, 4, ['0', '', '1'], 'Б');
-      dial(94, 48, 21, 225 * D, 315 * D, 4, ['40', '', '120'], '°C');
-      dial(290, 48, 21, 225 * D, 315 * D, 4, ['0', '', '8'], 'М');
-      dial(344, 48, 21, 225 * D, 315 * D, 4, ['-', '', '+'], 'А');
-      // tell-tale sockets beside the speedometer
-      for (const [x, y] of [[140, 30], [140, 64], [244, 30], [244, 64]]) {
-        g.fillStyle = '#2a2a2a'; g.beginPath(); g.arc(x, y, 7, 0, 7); g.fill();
-        g.strokeStyle = '#6a6a66'; g.lineWidth = 1; g.beginPath(); g.arc(x, y, 7, 0, 7); g.stroke();
+      // four equal gauges: speedometer, fuel, coolant, oil pressure
+      dial(48, 60, 40, 135 * D, 405 * D, 12, ['0', '20', '40', '60', '80', '100', '120'], 'км/ч');
+      g.fillStyle = '#242424'; g.fillRect(32, 82, 32, 10);
+      label(g, '041787', 48, 87.5, `8px ${SANS}`, '#e8e8e0');
+      dial(144, 60, 40, 225 * D, 315 * D, 4, ['0', '', '1'], 'Б');
+      dial(240, 60, 40, 225 * D, 315 * D, 4, ['40', '', '120'], '°C');
+      dial(336, 60, 40, 225 * D, 315 * D, 4, ['0', '', '8'], 'кгс/см²');
+      // tell-tale sockets under the gauges
+      for (const x of [60, 156, 252, 340]) {
+        g.fillStyle = '#2a2a2a'; g.beginPath(); g.arc(x, 112, 7, 0, 7); g.fill();
+        g.strokeStyle = '#6a6a66'; g.lineWidth = 1; g.beginPath(); g.arc(x, 112, 7, 0, 7); g.stroke();
       }
-      label(g, 'УАЗ', 18, 10, `bold 8px ${NARROW}`, '#7a7a74', 'left');
+      label(g, 'УАЗ', 22, 112, `bold 8px ${NARROW}`, '#7a7a74', 'left');
     }, { repeat: false }),
     cassette: paint(64, 32, (g, w, h) => {
       g.fillStyle = '#1a1a1a'; g.fillRect(0, 0, w, h);

@@ -1,16 +1,18 @@
 import * as THREE from 'three';
+import { drawPlate, plateFor } from './Plates';
 import { Bucket, boxGeo, mat } from '../core/geom';
 import { makeCanvas, toTex } from '../core/textures';
 import { buildCar, CAR_HEAD, CarKind, isCarKind } from './Cars';
 import { headlights, setHeadlightGlow } from './Headlights';
 import { buildUaz } from './Uaz';
+import { buildSoviet, isSovietKind, SovietKind } from './Soviet';
 
 /**
  * Procedural Soviet traffic: ZIL-130, GAZ-53 (and its milk tanker), KamAZ-5320,
  * Moskvich-412, VAZ-2106 in GAI livery, PAZ-672, UAZ-452 and MTZ-80.
  * Local forward is +Z; wheels sit on y = 0.
  */
-export type VehicleKind = 'zil' | 'gaz53' | 'milk' | 'kamaz' | 'moskvich' | 'gai' | 'paz' | 'tractor' | 'uaz' | CarKind;
+export type VehicleKind = 'zil' | 'gaz53' | 'milk' | 'kamaz' | 'moskvich' | 'gai' | 'paz' | 'tractor' | 'uaz' | CarKind | SovietKind;
 
 export interface VehicleModel {
   group: THREE.Group;
@@ -75,11 +77,9 @@ function materials(): Record<string, THREE.Material> {
       g.fillStyle = '#ecece6'; g.fillRect(0, 0, 32, 8);
       g.fillStyle = '#1d4ea6'; g.font = font(8); g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('ГАИ', 16, 4.5);
     }) }),
-    plate: V({ map: textTex(64, 16, (g) => {
-      g.fillStyle = '#f2f0e8'; g.fillRect(0, 0, 64, 16);
-      g.strokeStyle = '#1a1a1a'; g.lineWidth = 1.5; g.strokeRect(1, 1, 62, 14);
-      g.fillStyle = '#1a1a1a'; g.font = font(12); g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('А 417 ВН 62', 32, 8.5);
-    }) }),
+    // the old lorries, the bus and the tractor: mostly still on Soviet plates, some re-registered
+    ...Object.fromEntries(Array.from({ length: 6 }, (_, i) => [`plate${i}`, V({ map: textTex(128, 28, (g) => drawPlate(g, plateFor(i * 37 + 11, i < 4 ? 'soviet' : 'new'), 128, 28)) })])),
+    platePolice: V({ map: textTex(128, 28, (g) => drawPlate(g, plateFor(5, 'militia'), 128, 28)) }),
     tarp: V({ map: textTex(64, 32, (g) => {
       g.fillStyle = '#6a6e52'; g.fillRect(0, 0, 64, 32);
       g.fillStyle = 'rgba(0,0,0,0.2)'; for (let x = 0; x < 64; x += 8) g.fillRect(x, 0, 1, 32);
@@ -165,6 +165,12 @@ export function buildVehicle(kind: VehicleKind, color: string, seed = 0): Vehicl
     tails.add(m.tail);
     return m;
   }
+  if (isSovietKind(kind)) {
+    // pixel-art VAZ, Bobik, LiAZ and ambulance (Soviet.ts); `color` names the paint variant
+    const m = buildSoviet(kind, color);
+    tails.add(m.tail);
+    return m;
+  }
   if (kind === 'uaz') {
     // the modelled UAZ-452 (Uaz.ts): the gas service's orange or plain grey
     const m = buildUaz(seed % 2 ? 'gas' : 'grey');
@@ -196,7 +202,8 @@ export function buildVehicle(kind: VehicleKind, color: string, seed = 0): Vehicl
     box(0.04, 0.04, 0.3, x + side * 0.12, y, z, DARK);
     box(0.04, 0.24, 0.16, x + side * 0.25, y + 0.05, z - 0.05, DARK);
   };
-  const plate = (y: number, z: number, back = false) => add('plate', new THREE.PlaneGeometry(0.52, 0.12), 0, y, z, '#ffffff', 0, back ? Math.PI : 0);
+  const plateKey = kind === 'gai' ? 'platePolice' : `plate${Math.abs(seed + kind.length) % 6}`;
+  const plate = (y: number, z: number, back = false) => add(plateKey, new THREE.PlaneGeometry(0.52, 0.12), 0, y, z, '#ffffff', 0, back ? Math.PI : 0);
   const roundLamp = (x: number, y: number, z: number, r = 0.11) => {
     add('chrome', new THREE.CylinderGeometry(r + 0.025, r + 0.025, 0.06, 10), x, y, z - 0.01, CHROME, Math.PI / 2);
     add('head', new THREE.CylinderGeometry(r, r, 0.07, 10), x, y, z, '#f4f0dc', Math.PI / 2);

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { drawPlate } from './Plates';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { decal, decalMat, font, tex } from './Cars';
 import { headlights } from './Headlights';
@@ -82,19 +83,8 @@ const emblemTex = () => tex(64, 64, (g) => {
   g.beginPath(); g.moveTo(31, 44); g.lineTo(29, 50); g.lineTo(33, 50); g.closePath(); g.fill();
 });
 
-/** "М 417 ВН 62": white 1993-pattern plate. */
-const plateTex = () => tex(128, 28, (g) => {
-  g.fillStyle = '#f2f0e8'; g.fillRect(0, 0, 128, 28);
-  g.strokeStyle = '#1a1a1a'; g.lineWidth = 2; g.strokeRect(1, 1, 126, 26);
-  g.fillStyle = '#141414'; g.textBaseline = 'middle'; g.textAlign = 'center';
-  g.font = font(22);
-  const text = 'М 417 ВН';
-  const k = Math.min(1, 88 / g.measureText(text).width);
-  g.save(); g.translate(50, 15); g.scale(k, 1); g.fillText(text, 0, 0); g.restore();
-  g.fillRect(98, 3, 1.5, 22);
-  g.font = font(14); g.fillText('62', 113, 11);
-  g.font = font(7); g.fillText('RUS', 113, 22);
-});
+/** The post van's own plate: «М 417 ВН 02», the 1993 kind, Bashkortostan. */
+const plateTex = () => tex(128, 28, (g) => drawPlate(g, { kind: 'new', main: 'М 417 ВН', region: '02' }, 128, 28));
 
 function postDecals(group: THREE.Group, body: THREE.Mesh[]): void {
   letters ??= decalMat(wordTex('ПОЧТА', 256, 48, 46, 3));
@@ -152,5 +142,5 @@ export function buildUaz(livery: UazLivery): VehicleModel {
     [new THREE.Vector3(0.86, 1.0, -1.95), new THREE.Vector3(-0.86, 1.0, -1.95)]);
   const tail = new THREE.MeshLambertMaterial({ color: '#a01810', emissive: '#ff2a18', emissiveIntensity: 0 });
   group.userData.color = livery;
-  return { group, kind: 'uaz', axles, tail, beacons: [], length: 4.37, width: 2.0, rear: new THREE.Vector3(0, 0, -1.2), lights };
+  return { group, kind: 'uaz', axles, tail, beacons: [], length: 4.44, width: 1.94, rear: new THREE.Vector3(0, 0, -1.2), lights };
 }

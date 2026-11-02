@@ -5,24 +5,34 @@ import type { TrafficSound } from '../world/Traffic';
 import type { Vehicle } from '../vehicle/Vehicle';
 import { crackleBuffer, impulseResponse, noiseBuffer, squelchBuffer } from './buffers';
 import { ENGINE_WORKLET } from './engineWorklet';
+import { EngineSamples } from './EngineSamples';
 import { ChassisSounds } from './Chassis';
 import { Tape } from './Tape';
+import type { Track } from './stations';
+import { Piece, Score } from './Score';
 
 interface Loop { src: AudioBufferSourceNode; gain: GainNode; filter: BiquadFilterNode }
 
 export interface AmbientState { rain: number; wind: number; village: number; forest: number; river: number; dusk: number; reception: number; wet: number }
 
-/** All game audio — synthesised at runtime, no sample files. */
+/** Game audio: synthesised at runtime, with the engine's tone from real recordings. */
 export class AudioEngine {
   ctx: AudioContext | null = null;
   tape: Tape | null = null;
+  /** The game's own music (the title theme, scored moments): clean, past the dashboard speaker. */
+  score: Score | null = null;
+  /** The piece meant to be on (asked for before the audio graph is built, it starts once it is). */
+  private piece: Piece | null = null;
   muted = false;
+  /** On the title screen only the radio is audible; the engine and the world wait for the drive. */
+  private radioOnly = true;
   private master!: GainNode;
   private cabin!: BiquadFilterNode;
   private world!: GainNode;
   private engine: AudioWorkletNode | null = null;
   private fallback: { osc: OscillatorNode[]; gain: GainNode; filter: BiquadFilterNode } | null = null;
   private engineGain!: GainNode;
+  private samples: EngineSamples | null = null;
   private loops: Record<string, Loop> = {};
   private whine!: { osc: OscillatorNode; gain: GainNode };
   private buffers: Record<string, AudioBuffer> = {};
@@ -36,8 +46,27 @@ export class AudioEngine {
   private clackT = 0;
   private chassis: ChassisSounds | null = null;
 
+  private ready: Promise<void> | null = null;
+
+  /**
+   * Build the audio graph once; later calls wait for that same build (the first one starts at boot,
+   * the drive's call must not run ahead of it and find no radio yet).
+   */
   async unlock(): Promise<void> {
-    if (this.started) { await this.ctx?.resume(); return; }
+    if (!this.ready) this.ready = this.init();
+    await this.ready;
+    await this.ctx?.resume();
+  }
+
+  /** The radio comes on with the drive (the title screen stays quiet until it has a track of its own). */
+  radioOn(): void {
+    if (this.tape && !this.tape.playing && !this.radioTouched) this.tape.toggle();
+    this.radioTouched = true;
+  }
+  /** The radio has been switched on once already (after that it is the driver's to switch). */
+  private radioTouched = false;
+
+  private async init(): Promise<void> {
     this.started = true;
     const ctx = new AudioContext({ latencyHint: 'interactive' });
     const comp = ctx.createDynamicsCompressor();
@@ -49,6 +78,7 @@ export class AudioEngine {
     this.cabin = ctx.createBiquadFilter();
     this.cabin.type = 'lowpass'; this.cabin.frequency.value = 2400; this.cabin.Q.value = 0.5;
     this.world = ctx.createGain();
+    this.world.gain.value = this.radioOnly ? 0 : 1;
     this.world.connect(this.cabin).connect(this.master);
     const verb = ctx.createConvolver();
     verb.buffer = impulseResponse(ctx, 0.35, 3);
@@ -66,7 +96,7 @@ export class AudioEngine {
     };
 
     this.engineGain = ctx.createGain();
-    this.engineGain.gain.value = 0.8;
+    this.engineGain.gain.value = this.radioOnly ? 0 : 0.8;
     const engineTone = ctx.createBiquadFilter();
     engineTone.type = 'lowshelf'; engineTone.frequency.value = 160; engineTone.gain.value = 3;
     this.engineGain.connect(engineTone).connect(this.master);
@@ -76,6 +106,13 @@ export class AudioEngine {
       URL.revokeObjectURL(url);
       this.engine = new AudioWorkletNode(ctx, 'uaz-engine', { numberOfInputs: 0, outputChannelCount: [1] });
       this.engine.connect(this.engineGain);
+      // the engine's tone comes from real recordings; the worklet keeps tappets, carb and fan
+      try {
+        const es = new EngineSamples(ctx, this.engineGain);
+        await es.load();
+        this.samples = es;
+        this.engine.parameters.get('exh')!.value = 0;
+      } catch (e) { console.warn('engine samples unavailable, using the synthesised exhaust', e); }
     } catch {
       const filter = ctx.createBiquadFilter(); filter.type = 'lowpass'; filter.frequency.value = 500;
       const gain = ctx.createGain(); gain.gain.value = 0;
@@ -122,9 +159,46 @@ export class AudioEngine {
 
     this.chassis = new ChassisSounds(ctx, this.master, this.world, this.buffers);
     this.tape = new Tape(ctx, this.master, this.buffers.white);
+    this.score = new Score(ctx, this.master);
+    this.score.onEnd = () => { this.piece = null; };
+    if (this.piece) this.score.play(this.piece, 2.5);
     // publish the context last: update() and one-shots key off it being ready
     this.ctx = ctx;
     await ctx.resume();
+  }
+
+  /** Hand the cab over to the drive: the engine and the world fade in under the radio. */
+  setRadioOnly(on: boolean): void {
+    this.radioOnly = on;
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this.engineGain.gain.setTargetAtTime(on ? 0 : 0.8, t, 0.3);
+    this.world.gain.setTargetAtTime(on ? 0 : 1, t, 0.3);
+  }
+
+  /** Music on (or `null`: off), fading over `fade` seconds. */
+  music(p: Piece | null, fade = 2): void {
+    this.piece = p;
+    if (!this.score) return;
+    if (p) this.score.play(p, fade); else this.score.stop(fade);
+  }
+  /** Music is meant to be on but the browser has not let the sound in yet. */
+  get musicWaiting(): boolean { return !!this.piece && !this.score?.audible; }
+
+  /** A moment of the story: the radio comes on with this song (and goes back to its programme after). */
+  cue(tr: Track): void {
+    this.radioTouched = true;
+    this.tape?.cue(tr);
+  }
+
+  /** The title screen has no drive to update, only the radio. */
+  updateRadio(dt: number): void { this.tape?.update(dt, 0.9); }
+
+  /** First tap or key press: wake the audio context and any radio the browser refused to start. */
+  gesture(): void {
+    if (this.ctx && this.ctx.state !== 'running') void this.ctx.resume();
+    this.tape?.kick();
+    this.score?.kick();
   }
 
   setMuted(m: boolean): void {
@@ -146,6 +220,7 @@ export class AudioEngine {
       set(p.get('load')!, clamp(v.load, 0, 1), 0.04);
       set(p.get('throttle')!, v.thrEff, 0.03);
       set(p.get('on')!, on, 0.02);
+      this.samples?.update(dt, rpm, clamp(v.load, 0, 1), v.thrEff, on);
     } else if (this.fallback) {
       const f = (rpm / 60) * 2;
       this.fallback.osc.forEach((o, i) => set(o.frequency, f * (i ? 0.5 : 1)));
@@ -259,6 +334,9 @@ export class AudioEngine {
     }
   }
 
+  /** Somebody else's horn on the road (a car behind the van), 0…1. */
+  otherHorn(level: number): void { if (this.ctx && level > 0) this.farHorn(level * 2.2); }
+
   /** A truck behind or in front leaning on its horn. */
   private farHorn(v: number): void {
     const t = this.ctx!.currentTime;
@@ -331,6 +409,68 @@ export class AudioEngine {
     const t = this.ctx.currentTime;
     [[3150, 0], [4020, 0.07], [2780, 0.16]].forEach(([f, d]) => this.tone('sine', f, 0.05, 0.001, 0.22, this.master, t + d, f * 0.98));
     this.burst('white', 'highpass', 5000, 0.8, 0.06, 0.05, this.master, 1, t + 0.02);
+  }
+
+  private boom: { gain: GainNode; bus: BiquadFilterNode; next: number; i: number } | null = null;
+  /**
+   * A cassette thumping out of an open car door somewhere ahead: kick on every beat, a bass line on
+   * the off-beats, everything above the bass lost in the trees. `level` 0…1 by distance, every frame.
+   */
+  boombox(level: number): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    if (!this.boom) {
+      if (level <= 0) return;
+      const bus = ctx.createBiquadFilter(); bus.type = 'lowpass'; bus.frequency.value = 320; bus.Q.value = 0.7;
+      const gain = ctx.createGain(); gain.gain.value = 0;
+      bus.connect(gain).connect(this.world);
+      this.boom = { gain, bus, next: ctx.currentTime + 0.1, i: 0 };
+    }
+    const b = this.boom, now = ctx.currentTime;
+    b.gain.gain.setTargetAtTime(level * 0.9, now, 0.25);
+    if (level <= 0.001) { b.next = now + 0.1; return; }
+    const beat = 60 / 126;
+    const bass = [55, 55, 65.4, 49];
+    if (b.next < now) b.next = now + 0.05;
+    while (b.next < now + 0.25) {
+      const at = b.next, i = b.i++;
+      this.tone('sine', 120, 0.5, 0.004, 0.22, b.bus, at, 42);
+      this.tone('sawtooth', bass[Math.floor(i / 4) % 4], 0.22, 0.01, beat * 0.4, b.bus, at + beat / 2);
+      b.next += beat;
+    }
+  }
+
+  /** A man shouting something out in the open, too far off for the words: a muffled run of syllables. */
+  shout(level: number): void {
+    const ctx = this.ctx;
+    if (!ctx || level <= 0) return;
+    const t = ctx.currentTime + 0.02;
+    const o = ctx.createOscillator(); o.type = 'sawtooth';
+    const formant = ctx.createBiquadFilter(); formant.type = 'bandpass'; formant.frequency.value = 700; formant.Q.value = 1.2;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1100;
+    const g = ctx.createGain(); g.gain.value = 0;
+    o.connect(formant).connect(lp).connect(g).connect(this.world);
+    const end = t + 0.5 + Math.random() * 0.8, peak = 0.09 * level;
+    let at = t;
+    o.frequency.setValueAtTime(170 + Math.random() * 40, at);
+    while (at < end) {
+      const syl = 0.08 + Math.random() * 0.12;
+      o.frequency.linearRampToValueAtTime(140 + Math.random() * 110, at + syl * 0.6);
+      formant.frequency.setValueAtTime(450 + Math.random() * 900, at);
+      g.gain.setValueAtTime(0, at);
+      g.gain.linearRampToValueAtTime(peak, at + 0.02);
+      g.gain.setValueAtTime(peak, at + syl * 0.7);
+      g.gain.linearRampToValueAtTime(0, at + syl);
+      at += syl + (Math.random() < 0.2 ? 0.1 : 0.015);
+    }
+    o.start(t); o.stop(end + 0.2);
+  }
+
+  /** A car door slammed outside. */
+  doorSlam(level: number): void {
+    if (!this.ctx || level <= 0) return;
+    this.burst('brown', 'lowpass', 420, 0.8, 0.6 * level, 0.16, this.world);
+    this.tone('sine', 90, 0.2 * level, 0.003, 0.12, this.world);
   }
 
   /** Handcuffs ratcheting shut, then the patrol car's door. */
@@ -513,6 +653,66 @@ export class AudioEngine {
     this.tone('square', 90, 0.015, 0.01, 0.06);
   }
   stamp(): void { if (this.ctx) { this.tone('sine', 180, 0.35, 0.001, 0.07, this.master, undefined, 90); this.burst('brown', 'lowpass', 900, 0.6, 0.4, 0.06); } }
+  /** The small noises of a cigarette: pack rustle, the lighter's wheel and flame, a draw, a breath out, a butt in the tin. */
+  smoking(k: 'pack' | 'flick' | 'flame' | 'puff' | 'exhale' | 'stub'): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    switch (k) {
+      case 'pack':
+        this.burst('white', 'bandpass', 3200, 1.2, 0.05, 0.12, this.world, 0.7);
+        this.burst('white', 'highpass', 5200, 0.8, 0.03, 0.07, this.world, 1, t + 0.06);
+        break;
+      case 'flick':
+        // the wheel scrapes the flint, the gas lights with a soft whoomp
+        this.burst('white', 'bandpass', 4200, 4, 0.1, 0.05, this.world);
+        this.tone('square', 2400, 0.03, 0.001, 0.015, this.world, t + 0.02, 1800);
+        break;
+      case 'flame':
+        this.burst('pink', 'bandpass', 900, 1.2, 0.07, 0.24, this.world, 1, t);
+        this.burst('white', 'highpass', 6000, 0.7, 0.025, 1.6, this.world, 1, t + 0.1);
+        break;
+      case 'puff':
+        // an intake of breath through the cigarette, and the crackle of the leaf
+        this.burst('pink', 'bandpass', 700, 1.5, 0.09, 0.4, this.world, 0.8, t);
+        for (let i = 0; i < 5; i++) this.burst('white', 'bandpass', 3800, 6, 0.035, 0.012, this.world, 1, t + 0.08 + i * 0.07 + Math.random() * 0.03);
+        break;
+      case 'exhale':
+        this.burst('pink', 'lowpass', 1200, 0.5, 0.085, 1.1, this.world, 0.7, t + 0.05);
+        break;
+      case 'stub':
+        this.burst('white', 'bandpass', 1500, 2, 0.06, 0.1, this.world);
+        this.burst('white', 'highpass', 4800, 0.8, 0.03, 0.25, this.world, 1, t + 0.04);
+        break;
+    }
+  }
+
+  private pumpSrc: { gain: GainNode; src: AudioBufferSourceNode } | null = null;
+  /** The petrol pump: a steady gurgling hiss while the tank fills, and a click when the nozzle's trigger lets go. */
+  fuelPump(on: boolean): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    if (on && !this.pumpSrc) {
+      const src = ctx.createBufferSource(); src.buffer = this.buffers.pink; src.loop = true;
+      const f = ctx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 650; f.Q.value = 0.9;
+      const lfo = ctx.createOscillator(); lfo.frequency.value = 6.5;
+      const lg = ctx.createGain(); lg.gain.value = 180; lfo.connect(lg).connect(f.frequency);
+      const gain = ctx.createGain(); gain.gain.setValueAtTime(0, t); gain.gain.linearRampToValueAtTime(0.1, t + 0.25);
+      src.connect(f).connect(gain).connect(this.world);
+      src.start(t); lfo.start(t);
+      this.pumpSrc = { gain, src };
+      this.tone('square', 140, 0.04, 0.001, 0.05, this.world, t, 70);
+    } else if (!on && this.pumpSrc) {
+      const { gain, src } = this.pumpSrc;
+      this.pumpSrc = null;
+      gain.gain.cancelScheduledValues(t); gain.gain.setValueAtTime(gain.gain.value, t); gain.gain.linearRampToValueAtTime(0, t + 0.2);
+      src.stop(t + 0.3);
+      this.tone('square', 200, 0.05, 0.001, 0.04, this.world, t + 0.2, 90);
+      this.burst('white', 'bandpass', 2200, 3, 0.05, 0.03, this.world, 1, t + 0.2);
+    }
+  }
+
   paper(): void { if (this.ctx) this.burst('white', 'highpass', 2500, 0.5, 0.08, 0.18, this.master, 0.6); }
   type(): void { if (this.ctx) this.burst('white', 'bandpass', 2800, 3, 0.05, 0.015); }
   chime(): void {
@@ -547,7 +747,7 @@ export class AudioEngine {
       }
     }
   }
-  private animal(kind: 'dog' | 'rooster' | 'cow'): void {
+  animal(kind: 'dog' | 'rooster' | 'cow'): void {
     const ctx = this.ctx!;
     const t = ctx.currentTime;
     const pan = ctx.createStereoPanner(); pan.pan.value = Math.random() * 1.6 - 0.8;

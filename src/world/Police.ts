@@ -1,10 +1,11 @@
+import { rub } from '../game/Money';
 import * as THREE from 'three';
 import { clamp, damp, lerp } from '../core/math';
 import { crewFor, type PoliceKind } from './Cars';
 import type { Ground } from './Ground';
 import { Officer } from './Officer';
 import type { Collider } from './Props';
-import type { Path, Traffic } from './Traffic';
+import { stopSpeed, type Actor, type Path, type Traffic } from './Traffic';
 import { rollWheels, setBeacons, setBrake, VehicleModel } from './Vehicles';
 
 /** The patrol cars and the inspector at the GAI post, built by World. */
@@ -20,10 +21,20 @@ export interface GaiPatrol {
   post: { x: number; z: number; yaw: number };
   /** Main-road distance of the post. */
   sPost: number;
+  /** A third patrol car and its collider: the roadblock thrown across the asphalt in a long chase. */
+  block: { model: VehicleModel; col: Collider };
 }
 
 /** What the encounter left on the driver's record. */
-export type PoliceRecord = { kind: 'check' | 'warning' | 'fine' | 'arrest' | 'escape'; fine: number; note: string };
+/** `bribe`: paid «без квитанции» — out of Timur's pocket, on no protocol (and no mark against the run). */
+export type PoliceRecord = { kind: 'check' | 'warning' | 'fine' | 'arrest' | 'escape' | 'bribe'; fine: number; note: string };
+
+/**
+ * What Sergeant Kuzmin remembers of the post van across the service: how often they have met, the
+ * envelopes taken and the ones refused, the times he let it go with a word. Kept in the profile.
+ */
+export interface GaiMemory { met: number; bribes: number; refused: number; warned: number }
+export const freshGai = (): GaiMemory => ({ met: 0, bribes: 0, refused: 0, warned: 0 });
 
 export interface PoliceEvents {
   say(speaker: string, line: string, stamp: string | null): void;
@@ -38,6 +49,16 @@ export interface PoliceEvents {
   /** Fade to black over a card; `mid` runs while the screen is dark. */
   blackout(title: string, text: string, seconds: number, mid: () => void, done: () => void): void;
   record(r: PoliceRecord): void;
+  /** The patrol bumps the van's flank or tail: side −1 left / +1 right, power 0…1. */
+  nudge?(side: number, power: number): void;
+  /**
+   * The documents are done and the inspector is still at the window: a look at the load. Return true
+   * to hold the conversation (the inspection is told elsewhere) and call `done` when it is over.
+   */
+  inspect?(reason: 'speed' | 'check' | 'flee', done: () => void): boolean;
+  /** The driver's answer at the window: the options, and `pick` with the index. Absent: the inspector just pronounces. */
+  choice?(speaker: string, line: string, options: string[], pick: (i: number) => void): void;
+  closeChoice?(): void;
 }
 
 type State = 'idle' | 'signal' | 'talk' | 'pursuit' | 'arrest' | 'bogged' | 'away' | 'cool';
@@ -50,7 +71,8 @@ const PARTNER = 'Лейтенант Белов, ГАИ';
 const LOUD = 'Мегафон · ГАИ';
 /** Radar "Барьер-2" reads from here; a little leniency over the 60 sign. */
 const RADAR = 120;
-const TOLERANCE = 72;
+/** The limit by the post. In the 90s there was no free margin: anything over sixty is a fine. */
+const LIMIT = 60;
 /** Walks up to the driver's window only from this close; farther away he talks from the post. */
 const WALK_UP = 32;
 /** Top speed and acceleration of the patrol car on asphalt, m/s and m/s². */
@@ -60,7 +82,23 @@ const VMAX_SUV = 30, ACCEL_SUV = 2.7;
 /** Gap at which the van has got away, metres. */
 const ESCAPE = 320;
 const _v = new THREE.Vector3();
-
+/** Grip the patrol driver dares to use in a bend, m/s² (less on snow): what slows him before the curves. */
+const LAT_G = 6.2;
+/** Below this closing speed a touch on the patrol is a scrape, not a ram, m/s. */
+const RAM = 2.5;
+/** What a documents check can turn up: the line, the fine, the protocol's words. */
+const FAULTS: [string, number, string][] = [
+  ['Аптечка у вас… девяносто второго года. Просрочена.', 5000, 'просроченная аптечка'],
+  ['Огнетушитель где? А, вот. Пустой. Манометр на нуле.', 5000, 'пустой огнетушитель'],
+  ['Знак аварийный покажите. …Нету? А если встанешь на трассе?', 5000, 'нет знака аварийной остановки'],
+  ['Талон техосмотра где? Под стеклом должен быть, а не в бардачке.', 10000, 'талон техосмотра не на месте'],
+  ['Фара левая не горит. Днём, говоришь? А вечером?', 10000, 'неисправная фара'],
+];
+const BRIBE_OK = [
+  'Кхм… Это что? Ладно. Квитанцию не выписываю — и чтоб я тебя на ста не видел.',
+  'Ну, раз почта торопится… Давай. И быстро отсюда.',
+  'Как обычно, значит. Езжай, почта. Деду привет.',
+];
 const CALLS = [
   'Водитель УАЗа! Немедленно остановитесь!',
   'Почта, прижмись к обочине! Кому сказано!',
@@ -86,9 +124,38 @@ export class Police {
   siren = 0;
   /** Distance between the patrol and the van during a chase, metres. */
   gap = 0;
+  /** Patrol car state for effects (dust, smoke) and the camera. */
+  patrol = { x: 0, z: 0, yaw: 0, v: 0, braking: false };
+  private dive = 0;
+  private lean = 0;
+  private nudgeT = 4;
+  /** The roadblock ahead of a van that will not stop (asphalt only, once per run). */
+  private roadblock = { on: false, used: false, x: 0, z: 0, yaw: 0 };
   private reason: Reason = 'check';
   private kmh = 0;
   private rolled = false;
+  /** Odds the post stops a van for its papers as it rolls up (higher with something in the back). */
+  checkOdds = 0.3;
+  /** Kuzmin's memory of the van, across the service (the profile keeps it: main sets and takes it back). */
+  memory: GaiMemory = freshGai();
+  /** A captain from the region at the post today: everything by the book, no «договоримся». */
+  strict = false;
+  /** No radar, no checks (the prologue's drive, the first morning's lesson): until the next reset(). */
+  quiet = false;
+  /** A visit by arrangement (the first morning): who says what at the window, and what comes after. */
+  private scripted: { lines: [string, string][]; i: number; gap: number; done: () => void } | null = null;
+  /** Where the post's radar is today, main-road distance: the lay-by, or out on the road in a village. */
+  get postS(): number { return this.p.sPost; }
+  /** True while the post is out on the road today rather than at its lay-by. */
+  get ambush(): boolean { return this.base.sPost !== this.p.sPost; }
+  /** The lay-by's own places, to come back to after a day out on the road. */
+  private readonly base: { post: GaiPatrol['post']; park: GaiPatrol['park']; sPost: number };
+  /** A scrape on the patrol already told this chase (the next is a ram all the same only if hard). */
+  private scraped = false;
+  /** The fine named at the window while the driver makes up his mind. */
+  private pending = { fine: 0, note: '' };
+  /** Whether the load has been looked at in this conversation. */
+  private inspected = false;
   private timer = 0;
   private step = 0;
   private car = {
@@ -97,6 +164,9 @@ export class Police {
     lat: 0, phase: 'tail' as Phase, phaseT: 0, close: 0, sink: 0, chaseT: 0, boxed: false,
   };
   private readonly f = { x: 0, z: 0, tx: 0, tz: 0 };
+  private readonly f2 = { x: 0, z: 0, tx: 0, tz: 0 };
+  /** The police's own entries in the traffic's actor list (the patrol in a chase, the roadblock). */
+  private readonly own: Actor[] = [];
   /** The crew: the driver talks after a chase, his partner covers the passenger side. */
   private readonly drv = new Officer(false);
   private readonly mate = new Officer(false);
@@ -123,6 +193,7 @@ export class Police {
     this.drv.ground = h;
     this.mate.ground = h;
     this.junction = ground.marks.junction;
+    this.base = { post: { ...p.post }, park: { ...p.park }, sPost: p.sPost };
     this.flashLight.position.set(0, 1.6, -0.4);
     this.duty(Math.random() < 0.5 ? 0 : 1);
   }
@@ -148,12 +219,37 @@ export class Police {
     return null;
   }
 
+  /**
+   * Today's post: at the lay-by (null), or out on the asphalt at main-road distance `s` — the
+   * inspector on the verge with the radar, the car tucked behind him — in a village, where sixty is
+   * the limit anyway. Takes effect with the next reset().
+   */
+  setPost(s: number | null): void {
+    const p = this.p;
+    if (s === null) {
+      Object.assign(p.post, this.base.post); Object.assign(p.park, this.base.park); p.sPost = this.base.sPost;
+      return;
+    }
+    const g = this.ground.main, f = g.frame(s), half = g.zoneAt(s).width / 2;
+    const ix = f.x + f.rx * (half + 1.6), iz = f.z + f.rz * (half + 1.6);
+    Object.assign(p.post, { x: ix, z: iz, yaw: Math.atan2(-f.rx, -f.rz) });
+    const fk = g.frame(s - 10);
+    const kx = fk.x + fk.rx * (half + 3.6), kz = fk.z + fk.rz * (half + 3.6);
+    Object.assign(p.park, { x: kx, y: this.ground.height(kx, kz) + 0.02, z: kz, yaw: Math.atan2(-fk.tx, -fk.tz) + 0.08 });
+    p.sPost = s;
+  }
+
   reset(): void {
     this.car.path = null;
+    this.scraped = false;
+    this.quiet = false;
+    this.scripted = null;
     this.state = 'idle';
     this.step = 0;
     this.rolled = false;
     this.siren = 0;
+    this.clearBlock();
+    this.roadblock.used = false;
     this.talker = null;
     for (const o of [this.drv, this.mate]) o.speed = 1.45;
     this.duty(Math.random() < 0.5 ? 0 : 1);
@@ -166,6 +262,18 @@ export class Police {
   /** The van hit something at `v` m/s; ramming the patrol during a chase is the end of it. */
   impact(v: number, px: number, pz: number): void {
     if (this.state !== 'pursuit' || v < 0.25) return;
+    // a scrape at walking pace (the patrol leaning on the flank, a bumper kissed in the block) is not a ram
+    const near = (this.roadblock.on && Math.hypot(this.roadblock.x - px, this.roadblock.z - pz) < 6.5) || Math.hypot(this.car.x - px, this.car.z - pz) <= 4.8;
+    if (near && v < RAM) {
+      if (!this.scraped) { this.scraped = true; this.ev.megaphone('Аккуратнее, почта! Ещё раз заденешь — пойдёшь за таран!'); }
+      return;
+    }
+    if (this.roadblock.on && Math.hypot(this.roadblock.x - px, this.roadblock.z - pz) < 6.5) {
+      this.reason = 'ram';
+      this.ev.toast('Таран заграждения!', 2.4);
+      this.arrest();
+      return;
+    }
     if (Math.hypot(this.car.x - px, this.car.z - pz) > 4.8) return;
     this.reason = 'ram';
     this.ev.toast('Таран патрульной машины!', 2.4);
@@ -247,7 +355,7 @@ export class Police {
     this.step = 0;
     this.timer = 0;
     o.setMode('salute');
-    if (this.state === 'talk') this.greet();
+    if (this.state === 'talk') { if (!this.scripted) this.greet(); }
     else this.arrestLine(0);
   }
 
@@ -291,9 +399,10 @@ export class Police {
     const hx = Math.sin(yaw), hz = Math.cos(yaw), L = 1.5;
     const yf = this.ground.height(x + hx * L, z + hz * L), yb = this.ground.height(x - hx * L, z - hz * L);
     model.group.position.set(x, (yf + yb) / 2 + 0.02 - sink, z);
-    model.group.rotation.set(-Math.atan2(yf - yb, L * 2) + sink * 0.25, yaw, 0, 'YXZ');
+    model.group.rotation.set(-Math.atan2(yf - yb, L * 2) + sink * 0.25 + this.dive, yaw, this.lean, 'YXZ');
     col.x = x; col.z = z; col.rot = yaw;
     this.car.x = x; this.car.z = z; this.car.yaw = yaw;
+    this.patrol.x = x; this.patrol.z = z; this.patrol.yaw = yaw;
   }
 
   /** Main-road distance under the patrol (dirt path) or -1 on the asphalt. */
@@ -306,19 +415,86 @@ export class Police {
 
   private verdict(): void {
     const k = Math.round(this.kmh);
-    if (this.reason === 'check') {
-      this.ev.say(SPEAKER, 'Аптечка, огнетушитель, знак аварийный… Порядок. Счастливого пути, почта.', 'Проверено');
-      this.ev.record({ kind: 'check', fine: 0, note: 'проверка документов' });
-    } else if (this.reason === 'flee') {
-      this.ev.say(SPEAKER, 'Одумался, значит. Неподчинение — протокол и штраф сто рублей. Ещё раз — поедешь в отдел.', 'Штраф');
-      this.ev.record({ kind: 'fine', fine: 100, note: 'неподчинение' });
-    } else if (k > 90 || Math.random() < 0.45) {
-      this.ev.say(SPEAKER, `${k} при знаке шестьдесят. Штраф пятьдесят рублей — квитанцию держите.`, 'Штраф');
-      this.ev.record({ kind: 'fine', fine: 50, note: `${k} км/ч при 60` });
-    } else {
-      this.ev.say(SPEAKER, `${k} км/ч, а там шестьдесят. Почта, говорите? Ладно, на первый раз — устно.`, 'Предупреждение');
-      this.ev.record({ kind: 'warning', fine: 0, note: `${k} км/ч при 60` });
+    if (this.reason === 'flee') {
+      // with the lieutenant at the passenger door there is nothing to discuss
+      this.ev.say(SPEAKER, 'Одумался, значит. Неподчинение — протокол и штраф пятьдесят тысяч. Ещё раз — поедешь в отдел.', 'Штраф');
+      this.ev.record({ kind: 'fine', fine: 50000, note: 'неподчинение' });
+      return;
     }
+    if (this.reason === 'check') {
+      // the papers, the kit: usually in order; on the captain's day he looks harder
+      const f = Math.random() < (this.strict ? 0.6 : 0.35) ? FAULTS[Math.floor(Math.random() * FAULTS.length)] : null;
+      if (!f || !this.ev.choice) {
+        this.ev.say(SPEAKER, this.memory.met > 4 ? 'Всё на месте, как всегда. Езжай, Тимур, — деду привет.' : 'Аптечка, огнетушитель, знак аварийный… Порядок. Счастливого пути, почта.', 'Проверено');
+        this.ev.record({ kind: 'check', fine: 0, note: 'проверка документов' });
+        return;
+      }
+      this.offer(`${f[0]} Штраф ${rub(f[1])}.`, f[1], f[2], 'check', 0);
+      return;
+    }
+    // any speed over the sign is a fine; the more over, the more it costs
+    const over = k - LIMIT;
+    const [fine, words] = over > 40 ? [40000, 'сорок тысяч'] : over > 20 ? [20000, 'двадцать тысяч'] : [10000, 'десять тысяч'];
+    const line = over > 40 ? `${k} при знаке шестьдесят?! Штраф ${words}, и скажите спасибо, что не права.`
+      : over > 20 ? `${k} при знаке шестьдесят. Штраф ${words} — квитанцию держите.`
+      : `${k} км/ч, а знак — шестьдесят. Шестьдесят — это шестьдесят, а не «чуть-чуть». Штраф ${words}.`;
+    if (!this.ev.choice) {
+      this.ev.say(SPEAKER, line, 'Штраф');
+      this.ev.record({ kind: 'fine', fine, note: `${k} км/ч при ${LIMIT}` });
+      return;
+    }
+    this.offer(line, fine, `${k} км/ч при ${LIMIT}`, 'speed', over);
+  }
+
+  /** The fine is named: the driver answers — the receipt, «без квитанции», or a word for himself. */
+  private offer(line: string, fine: number, note: string, kind: 'speed' | 'check', over: number): void {
+    this.step = 5;
+    this.timer = 0;
+    this.pending = { fine, note };
+    const m = this.memory;
+    // once he has taken a few, the price of «без квитанции» creeps up
+    const bribe = Math.max(2000, Math.round((fine * (m.bribes >= 3 ? 0.75 : 0.5)) / 1000) * 1000);
+    const plea = kind === 'speed' ? 'Пенсии везу, товарищ сержант. Бабушки ждут…' : 'Завтра же куплю, честное слово';
+    this.ev.choice!(SPEAKER, line, ['Выписывайте квитанцию', `Может, без квитанции? (сунуть ${rub(bribe)})`, plea], (i) => {
+      if (this.state !== 'talk' || this.step !== 5) return;
+      this.answer(i, fine, bribe, note, kind, over);
+    });
+  }
+
+  private answer(i: number, fine: number, bribe: number, note: string, kind: 'speed' | 'check', over: number): void {
+    const m = this.memory;
+    this.step = 1;
+    this.timer = 0;
+    if (i === 1) {
+      // he takes it on an ordinary day, and the more readily the more often he has; never under the captain's eye
+      if (!this.strict && Math.random() < (m.bribes > 0 ? 0.9 : 0.72) - Math.min(2, m.refused) * 0.1) {
+        m.bribes++;
+        this.ev.say(SPEAKER, BRIBE_OK[Math.min(BRIBE_OK.length - 1, m.bribes - 1)], null);
+        this.ev.record({ kind: 'bribe', fine: bribe, note: 'без квитанции' });
+      } else {
+        m.refused++;
+        this.ev.say(SPEAKER, this.strict
+          ? 'Ты что, ослеп? Капитан из области вон стоит! Убери… Штраф по полной — и вдвойне, за находчивость.'
+          : 'Ты мне что суёшь?! Сотруднику при исполнении? Убери. Штраф вдвойне — и скажи спасибо, что не протокол о взятке.', 'Штраф');
+        this.ev.record({ kind: 'fine', fine: fine * 2, note: `${note}, попытка «договориться»` });
+      }
+      return;
+    }
+    if (i === 2) {
+      // a word for himself: a couple of times in the service, more for a driver who has never tried to pay him off
+      const allowance = m.met >= 5 && m.bribes === 0 ? 4 : 2;
+      if (!this.strict && m.warned < allowance && (kind === 'check' || over <= 20)) {
+        m.warned++;
+        this.ev.say(SPEAKER, kind === 'speed' ? 'Пенсии, говоришь… Ладно, почта. Первый и последний раз — и чтоб шестьдесят!' : 'Завтра, значит. Ладно — завтра и проверю. Езжай.', 'Предупреждение');
+        this.ev.record({ kind: 'warning', fine: 0, note });
+        return;
+      }
+      this.ev.say(SPEAKER, kind === 'speed' ? 'У всех бабушки, все спешат. Квитанцию держи.' : 'Завтра, завтра… А штраф — сегодня.', 'Штраф');
+      this.ev.record({ kind: 'fine', fine, note });
+      return;
+    }
+    this.ev.say(SPEAKER, 'Вот квитанция. Сбербанк, в течение месяца. Счастливого пути.', 'Штраф');
+    this.ev.record({ kind: 'fine', fine, note });
   }
 
   update(dt: number, t: number, px: number, pz: number, pvx: number, pvz: number, pyaw = 0): void {
@@ -337,10 +513,11 @@ export class Police {
     if (this.state === 'idle') {
       // approaching only: closing on the post
       const closing = (ip.x - px) * pvx + (ip.z - pz) * pvz > 0;
-      if (dIns < RADAR && closing && kmh > TOLERANCE) this.signal('speed', kmh);
+      if (this.quiet) { /* nobody stops the van today */ }
+      else if (dIns < RADAR && closing && kmh > LIMIT + 0.5) this.signal('speed', kmh);
       else if (!this.rolled && dIns < 60 && closing && kmh > 5) {
         this.rolled = true;
-        if (Math.random() < 0.3) this.signal('check', kmh);
+        if (Math.random() < this.checkOdds) this.signal('check', kmh);
       }
     } else if (this.state === 'signal') {
       if (this.reason === 'speed') this.kmh = Math.max(this.kmh, dIns < RADAR ? kmh : 0);
@@ -353,18 +530,41 @@ export class Police {
       if (this.step === -1) {
         // walking up; follow the van if it creeps forward, give up waiting after a while
         if (o && Math.hypot(px - this.routedAt.x, pz - this.routedAt.z) > 2.5 && speed < 1) this.approach(o);
-        if (this.timer > 40) { this.step = 0; this.timer = 0; this.greet(); }
+        if (this.timer > 40) { this.step = 0; this.timer = 0; if (!this.scripted) this.greet(); }
+      } else if (this.step === 0 && this.scripted) {
+        // a word between old acquaintances at the window, line by line
+        const sc = this.scripted;
+        if (o && o.mode === 'salute' && this.timer > 1.6) o.setMode('talk');
+        if (this.timer > sc.gap) {
+          this.timer = 0;
+          if (sc.i < sc.lines.length) {
+            const [who, line] = sc.lines[sc.i++];
+            this.ev.say(who, line, null);
+            sc.gap = 2 + line.length * 0.05;
+          } else this.endVisit(o);
+        }
       } else if (this.step === 0) {
         if (o && o.mode === 'salute' && this.timer > 1.6) o.setMode('talk');
         if (this.timer > 3.4 + (o ? 1.4 : 0)) { this.step = 1; this.timer = 0; this.verdict(); }
+      } else if (this.step === 5 && this.timer > 30) {
+        // no answer at the window: the receipt, then
+        this.ev.closeChoice?.();
+        this.ev.say(SPEAKER, 'Молчишь? Ну, значит, квитанция.', null);
+        this.step = 1; this.timer = 0;
+        this.ev.record({ kind: 'fine', fine: this.pending.fine, note: this.pending.note });
       } else if (this.step === 1 && this.timer > 5.5) {
-        this.ev.toast(this.reason === 'check' ? 'Проверка документов пройдена' : 'Инспектор отпустил — можно ехать', 2.4);
-        this.state = c.path ? 'away' : 'cool';
-        this.timer = 0;
-        if (o) { o.setMode('salute'); this.step = 2; }
+        // and before the van goes: what's in the back?
+        if (!this.inspected && this.reason !== 'ram') {
+          this.inspected = true;
+          if (this.ev.inspect?.(this.reason, () => { if (this.state === 'talk' && this.step === 4) this.release(o); })) { this.step = 4; this.timer = 0; }
+          else this.release(o);
+        } else this.release(o);
       }
-      // drove off mid-conversation: now it's a chase
-      if (this.state === 'talk' && this.step <= 0 && speed > 3 && Math.hypot(c.x - px, c.z - pz) > 25) {
+      // drove off in the middle of a friendly word: just the end of it
+      if (this.state === 'talk' && this.scripted && speed > 3) this.endVisit(o);
+      // drove off mid-conversation (or mid-search): now it's a chase
+      if (this.state === 'talk' && (this.step <= 0 || this.step === 4 || this.step === 5) && speed > 3 && Math.hypot(c.x - px, c.z - pz) > 25) {
+        if (this.step === 5) this.ev.closeChoice?.();
         if (o) { this.sendBack(o); this.talker = null; }
         if (c.path) this.startChase(); else this.pursue(px, pz);
       }
@@ -409,10 +609,31 @@ export class Police {
     this.animate(dt, dIns);
     setBeacons(this.model, t, c.flash);
     // the blue strobe washes the verges at dusk and in the rain
-    this.flashLight.intensity = c.flash && (Math.floor(t * 5) % 2 === 0) ? 2.2 : 0;
+    const odd = Math.floor(t * 5) % 2 === 0;
+    this.flashLight.color.setHex(odd ? 0x3c6cff : 0xff2a22);
+    this.flashLight.distance = this.state === 'pursuit' ? 34 : 22;
+    this.flashLight.intensity = c.flash ? (this.state === 'pursuit' ? 6 : 2.2) * (Math.floor(t * 10) % 2 === 0 || this.state !== 'pursuit' ? 1 : 0.35) : 0;
     const dist = Math.hypot(c.x - px, c.z - pz);
     const wail = this.state === 'pursuit' ? clamp(1 - dist / 320, 0, 1) ** 1.3 : this.state === 'bogged' ? clamp(1 - this.timer / 4, 0, 1) * 0.6 : 0;
     this.siren = damp(this.siren, wail, 4, dt);
+    // tell the traffic about the patrol and the roadblock (only the police's own: others — a block by
+    // the sawmill, a car across the lane — stay in the list)
+    const acts = this.traffic.actors;
+    for (const a of this.own) { const i = acts.indexOf(a); if (i >= 0) acts.splice(i, 1); }
+    this.own.length = 0;
+    const push = (a: Actor) => { acts.push(a); this.own.push(a); };
+    if (this.state === 'pursuit' && this.car.path) {
+      const cc = this.car;
+      push({ x: cc.x, z: cc.z, vx: Math.sin(cc.yaw) * cc.v, vz: Math.cos(cc.yaw) * cc.v, yaw: cc.yaw, hw: this.model.width / 2, hl: this.model.length / 2, siren: true, path: cc.path ?? undefined, d: cc.d, dir: cc.dir });
+    }
+    if (this.roadblock.on) {
+      if (this.state !== 'pursuit') this.clearBlock();
+      else {
+        const rb = this.roadblock;
+        push({ x: rb.x, z: rb.z, vx: 0, vz: 0, yaw: rb.yaw, hw: 0.9, hl: 2.1 });
+        setBeacons(this.p.block.model, t, true);
+      }
+    }
   }
 
   /** Back to the lay-by with the whole crew, out of sight of the van. */
@@ -459,9 +680,51 @@ export class Police {
     this.ev.toast(reason === 'speed' ? `Радар ГАИ: ${Math.round(kmh)} км/ч при 60 — инспектор требует остановиться` : 'Инспектор ГАИ машет жезлом — прижмитесь к обочине', 3.2);
   }
 
+  /**
+   * The van has pulled in at the post by arrangement (the first morning: the grandfather wants a
+   * word with Kuzmin): the inspector walks up to the window and the `lines` are said in turn; no
+   * check, no fine. `done` when it is over (or the van drives off). False if the post is busy.
+   */
+  visit(lines: [string, string][], done: () => void): boolean {
+    if (this.state !== 'idle' && this.state !== 'cool') return false;
+    this.memory.met = Math.max(1, this.memory.met);
+    this.scripted = { lines, i: 0, gap: 0.8, done };
+    this.reason = 'check';
+    this.state = 'talk';
+    this.timer = 0;
+    this.inspected = true;
+    const ins = this.p.inspector;
+    const nearIns = Math.hypot(ins.group.position.x - this.van.x, ins.group.position.z - this.van.z) < 60;
+    this.talker = nearIns ? ins : null;
+    if (this.talker) { this.step = -1; this.approach(this.talker); } else this.step = 0;
+    return true;
+  }
+
+  private endVisit(o: Officer | null): void {
+    const sc = this.scripted;
+    if (!sc) return;
+    this.scripted = null;
+    this.state = 'cool';
+    this.timer = 0;
+    this.step = 1;
+    if (o) { o.setMode('salute'); this.step = 2; }
+    sc.done();
+  }
+
+  /** The conversation is over: on your way. */
+  private release(o: Officer | null): void {
+    const c = this.car;
+    this.ev.toast(this.reason === 'check' ? 'Проверка документов пройдена' : 'Инспектор отпустил — можно ехать', 2.4);
+    this.state = c.path ? 'away' : 'cool';
+    this.timer = 0;
+    this.step = 1;
+    if (o) { o.setMode('salute'); this.step = 2; }
+  }
+
   private talk(): void {
     this.state = 'talk';
     this.timer = 0;
+    this.inspected = false;
     // after a chase the patrol driver gets out; at the post the inspector walks over if close
     const ins = this.p.inspector;
     const nearIns = Math.hypot(ins.group.position.x - this.van.x, ins.group.position.z - this.van.z) < WALK_UP;
@@ -478,14 +741,28 @@ export class Police {
   }
 
   private greet(): void {
-    this.ev.say(SPEAKER, this.reason === 'flee' ? 'Ну что, гонщик, догнали? Права и путевой лист — из машины не выходить.' : 'Сержант Кузьмин. Документики ваши и путевой лист, пожалуйста.', null);
+    if (this.reason === 'flee') { this.ev.say(SPEAKER, 'Ну что, гонщик, догнали? Права и путевой лист — из машины не выходить.', null); return; }
+    // he knows the post van by now; and the captain's day he says so, for the driver's own good
+    const m = this.memory;
+    const known = m.met === 0 ? 'Сержант Кузьмин. Документики ваши и путевой лист, пожалуйста.'
+      : m.met < 4 ? 'Опять почта. Документики, путевой лист.'
+      : m.bribes >= 3 ? 'А, почта. Ну что, как обычно? Документы давай для порядка.'
+      : 'Тимур, здорово. Как дед, ходит? Документы давай — порядок есть порядок.';
+    m.met++;
+    this.ev.say(SPEAKER, this.strict ? `${known} И без глупостей: у нас сегодня капитан из области.` : this.ambush ? `${known} Что, не ждал нас тут?` : known, null);
   }
 
   // ------------------------------------------------------------ chase
 
   private pursue(px: number, pz: number): void {
-    const pl = this.traffic.locate(px, pz);
     const path = this.traffic.paths[0];
+    // a van that slipped past along the verge or across the field is still on the patrol's road for the chase
+    let pl = this.traffic.locate(px, pz);
+    if (!pl) {
+      const sNear = this.ground.main.nearestS(px, pz);
+      const f = this.ground.main.frame(sNear);
+      if (sNear < this.junction && Math.hypot(f.x - px, f.z - pz) < 80) pl = { path, d: sNear, lat: 0 };
+    }
     if (!pl || pl.path !== path) { this.state = 'cool'; return; }
     const c = this.car;
     c.path = path;
@@ -512,6 +789,26 @@ export class Police {
     const list = dirt ? CALLS_DIRT : CALLS;
     this.ev.megaphone(list[this.callI++ % list.length]);
     this.callT = 7 + Math.random() * 3;
+  }
+
+  /** The speed for the sharpest bend in the next ~60 m of road, from the heading change over 20 m stretches. */
+  private bendCap(path: Path, d: number, dir: number, ice: number): number {
+    let cap = 1e3;
+    const a = path.frame(clamp(d, 0, path.length), this.f2);
+    let ax = a.tx, az = a.tz;
+    for (let k = 1; k <= 3; k++) {
+      const dd = clamp(d + dir * k * 20, 0, path.length);
+      const b = path.frame(dd, this.f2);
+      const turn = Math.abs(Math.atan2(ax * b.tz - az * b.tx, ax * b.tx + az * b.tz));
+      if (turn > 0.02) {
+        // radius of that stretch, and the room left to brake for it
+        const r = 20 / turn;
+        const vb = Math.sqrt(LAT_G * ice * r);
+        cap = Math.min(cap, Math.sqrt(vb * vb + 2 * BRAKE * 0.6 * ice * Math.max(0, (k - 1) * 20)));
+      }
+      ax = b.tx; az = b.tz;
+    }
+    return cap;
   }
 
   /** How fast the patrol 4×4 goes on the dirt track at main-road distance s. */
@@ -555,7 +852,12 @@ export class Police {
     this.gap = Math.max(0, Math.hypot(c.x - px, c.z - pz) - 4);
     const sDirt = this.dirtS();
     const dirt = sDirt >= 0;
-    const vmax = dirt ? this.dirtCap(sDirt) : this.suv ? VMAX_SUV : VMAX;
+    // on snow the patrol driver is as careful as anyone: less speed, softer throttle and brakes
+    const ice = 1 - this.ground.snow * (dirt ? 0.15 : 0.3);
+    const vtop = (this.suv ? VMAX_SUV : VMAX) * ice;
+    let vmax = dirt ? this.dirtCap(sDirt) : vtop;
+    // and he lifts for the bends: the heading change over the road ahead, the speed the grip allows through it
+    vmax = Math.min(vmax, this.bendCap(path, c.d, c.dir, ice));
     const lane = this.traffic.laneAt(path, c.d, c.dir);
 
     // manoeuvre: on the asphalt, after a few seconds on the van's tail, pull out,
@@ -570,7 +872,7 @@ export class Police {
       if (!dirt && c.close > 2 && c.merge >= 1) { c.phase = 'overtake'; c.phaseT = 0; this.ev.megaphone('Прижимаю! Тормози, почта!'); this.callT = 6; }
     } else if (c.phase === 'overtake') {
       latT = -lane;
-      target = Math.min((this.suv ? VMAX_SUV : VMAX) + 3, speed + 6);
+      target = Math.min(vtop + 3, vmax + 3, speed + 6);
       if (gap < -8) { c.phase = 'block'; c.phaseT = 0; }
       else if (gap > 34 || c.phaseT > 14 || dirt) { c.phase = 'tail'; c.close = 0; }
     } else {
@@ -583,12 +885,32 @@ export class Police {
       if (gap > 2 || dirt) { c.phase = 'tail'; c.close = -2; c.phaseT = 0; }
     }
     if (c.merge < 1) target = Math.min(target, 6);
+    // never drive through other people's cars: brake for whatever is in the patrol's lane, and
+    // give up an overtake when something is coming the other way
+    const lead = this.traffic.lead(path, c.d, c.dir, c.lat, 110);
+    if (lead) {
+      if (c.phase === 'overtake' && lead.oncoming && lead.gap < 120) { c.phase = 'tail'; c.close = -3; c.phaseT = 0; }
+      target = Math.min(target, stopSpeed(lead.gap - lead.len / 2 - 2.3 - 3.5, lead.v));
+      if (lead.gap < 25 && !lead.oncoming && c.v > lead.v + 1) this.nudgeT = Math.max(this.nudgeT, 3);
+    }
+    // a long chase on the asphalt and the van will not stop: radio ahead, a second car across the road
+    if (!dirt && !this.roadblock.on && !this.roadblock.used && c.chaseT > 30 && on && speed > 8 && c.merge >= 1) this.throwBlock(pl!, dirt);
     // the driver is still walking back to the car
     if (!this.inCar.has(this.drv)) target = 0;
     const braking = target < c.v - 0.3;
-    c.v = braking ? Math.max(target, c.v - BRAKE * dt) : Math.min(target, c.v + (this.suv ? ACCEL_SUV : ACCEL) * dt);
+    c.v = braking ? Math.max(target, c.v - BRAKE * (0.45 + 0.55 * ice) * dt) : Math.min(target, c.v + (this.suv ? ACCEL_SUV : ACCEL) * ice * dt);
     const lastLat = c.lat;
     c.lat = damp(c.lat, latT, c.phase === 'tail' ? 2 : 1.4, dt);
+    // the body dives under braking, squats under power and rolls into the lane change
+    this.dive = damp(this.dive, braking ? -0.05 : c.v < target - 0.5 ? 0.03 : 0, 5, dt);
+    this.lean = damp(this.lean, clamp(((c.lat - lastLat) / Math.max(dt, 1e-3)) * c.dir * -0.012 * Math.min(1, c.v / 12), -0.1, 0.1), 5, dt);
+    this.patrol.v = c.v; this.patrol.braking = braking;
+    // close on the tail, the patrol leans on the van: a bump on the flank to scare it into stopping
+    this.nudgeT -= dt;
+    if (c.phase === 'tail' && on && gap > 2 && gap < 7 && speed > 12 && c.merge >= 1 && this.nudgeT < 0) {
+      this.nudgeT = 5 + Math.random() * 5;
+      this.ev.nudge?.(Math.random() < 0.5 ? -1 : 1, 0.4 + Math.random() * 0.4);
+    }
     c.d = clamp(c.d + c.dir * c.v * dt, 2, path.length - 2);
     rollWheels(this.model, c.v * dt);
     setBrake(this.model, braking);
@@ -629,6 +951,35 @@ export class Police {
     }
   }
 
+  /** Park the second patrol car across the road far ahead of the van, leaving a gap on one side. */
+  private throwBlock(pl: { path: Path; d: number }, dirt: boolean): void {
+    const path = pl.path;
+    if (dirt || path !== this.traffic.paths[0] || !this.p.block) return;
+    const c = this.car;
+    const dRB = pl.d + c.dir * 300;
+    if (dRB < 60 || dRB > this.junction - 60 || dRB > path.length - 40) return;
+    const f = path.frame(dRB, this.f);
+    const side = c.dir * 1.9;
+    const x = f.x - f.tz * side, z = f.z + f.tx * side;
+    const yaw = Math.atan2(f.tx, f.tz) + Math.PI / 2;
+    const { model, col } = this.p.block;
+    model.group.visible = true;
+    model.group.position.set(x, this.ground.height(x, z) + 0.02, z);
+    model.group.rotation.set(0, yaw, 0);
+    col.x = x; col.z = z; col.rot = yaw; col.hw = model.width / 2; col.hd = model.length / 2; col.r = Math.hypot(col.hw, col.hd);
+    this.roadblock = { on: true, used: true, x, z, yaw };
+    this.ev.megaphone('Всем постам! Буханка идёт на вас — перекрыть дорогу!');
+    this.ev.toast('Впереди заграждение ГАИ!', 3);
+  }
+
+  private clearBlock(): void {
+    if (!this.roadblock.on) return;
+    this.roadblock.on = false;
+    const { model, col } = this.p.block;
+    model.group.visible = false;
+    col.x = 1e9; col.z = 1e9;
+  }
+
   private bog(): void {
     const c = this.car;
     this.state = 'bogged';
@@ -658,8 +1009,8 @@ export class Police {
     if (i === 0) this.ev.say(SPEAKER, ram ? 'Ты что творишь?! Патрульную машину таранить! Руки на руль, из машины не выходить!' : 'Приехали, гонщик. Руки на руль, чтоб я видел. Права и путевой лист — медленно.', null);
     else if (i === 1) this.ev.say(PARTNER, 'Серёга, глянь — почта. Посылки, пенсии… На бандита не похож.', null);
     else this.ev.say(SPEAKER, ram
-      ? 'Таран, неподчинение, превышение. Штраф пятьсот рублей, протокол — и в отдел, там разберутся.'
-      : 'Неподчинение требованию остановиться, превышение. Штраф двести рублей, протокол — и прокатишься с нами в отдел.', 'Протокол');
+      ? 'Таран, неподчинение, превышение. Штраф сто пятьдесят тысяч, протокол — и в отдел, там разберутся.'
+      : 'Неподчинение требованию остановиться, превышение. Штраф семьдесят пять тысяч, протокол — и прокатишься с нами в отдел.', 'Протокол');
   }
 
   private arresting(dt: number): void {
@@ -696,7 +1047,7 @@ export class Police {
       if (this.timer > 4.8) { this.step = 1; this.timer = 0; this.arrestLine(1); }
     } else if (this.step === 1 && this.timer > 4.2) {
       this.step = 4; this.timer = 0; this.arrestLine(2);
-      const fine = this.reason === 'ram' ? 500 : 200;
+      const fine = this.reason === 'ram' ? 150000 : 75000;
       this.ev.record({ kind: 'arrest', fine, note: this.reason === 'ram' ? 'таран патрульной машины' : 'неподчинение, погоня' });
     } else if (this.step === 4 && this.timer > 5.4) {
       this.step = 5;
@@ -713,7 +1064,7 @@ export class Police {
           this.state = 'cool';
           this.step = 3;
           this.ev.hold(false);
-          this.ev.toast(`Отпустили. Штраф ${this.reason === 'ram' ? 500 : 200} ₽ — рейс продолжается`, 3.2);
+          this.ev.toast(`Отпустили. Штраф ${rub(this.reason === 'ram' ? 150000 : 75000)} — рейс продолжается`, 3.2);
         });
     }
   }

@@ -1,8 +1,8 @@
 import { clamp, damp } from './math';
 
 export type Action =
-  | 'start' | 'handbrake' | '4wd' | 'low' | 'gearUp' | 'gearDown' | 'gearMode' | 'lights' | 'wipers'
-  | 'map' | 'tape' | 'tapeNext' | 'weather' | 'mute' | 'pause' | 'reset' | 'lookBack' | 'help';
+  | 'start' | 'handbrake' | '4wd' | 'low' | 'gearUp' | 'gearDown' | 'gearMode' | 'lights' | 'wipers' | 'vent' | 'timeOfDay' | 'smoke' | 'stub'
+  | 'map' | 'tape' | 'tapeNext' | 'volUp' | 'volDown' | 'weather' | 'mute' | 'pause' | 'reset' | 'lookBack' | 'help';
 
 /**
  * Keys grouped by job, all within reach of the left hand on WASD:
@@ -15,8 +15,8 @@ const KEYMAP: Record<string, Action> = {
   Space: 'handbrake',
   KeyQ: 'gearDown', KeyE: 'gearUp', KeyG: 'gearMode',
   KeyZ: '4wd', Digit4: '4wd', KeyX: 'low', KeyL: 'low',
-  KeyF: 'lights', KeyR: 'wipers', KeyP: 'wipers',
-  KeyM: 'map', Tab: 'map', KeyC: 'tape', KeyN: 'tapeNext', KeyK: 'weather', KeyU: 'mute',
+  KeyF: 'lights', KeyR: 'wipers', KeyP: 'wipers', KeyB: 'vent', KeyT: 'timeOfDay', KeyJ: 'smoke', KeyY: 'stub',
+  KeyM: 'map', Tab: 'map', KeyC: 'tape', KeyN: 'tapeNext', Equal: 'volUp', NumpadAdd: 'volUp', Minus: 'volDown', NumpadSubtract: 'volDown', KeyK: 'weather', KeyU: 'mute',
   Escape: 'pause', Backspace: 'reset', F1: 'help', Slash: 'help',
 };
 
@@ -141,15 +141,15 @@ export class Input {
     const gasK = k && this.down('KeyW', 'ArrowUp'), brakeK = k && this.down('KeyS', 'ArrowDown');
     this.horn = (k && this.down('KeyH')) || this.touchHorn;
     if (this.touchSteer !== null) {
-      this.steer = damp(this.steer, this.touchSteer, 14, dt);
+      this.steer = damp(this.steer, this.touchSteer, 7, dt);
     } else if (this.tilt && this.tiltV !== null && !left && !right) {
-      this.steer = damp(this.steer, this.tiltV, 10, dt);
+      this.steer = damp(this.steer, this.tiltV, 5, dt);
     } else {
-      // keyboard steering: slower at speed, quicker self-return
-      const rate = 2.4 / (1 + speed * 0.06);
+      // keyboard steering: a heavy unassisted wheel turned by an unhurried driver, slower still at speed
+      const rate = 1.05 / (1 + speed * 0.09);
       const target = (right ? 1 : 0) - (left ? 1 : 0);
-      if (target !== 0) this.steer = clamp(this.steer + target * rate * dt * (Math.sign(target) !== Math.sign(this.steer) ? 2 : 1), -1, 1);
-      else this.steer = damp(this.steer, 0, 4 + speed * 0.15, dt);
+      if (target !== 0) this.steer = clamp(this.steer + target * rate * dt * (Math.sign(target) !== Math.sign(this.steer) ? 1.6 : 1), -1, 1);
+      else this.steer = damp(this.steer, 0, 1.9 + speed * 0.1, dt);
     }
     this.gas = damp(this.gas, Math.max(gasK ? 1 : 0, this.touchGas), gasK || this.touchGas ? 4 : 10, dt);
     this.brake = damp(this.brake, Math.max(brakeK ? 1 : 0, this.touchBrake), 9, dt);

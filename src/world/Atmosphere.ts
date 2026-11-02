@@ -11,18 +11,42 @@ export interface WeatherKey {
   fogNear: number; fogFar: number;
   hemiSky: string; hemiGround: string; hemiInt: number;
   cloud: number; rain: number; wind: number; dark: number; storm: number;
+  /** Falling snow, 0…1 (winter keys); rain and snow never both. */
+  snow: number;
   tint: string; sat: number; contrast: number; exposure: number;
 }
 
+/**
+ * The first working day's weather (Career.boardFor): the route's own timeline, but the morning
+ * starts sunny — no dawn fog at home, on the lesson and out along the first stretch — and only
+ * clouds over further on, with the downpour by the river as the forecast says.
+ */
+export const SUNNY_START = 'Солнечное утро';
+/** Where on the timeline that day starts (a little past «Золотое утро», toward «Ясно»). */
+const SUNNY_FROM = 1250;
+
 /** Morning-to-dusk progression of the run, pinned to route distance. */
 export const TIMELINE: WeatherKey[] = [
-  { name: 'Туман, рассвет', at: 0, sunElev: 4, sunAz: 115, sunColor: '#ffc89a', sunInt: 1.1, zenith: '#8fa0aa', horizon: '#e8d2b4', fog: '#cfc6b4', fogNear: 4, fogFar: 120, hemiSky: '#c8ccd0', hemiGround: '#5a5040', hemiInt: 1.4, cloud: 0.3, rain: 0, wind: 0.1, dark: 0.35, storm: 0, tint: '#fff1de', sat: 0.82, contrast: 1.02, exposure: 1.02 },
-  { name: 'Золотое утро', at: 900, sunElev: 12, sunAz: 120, sunColor: '#ffd8a0', sunInt: 2.2, zenith: '#6d95b8', horizon: '#f0dcb8', fog: '#d8cdb4', fogNear: 30, fogFar: 380, hemiSky: '#b8cce0', hemiGround: '#6a5a3c', hemiInt: 1.3, cloud: 0.35, rain: 0, wind: 0.2, dark: 0, storm: 0, tint: '#fff2dc', sat: 1.0, contrast: 1.05, exposure: 1.04 },
-  { name: 'Ясно', at: 1700, sunElev: 22, sunAz: 140, sunColor: '#fff0d8', sunInt: 2.5, zenith: '#5a86b4', horizon: '#c8d4dc', fog: '#bcc8cc', fogNear: 60, fogFar: 520, hemiSky: '#b0c8e0', hemiGround: '#5a5a3a', hemiInt: 1.3, cloud: 0.42, rain: 0, wind: 0.25, dark: 0, storm: 0, tint: '#ffffff', sat: 1.0, contrast: 1.05, exposure: 1.0 },
-  { name: 'Пасмурно', at: 2500, sunElev: 26, sunAz: 160, sunColor: '#e0e0dc', sunInt: 0.9, zenith: '#7a8288', horizon: '#a8aca8', fog: '#9aa09a', fogNear: 30, fogFar: 330, hemiSky: '#a8b0b4', hemiGround: '#4a4a38', hemiInt: 1.6, cloud: 0.78, rain: 0, wind: 0.4, dark: 0.1, storm: 0, tint: '#eef2ee', sat: 0.82, contrast: 1.02, exposure: 0.98 },
-  { name: 'Дождь', at: 3150, sunElev: 18, sunAz: 190, sunColor: '#c8ccd0', sunInt: 0.4, zenith: '#555c62', horizon: '#80868a', fog: '#767c7e', fogNear: 15, fogFar: 210, hemiSky: '#8a9296', hemiGround: '#3a3a30', hemiInt: 1.4, cloud: 0.95, rain: 0.7, wind: 0.6, dark: 0.35, storm: 0.3, tint: '#e2eaee', sat: 0.72, contrast: 1.0, exposure: 0.95 },
-  { name: 'Сумерки, ливень', at: 3700, sunElev: 3, sunAz: 240, sunColor: '#b08c80', sunInt: 0.15, zenith: '#2c323c', horizon: '#5c5858', fog: '#43474c', fogNear: 8, fogFar: 150, hemiSky: '#5a6270', hemiGround: '#24241e', hemiInt: 1.0, cloud: 1, rain: 1, wind: 0.8, dark: 0.85, storm: 1, tint: '#d4dcea', sat: 0.7, contrast: 1.0, exposure: 1.0 },
+  { name: 'Туман, рассвет', at: 0, sunElev: 4, sunAz: 115, sunColor: '#ffc89a', sunInt: 1.1, zenith: '#8fa0aa', horizon: '#e8d2b4', fog: '#cfc6b4', fogNear: 4, fogFar: 120, hemiSky: '#c8ccd0', hemiGround: '#5a5040', hemiInt: 1.4, cloud: 0.3, rain: 0, snow: 0, wind: 0.1, dark: 0.35, storm: 0, tint: '#fff1de', sat: 0.82, contrast: 1.02, exposure: 1.02 },
+  { name: 'Золотое утро', at: 900, sunElev: 12, sunAz: 120, sunColor: '#ffd8a0', sunInt: 2.2, zenith: '#6d95b8', horizon: '#f0dcb8', fog: '#d8cdb4', fogNear: 30, fogFar: 380, hemiSky: '#b8cce0', hemiGround: '#6a5a3c', hemiInt: 1.3, cloud: 0.35, rain: 0, snow: 0, wind: 0.2, dark: 0, storm: 0, tint: '#fff2dc', sat: 1.0, contrast: 1.05, exposure: 1.04 },
+  { name: 'Ясно', at: 1700, sunElev: 22, sunAz: 140, sunColor: '#fff0d8', sunInt: 2.5, zenith: '#5a86b4', horizon: '#c8d4dc', fog: '#bcc8cc', fogNear: 60, fogFar: 520, hemiSky: '#b0c8e0', hemiGround: '#5a5a3a', hemiInt: 1.3, cloud: 0.42, rain: 0, snow: 0, wind: 0.25, dark: 0, storm: 0, tint: '#ffffff', sat: 1.0, contrast: 1.05, exposure: 1.0 },
+  { name: 'Пасмурно', at: 2500, sunElev: 26, sunAz: 160, sunColor: '#e0e0dc', sunInt: 0.9, zenith: '#7a8288', horizon: '#a8aca8', fog: '#9aa09a', fogNear: 30, fogFar: 330, hemiSky: '#a8b0b4', hemiGround: '#4a4a38', hemiInt: 1.6, cloud: 0.78, rain: 0, snow: 0, wind: 0.4, dark: 0.1, storm: 0, tint: '#eef2ee', sat: 0.82, contrast: 1.02, exposure: 0.98 },
+  { name: 'Дождь', at: 3150, sunElev: 18, sunAz: 190, sunColor: '#c8ccd0', sunInt: 0.4, zenith: '#555c62', horizon: '#80868a', fog: '#767c7e', fogNear: 15, fogFar: 210, hemiSky: '#8a9296', hemiGround: '#3a3a30', hemiInt: 1.4, cloud: 0.95, rain: 0.7, snow: 0, wind: 0.6, dark: 0.35, storm: 0.3, tint: '#e2eaee', sat: 0.72, contrast: 1.0, exposure: 0.95 },
+  { name: 'Сумерки, ливень', at: 3700, sunElev: 3, sunAz: 240, sunColor: '#b08c80', sunInt: 0.15, zenith: '#2c323c', horizon: '#5c5858', fog: '#43474c', fogNear: 8, fogFar: 150, hemiSky: '#5a6270', hemiGround: '#24241e', hemiInt: 1.0, cloud: 1, rain: 1, snow: 0, wind: 0.8, dark: 0.85, storm: 1, tint: '#d4dcea', sat: 0.7, contrast: 1.0, exposure: 1.0 },
 ];
+
+/**
+ * Winter's own weathers (docs/design.md, «Зима»): picked for the day by the season, never on the
+ * route's autumn timeline. Low sun, cold light, snow falling in the grey ones.
+ */
+export const WINTER: WeatherKey[] = [
+  { name: 'Морозно, ясно', at: 0, sunElev: 11, sunAz: 150, sunColor: '#fff0e0', sunInt: 2.2, zenith: '#6a8cb8', horizon: '#dae2ea', fog: '#d2dae2', fogNear: 40, fogFar: 460, hemiSky: '#c8d8ec', hemiGround: '#8a8e96', hemiInt: 1.5, cloud: 0.2, rain: 0, snow: 0, wind: 0.15, dark: 0, storm: 0, tint: '#eef4ff', sat: 0.85, contrast: 1.06, exposure: 1.03 },
+  { name: 'Снегопад', at: 0, sunElev: 14, sunAz: 160, sunColor: '#e4e6ea', sunInt: 0.7, zenith: '#8a9098', horizon: '#c2c6ca', fog: '#babec2', fogNear: 10, fogFar: 190, hemiSky: '#c2cad2', hemiGround: '#7a7c82', hemiInt: 1.6, cloud: 0.9, rain: 0, snow: 0.7, wind: 0.35, dark: 0.15, storm: 0, tint: '#eef2f8', sat: 0.7, contrast: 1.0, exposure: 1.0 },
+  { name: 'Метель', at: 0, sunElev: 12, sunAz: 170, sunColor: '#cfd3d8', sunInt: 0.3, zenith: '#6a7078', horizon: '#9ca2a8', fog: '#a6acb2', fogNear: 4, fogFar: 95, hemiSky: '#a8b0b8', hemiGround: '#5e6066', hemiInt: 1.5, cloud: 1, rain: 0, snow: 1, wind: 0.95, dark: 0.3, storm: 0, tint: '#e6ecf4', sat: 0.6, contrast: 0.98, exposure: 0.98 },
+  { name: 'Оттепель', at: 0, sunElev: 16, sunAz: 165, sunColor: '#dcdcd8', sunInt: 0.8, zenith: '#7a8288', horizon: '#a8aca8', fog: '#9ea29e', fogNear: 25, fogFar: 300, hemiSky: '#a8b0b4', hemiGround: '#4a4a40', hemiInt: 1.6, cloud: 0.8, rain: 0.15, snow: 0, wind: 0.3, dark: 0.12, storm: 0, tint: '#eef0ee', sat: 0.78, contrast: 1.0, exposure: 0.98 },
+];
+/** Every weather a day can be set to, autumn's and winter's. */
+const PRESETS: WeatherKey[] = [...TIMELINE, ...WINTER];
 
 const SKY_VS = /* glsl */ `
 varying vec3 vDir;
@@ -67,13 +91,17 @@ export class Atmosphere {
   private skyMat: THREE.ShaderMaterial;
   readonly state = {
     // wet: how soaked the land is — it rained overnight, dries slowly, refills in the storm
-    name: '', rain: 0, wind: 0, dark: 0, storm: 0, cloud: 0, flash: 0, wet: 0.62,
+    name: '', rain: 0, snow: 0, wind: 0, dark: 0, storm: 0, cloud: 0, flash: 0, wet: 0.62,
     skyColor: new THREE.Color(), fogColor: new THREE.Color(),
   };
   readonly grade: Grade = { tint: new THREE.Color(1, 1, 1), saturation: 1, contrast: 1, exposure: 1, flash: 0 };
   private time = 0;
   private nextBolt = 8;
   private presetOverride: number | null = null;
+  /** The timeline is not read before this route distance (SUNNY_START). */
+  private floor = 0;
+  /** Sandbox time of day in hours, or null to follow the route's own light. */
+  private clockHour: number | null = null;
   onLightning?: (dist: number) => void;
   private cur: WeatherKey = { ...TIMELINE[0] };
 
@@ -96,12 +124,61 @@ export class Atmosphere {
   /** Cycle forced weather presets for the debug/weather button; null = follow route. */
   cyclePreset(): string {
     this.presetOverride = this.presetOverride === null ? 0 : this.presetOverride + 1;
-    if (this.presetOverride >= TIMELINE.length) this.presetOverride = null;
-    return this.presetOverride === null ? 'По маршруту' : TIMELINE[this.presetOverride].name;
+    if (this.presetOverride >= PRESETS.length) this.presetOverride = null;
+    return this.presetOverride === null ? 'По маршруту' : PRESETS[this.presetOverride].name;
+  }
+
+  /** The day's weather from the morning forecast: a fixed preset by name, or null for the route's own (clouding over towards the river). */
+  setDayWeather(name: string | null): void {
+    this.floor = name === SUNNY_START ? SUNNY_FROM : 0;
+    const i = name ? PRESETS.findIndex((k) => k.name === name) : -1;
+    this.presetOverride = i >= 0 ? i : null;
+  }
+
+  /** Cycle fixed times of day (sandbox); null = follow the route. */
+  cycleClock(): string {
+    const hours = [6, 12, 18.5, 23.5];
+    const names = ['Рассвет', 'День', 'Закат', 'Ночь'];
+    const i = this.clockHour === null ? 0 : hours.indexOf(this.clockHour) + 1;
+    this.clockHour = i >= hours.length ? null : hours[i];
+    return this.clockHour === null ? 'Время — по маршруту' : names[i];
+  }
+
+  /** Re-lights a weather key for the chosen hour: sun arc, night palette, darkness. */
+  private atHour(k: WeatherKey, h: number): WeatherKey {
+    const elev = Math.sin(((h - 6) / 12) * Math.PI) * 58;
+    const day = smoothstep(-6, 14, elev);
+    const o = { ...k };
+    const C = new THREE.Color();
+    const night = (key: 'zenith' | 'horizon' | 'fog' | 'hemiSky' | 'hemiGround' | 'tint', col: string, amt: number) => {
+      o[key] = '#' + C.set(k[key]).lerp(new THREE.Color(col), amt).getHexString();
+    };
+    const dusk = 1 - day;
+    o.sunElev = Math.max(elev, 1.5);
+    o.sunAz = 90 + h * 15;
+    o.sunInt = k.sunInt * smoothstep(-2, 10, elev);
+    if (elev < 10 && elev > -8) o.sunColor = '#' + C.set(k.sunColor).lerp(new THREE.Color('#ff9a60'), 0.7).getHexString();
+    night('zenith', '#070a14', dusk * 0.95);
+    night('horizon', elev > -8 ? '#40303a' : '#10151f', dusk * 0.85);
+    night('fog', '#12171f', dusk * 0.9);
+    night('hemiSky', '#26304a', dusk * 0.85);
+    night('hemiGround', '#0e1018', dusk * 0.8);
+    night('tint', '#b6c4ee', dusk * 0.7);
+    o.hemiInt = k.hemiInt * (1 - dusk * 0.65);
+    o.dark = Math.max(k.dark, dusk * 0.95);
+    o.fogFar = Math.min(k.fogFar, 140 + day * 380);
+    o.exposure = k.exposure * (1 + dusk * 0.12);
+    return o;
   }
 
   private sample(at: number): WeatherKey {
-    if (this.presetOverride !== null) return TIMELINE[this.presetOverride];
+    const k = this.sampleRaw(at);
+    return this.clockHour === null ? k : this.atHour(k, this.clockHour);
+  }
+
+  private sampleRaw(at: number): WeatherKey {
+    if (this.presetOverride !== null) return PRESETS[this.presetOverride];
+    at = Math.max(at, this.floor);
     let i = 0;
     while (i < TIMELINE.length - 2 && at > TIMELINE[i + 1].at) i++;
     const a = TIMELINE[i], b = TIMELINE[i + 1];
@@ -131,7 +208,7 @@ export class Atmosphere {
     this.cur.name = target.name;
     const w = this.cur;
     const s = this.state;
-    s.name = w.name; s.rain = w.rain; s.wind = w.wind; s.dark = w.dark; s.storm = w.storm; s.cloud = w.cloud;
+    s.name = w.name; s.rain = w.rain; s.snow = w.snow; s.wind = w.wind; s.dark = w.dark; s.storm = w.storm; s.cloud = w.cloud;
     const wetT = Math.max(0.28, w.rain);
     s.wet += (wetT - s.wet) * (1 - Math.exp(-dt * (wetT > s.wet ? 0.12 : 0.004)));
 

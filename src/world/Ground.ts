@@ -236,15 +236,62 @@ const ROUTE: [number, number][] = [
   [1050, -2750], [1080, -2950], [1060, -3150], [1120, -3350], [1200, -3550], [1230, -3800], [1260, -3900],
 ];
 
+export interface Poi { id: string; name: string; kind: 'khutor' | 'forestry' | 'apiary' | 'kolkhoz' | 'cemetery'; road: Road; s: number; mainS: number }
+
+/**
+ * The branch road straight on from the fork (the old asphalt stub, run on into gravel): distances
+ * along it. Past the asphalt, open steppe with the shikhan standing over it; a pine wood on sand with
+ * the turn to the sand quarry; a dirt track along the lake's shore and the turn to the closed pioneer
+ * camp; then the Tatar village of Kainly, where the road ends.
+ */
+export interface BranchMarks { gravel: number; bor: number; borEnd: number; quarry: number; lake: number; camp: number; kaiStart: number; kaiStop: number; end: number }
+
+/** Where the branch runs, world x/z, on from the stub's end (79, −1754): south-west, keeping north of the river. */
+const BRANCH: [number, number][] = [
+  [95, -1900], [60, -2060], [-30, -2200], [-150, -2310], [-280, -2390], [-400, -2440],
+  [-520, -2470], [-640, -2440], [-760, -2380], [-880, -2300], [-980, -2230],
+];
+
 export interface Marks {
   junction: number; sosStart: number; sosEnd: number; sosStop: number; forest: number; mud: number; bridge: number;
   zarStart: number; zarEnd: number; zarStop: number; town: number; potholesFrom: number; potholesTo: number;
   church: number; farm: number; tower: number;
+  /** The sawmill on the forest road between the hunters' track and the mud, inside the forestry ring. */
+  sawmill: number;
+  /** Where the forest road to Urmanly, the family's village, leaves the highway (just past the GAI post). */
+  home: number;
 }
 
 export class Ground {
   main: Road;
   stub: Road;
+  /** Unmade side tracks: bypasses that rejoin the main road, and a dead end into the woods. */
+  sideRoads: Road[] = [];
+  /** Named detours for the map and hints. */
+  detours: { road: Road; name: string; at: number }[] = [];
+  /** Places worth the drive on the new back roads: where along which road, and what stands there. */
+  pois: Poi[] = [];
+  /**
+   * The forest road home: from the highway (s = 0, at marks.home, just past the GAI post) west
+   * through the wood, down into a wet hollow and up again, to Urmanly, the family's little village,
+   * ending at their gate. Into town from it, the GAI post is the first thing on the way. The first working morning's drive in to the post office is the game's lesson
+   * (FirstMorning.ts), so the road has a bit of everything on it.
+   */
+  homeRoad!: Road;
+  /** Along the home road: the hollow's centre, and where the village street starts. */
+  homeMarks = { hollow: 0, village: 0 };
+  /** Dead-end tracks off the branch road (quarry, pioneer camp), and where on the branch each starts. */
+  branchSpurs: Road[] = [];
+  private branchAttach = new Map<Road, number>();
+  branch!: BranchMarks;
+  /** The lake by the branch road: centre, radius and water level. */
+  lake = { x: 0, z: 0, r: 95, y: 0 };
+  /** The shikhan, a lone limestone hill over the steppe: centre and radius of its foot. */
+  shikhan = { x: -330, z: -1950, r: 150 };
+  /** The sand quarry's pit at the end of its track. */
+  quarryPit = { x: 0, z: 0, r: 38 };
+  /** Main-road distance where each side track starts and ends (null for a dead end). */
+  private attach = new Map<Road, [number, number | null]>();
   roads: Road[];
   marks: Marks;
   private index = new PointIndex<Sample>(8);
@@ -254,6 +301,10 @@ export class Ground {
   bedY = 0;
   /** 0..1 how soaked the roads are (rain now or recently); set by the game loop. */
   wet = 0;
+  /** 0..1 how much snow lies (winter); set by the game loop. Packed snow and ice on the roads, frozen mud, ice on the water. */
+  snow = 0;
+  /** The spring thaw (распутица): the lowland's mud deeper, the dirt roads soft. */
+  thaw = false;
   churchPos = new THREE.Vector2();
   private bumps: { x: number; z: number; r: number; h: number }[] = [];
   // terrain grid
@@ -274,7 +325,7 @@ export class Ground {
     this.marks = {
       town: 260 * k, junction, sosStart: 1990 * k, sosEnd: 2330 * k, sosStop: 2210 * k,
       forest: 2360 * k, mud: 3060 * k, bridge, zarStart: 3880 * k, zarEnd: L - 25, zarStop: 4190 * k,
-      potholesFrom: 430 * k, potholesTo: 1250 * k, church: 4080 * k, farm: 3600 * k, tower: 3790 * k,
+      potholesFrom: 430 * k, potholesTo: 1250 * k, church: 4080 * k, farm: 3600 * k, tower: 3790 * k, sawmill: 2810 * k, home: 260 * k + 410,
     };
     const m = this.marks;
     // ~30 % asphalt to the junction, then ~70 % unmade: washed-out forest track,
@@ -300,9 +351,12 @@ export class Ground {
       new THREE.Vector3(jf.x + dx * 130 + px * 8, 0, jf.z + dz * 130 + pz * 8),
       new THREE.Vector3(jf.x + dx * 280 - px * 6, 0, jf.z + dz * 280 - pz * 6),
       new THREE.Vector3(jf.x + dx * 460, 0, jf.z + dz * 460),
+      ...BRANCH.map(([x, z]) => new THREE.Vector3(x, 0, z)),
     ], 2);
-    this.stub.zones = [{ from: 0, to: 1e9, surface: 'asphalt', width: 6, tag: 'rural' }];
     this.roads = [this.main, this.stub];
+    this.buildSideRoads();
+    this.buildBranch();
+    this.buildHomeRoad();
 
     this.scatterSpots();
     for (const r of this.roads) for (const s of r.samples) this.index.insert(s);
@@ -320,10 +374,187 @@ export class Ground {
     this.bumps.push({ x: this.churchPos.x, z: this.churchPos.y, r: 75, h: 9 });
     this.bedY = this.hills(bf.x, bf.z) - 4.5;
     this.waterY = this.bedY + 0.55;
+    this.lake.y = this.hills(this.lake.x, this.lake.z) - 1.2;
 
     this.assignHeights();
     this.buildGrid();
     this.buildField();
+  }
+
+  /**
+   * Back roads off the main route. Each is described in the main road's own frame:
+   * [s, along, lat] = point at main distance s, shifted along the tangent and sideways.
+   */
+  private buildSideRoads(): void {
+    const m = this.marks, main = this.main;
+    const pt = (s: number, along: number, lat: number) => {
+      const f = main.frame(s);
+      return new THREE.Vector3(f.x + f.tx * along + f.rx * lat, 0, f.z + f.tz * along + f.rz * lat);
+    };
+    const add = (id: string, name: string, tag: string, width: number, anchors: [number, number, number][], rejoin: boolean, surface: Surface = 'dirt') => {
+      const road = new Road(id, anchors.map(([s, a, l]) => pt(s, a, l)), 2);
+      road.zones = [{ from: 0, to: 1e9, surface, width, tag }];
+      this.sideRoads.push(road);
+      this.attach.set(road, [anchors[0][0], rejoin ? anchors[anchors.length - 1][0] : null]);
+      this.detours.push({ road, name, at: anchors[0][0] });
+      return road;
+    };
+    const J = m.junction;
+    // a logging track round the two worst bogs of the forest road: dry, but narrow and long
+    add('forest-bypass', 'лесной объезд', 'forest', 3.8, [
+      [J + 150, 0, 0], [J + 185, 0, -16], [J + 235, 0, -48], [J + 330, 0, -76], [J + 440, 0, -82], [J + 540, 0, -62], [J + 610, 0, -30], [J + 650, 0, -9], [J + 685, 0, 0],
+    ], true);
+    // the lane behind Sosnovka's gardens
+    add('village-lane', 'задворки Сосновки', 'fields', 4.0, [
+      [m.sosStart - 110, 0, 0], [m.sosStart - 80, 0, 22], [m.sosStart - 20, 0, 80], [m.sosStop, 0, 96], [m.sosEnd - 30, 0, 84], [m.sosEnd + 40, 0, 40], [m.sosEnd + 90, 0, 10], [m.sosEnd + 120, 0, 0],
+    ], true);
+    // a cart track skirting the lowland mud before the bridge
+    add('mud-bypass', 'объезд по косогору', 'forest', 3.6, [
+      [m.mud - 90, 0, 0], [m.mud - 55, 0, 20], [m.mud + 20, 0, 58], [m.mud + 130, 0, 64], [m.mud + 230, 0, 56], [m.bridge - 150, 0, 38], [m.bridge - 125, 0, 14], [m.bridge - 105, 0, 0],
+    ], true);
+    // a dead end: hunters' track into the forest, ends at a clearing
+    add('hunters-track', 'охотничья просека', 'forest', 3.4, [
+      [m.forest + 250, 0, 0], [m.forest + 250, 24, 16], [m.forest + 250, 70, 40], [m.forest + 250, 100, 96], [m.forest + 250, 60, 160], [m.forest + 250, 90, 230], [m.forest + 250, 150, 290], [m.forest + 250, 130, 360],
+    ], false);
+
+    // ---- roads that leave the main one at a right angle, to places off the route
+    // Which side of the road a spur takes: the one with the quieter ground.
+    const sideFor = (s0: number, depth: number): 1 | -1 => {
+      const f0 = main.frame(s0);
+      const score = (sd: number) => {
+        let sum = 0, prev = this.hills(f0.x, f0.z);
+        for (let t = 20; t <= depth; t += 20) {
+          const h = this.hills(f0.x + f0.rx * sd * t, f0.z + f0.rz * sd * t);
+          sum += Math.abs(h - prev);
+          prev = h;
+        }
+        return sum;
+      };
+      return score(1) <= score(-1) ? 1 : -1;
+    };
+    const named = (id: string, kind: Poi['kind'], name: string, road: Road, s: number, mainS: number) => this.pois.push({ id, name, kind, road, s, mainS });
+    /** A U-shaped back road: out at a right angle, along the main road for a while, and back. */
+    const loop = (id: string, name: string, tag: string, width: number, A: number, B: number, depth: number, surface: Surface, kind: Poi['kind'], force?: 1 | -1) => {
+      const sd = force ?? sideFor((A + B) / 2, depth);
+      const r = add(id, name, tag, width, [
+        [A, 0, 0], [A + 12, 0, sd * 14], [A + 28, 0, sd * 60], [A + 50, 0, sd * depth * 0.55], [A + 90, 0, sd * depth * 0.9], [A + 160, 0, sd * depth],
+        [B - 160, 0, sd * depth], [B - 90, 0, sd * depth * 0.9], [B - 50, 0, sd * depth * 0.55], [B - 28, 0, sd * 60], [B - 12, 0, sd * 14], [B, 0, 0],
+      ], true, surface);
+      named(id, kind, name, r, r.length / 2, (A + B) / 2);
+      return r;
+    };
+    /** A right-angled spur that ends at its destination. */
+    const spur = (id: string, name: string, tag: string, width: number, s0: number, depth: number, surface: Surface, kind: Poi['kind']) => {
+      const sd = sideFor(s0, depth);
+      const r = add(id, name, tag, width, [
+        [s0, 0, 0], [s0 + 2, 0, sd * 22], [s0 + 12, 0, sd * depth * 0.35], [s0 + 6, 0, sd * depth * 0.7], [s0 + 16, 0, sd * depth],
+      ], false, surface);
+      named(id, kind, name, r, r.length - 18, s0);
+      return r;
+    };
+    // Back roads never start inside a village: its houses line the road 13-16 m off.
+    // (The ranges are World's village list; each spur is kept 40 m clear of them.)
+    // the farmstead lane, between the railway and the hamlet before the fork
+    spur('khutor-road', 'хутор Берёзки', 'fields', 4.6, J - 400, 380, 'gravel', 'khutor');
+    // through the woods between Sosnovka and the mud: the forestry's service ring
+    loop('forestry-ring', 'лесничество', 'forest', 3.8, m.sosEnd + 90, m.mud - 130, 320, 'dirt', 'forestry', -1);
+    // dead ends: the cemetery in the wood before Sosnovka, bee-keeper's by the river, the old kolkhoz farm
+    spur('cemetery', 'кладбище', 'forest', 3.8, m.sosStart - 200, 260, 'gravel', 'cemetery');
+    spur('kolkhoz', 'колхозная ферма', 'fields', 4.2, m.bridge + 150, 360, 'gravel', 'kolkhoz');
+    spur('apiary', 'пасека у реки', 'forest', 3.4, m.bridge + 390, 380, 'dirt', 'apiary');
+    this.roads.push(...this.sideRoads);
+  }
+
+  /**
+   * The branch road on from the fork: its surfaces, the shikhan and the lake beside it, and the two
+   * dead-end tracks off it. Distances are found on the road itself, from the world points it was laid
+   * through, so the layout follows the route above.
+   */
+  private buildBranch(): void {
+    const st = this.stub, L = st.length;
+    const S = (x: number, z: number) => st.nearestS(x, z);
+    const bor = S(-30, -2200) - 60, borEnd = S(-280, -2390) + 20, kaiStart = S(-700, -2410);
+    this.branch = {
+      gravel: 490, bor, borEnd, quarry: S(-90, -2255), lake: S(-400, -2440), camp: S(-575, -2458),
+      kaiStart, kaiStop: S(-850, -2320), end: L,
+    };
+    const b = this.branch;
+    st.zones = [
+      { from: 0, to: b.gravel, surface: 'asphalt', width: 6, tag: 'rural' },
+      { from: b.gravel, to: bor, surface: 'gravel', width: 5, tag: 'steppe' },
+      { from: bor, to: borEnd, surface: 'gravel', width: 4.6, tag: 'bor' },
+      { from: borEnd, to: kaiStart - 30, surface: 'dirt', width: 4.4, tag: 'meadow' },
+      { from: kaiStart - 30, to: L + 1, surface: 'gravel', width: 5, tag: 'fields' },
+    ];
+    // the lake on the side away from the shikhan (south, toward the river), its north shore by the track
+    const lf = st.frame(b.lake);
+    const side = lf.rz < 0 ? 1 : -1;
+    this.lake.x = lf.x + lf.rx * side * (this.lake.r + 27);
+    this.lake.z = lf.z + lf.rz * side * (this.lake.r + 27);
+    // the shikhan: a broad foot and a steeper crown a little off-centre
+    const sh = this.shikhan;
+    this.bumps.push({ x: sh.x, z: sh.z, r: sh.r, h: 52 }, { x: sh.x + 18, z: sh.z - 12, r: 55, h: 32 });
+    const pt = (s: number, along: number, lat: number) => {
+      const f = st.frame(s);
+      return new THREE.Vector3(f.x + f.tx * along + f.rx * lat, 0, f.z + f.tz * along + f.rz * lat);
+    };
+    const spur = (id: string, tag: string, width: number, s0: number, lat: [number, number][], surface: Surface) => {
+      const road = new Road(id, [pt(s0, 0, 0), ...lat.map(([a, l]) => pt(s0, a, l))], 2);
+      road.zones = [{ from: 0, to: 1e9, surface, width, tag }];
+      this.branchSpurs.push(road);
+      this.branchAttach.set(road, s0);
+      return road;
+    };
+    // into the pine wood on the river side: the sand quarry, a pit dug into the sandy ground
+    const q = spur('quarry', 'bor', 3.8, b.quarry, [[2, side * 18], [20, side * 80], [10, side * 150], [25, side * 205]], 'gravel');
+    // the pit opens just past the end of the track, so the track runs down its rim rather than across it
+    const qe = q.samples[q.samples.length - 1];
+    this.quarryPit.x = qe.x + qe.tx * 30; this.quarryPit.z = qe.z + qe.tz * 30;
+    this.bumps.push({ x: this.quarryPit.x, z: this.quarryPit.z, r: this.quarryPit.r, h: -11 });
+    // across the track from the lake, up through the woods to the camp gate
+    spur('camp-road', 'forest', 3.8, b.camp, [[2, -side * 20], [15, -side * 90], [5, -side * 170], [20, -side * 250]], 'dirt');
+    this.roads.push(...this.branchSpurs);
+  }
+
+  /**
+   * The road to Urmanly: about a kilometre of forest track off the highway (west of it, clear of
+   * the route and inside the map's frame). A gravel mouth, the forest, a hollow with mud in its
+   * bottom (a dip made in the hills), and the village street to the family's gate.
+   */
+  private buildHomeRoad(): void {
+    const f = this.main.frame(this.marks.home);
+    const pts: [number, number][] = [
+      [f.x, f.z], [f.x - 16, f.z + 1], [f.x - 75, f.z - 6], [-110, -660], [-190, -650], [-260, -600], [-320, -530], [-400, -480],
+      [-480, -470], [-560, -500], [-630, -560], [-690, -630], [-735, -700],
+    ];
+    const road = new Road('home-road', pts.map(([x, z]) => new THREE.Vector3(x, 0, z)), 2);
+    const L = road.length;
+    const hollow = Math.round(L * 0.47), village = L - 210;
+    road.zones = [
+      { from: 0, to: 40, surface: 'gravel', width: 4.6, tag: 'town' },
+      { from: 40, to: hollow - 32, surface: 'dirt', width: 4, tag: 'forest' },
+      { from: hollow - 32, to: hollow + 32, surface: 'mud', width: 4.4, tag: 'mud' },
+      { from: hollow + 32, to: village, surface: 'dirt', width: 4, tag: 'forest' },
+      { from: village, to: 1e9, surface: 'dirt', width: 4.6, tag: 'fields' },
+    ];
+    this.homeMarks = { hollow, village };
+    // the hollow: a dip in the hills the road runs down into and climbs out of
+    const h = road.frame(hollow);
+    this.bumps.push({ x: h.x, z: h.z, r: 60, h: -5 });
+    this.homeRoad = road;
+    this.roads.push(road);
+  }
+
+  /** Water level at a point: the lake's own where it lies, the river's elsewhere. */
+  waterAt(x: number, z: number): number {
+    const L = this.lake;
+    return (x - L.x) ** 2 + (z - L.z) ** 2 < (L.r + 40) ** 2 ? L.y : this.waterY;
+  }
+
+  /** Distance to open water: the river or the lake's shore. */
+  waterDist(x: number, z: number): number {
+    const L = this.lake;
+    return Math.min(this.riverDist(x, z), Math.max(0, Math.hypot(x - L.x, z - L.z) - L.r));
   }
 
   private scatterSpots(): void {
@@ -386,6 +617,64 @@ export class Ground {
       main.puddles.push({ s: s2, lat: (r() < 0.5 ? -0.72 : 0.72) + (r() - 0.5) * 0.16, r: 0.45 + r() * 0.2, depth: 0.14, len: 3 + r() * 4 });
     }
     main.puddles.sort((a, b) => a.s - b.s);
+    this.scatterSide(r);
+  }
+
+  /** Holes, puddles and a bog or two on each side track: rougher the deeper in the woods. */
+  private scatterSide(r: () => number): void {
+    // the branch: a few holes in the gravel, puddles in the lakeside ruts
+    const st = this.stub, b = this.branch;
+    for (let s = b.gravel + 20; s < b.end - 20; s += 14 + r() * 24) {
+      if (s > b.kaiStart - 30 && s < b.kaiStart + 40) continue;
+      st.holes.push({ s, lat: (r() < 0.6 ? (r() < 0.5 ? -0.8 : 0.8) : (r() - 0.5) * 3), r: 0.4 + r() * 0.5, depth: 0.06 + r() * 0.08 });
+    }
+    for (let s = b.borEnd + 10; s < b.kaiStart - 40; s += 18 * (0.6 + r())) {
+      st.puddles.push({ s, lat: (r() < 0.5 ? -0.72 : 0.72) + (r() - 0.5) * 0.2, r: 0.5 + r() * 0.25, depth: 0.12, len: 4 + r() * 5 });
+    }
+    st.holes.sort((a, c) => a.s - c.s);
+    st.puddles.sort((a, c) => a.s - c.s);
+    for (const road of [...this.sideRoads, ...this.branchSpurs]) {
+      const forest = road.zones[0].tag === 'forest';
+      const rutLat = () => (r() < 0.7 ? (r() < 0.5 ? -0.7 : 0.7) + (r() - 0.5) * 0.4 : (r() - 0.5) * 2.8);
+      for (let s = 25; s < road.length - 15; s += (forest ? 6 : 12) + r() * 12) {
+        road.holes.push({ s, lat: rutLat(), r: 0.45 + r() * 0.6, depth: 0.08 + r() * 0.12 });
+      }
+      for (let s = 40; s < road.length - 30; s += (forest ? 24 : 50) + r() * 40) {
+        const pit = { s, lat: (r() - 0.5) * 2.0, r: 1.0 + r() * 0.9, depth: 0.22 + r() * 0.16 };
+        if (r() < 0.65) road.puddles.push(pit); else road.holes.push(pit);
+      }
+      for (let s = 20; s < road.length - 10; s += 22 * (0.6 + r())) {
+        road.puddles.push({ s, lat: (r() < 0.5 ? -0.7 : 0.7) + (r() - 0.5) * 0.2, r: 0.45 + r() * 0.25, depth: 0.13, len: 4 + r() * 6 });
+      }
+      // one waterlogged hollow in the middle of the long ones
+      if (road.length > 300) {
+        const c = road.length * (0.4 + r() * 0.2);
+        road.bogs.push({ from: c - 14, to: c + 14, deep: 0.8 });
+        for (let s = c - 14; s < c + 14; s += 3.5 + r() * 3) road.puddles.push({ s, lat: (r() < 0.5 ? -0.7 : 0.7) + (r() - 0.5) * 0.16, r: 0.45 + r() * 0.2, depth: 0.14, len: 3 + r() * 4 });
+      }
+      road.holes.sort((a, b) => a.s - b.s);
+      road.puddles.sort((a, b) => a.s - b.s);
+    }
+  }
+
+  /** Level, paved ground (a filling station's forecourt): the terrain grid is flattened to it and the van drives on its top. */
+  readonly pads: { x: number; z: number; c: number; s: number; r: number; hw: number; hd: number; y: number; surface: Surface }[] = [];
+
+  /** Level a rectangle of terrain to height y (local axes turned by rot, as `Place`), easing back to the hills beyond `blend` metres; nodes beyond local z = clipZ (the road side) are left alone. */
+  addPad(x: number, z: number, rot: number, hw: number, hd: number, y: number, blend = 14, clipZ = Infinity, surface: Surface = 'asphalt'): void {
+    const c = Math.cos(rot), s = Math.sin(rot);
+    this.pads.push({ x, z, c, s, r: Math.hypot(hw, hd), hw, hd, y, surface });
+    for (let iz = 0; iz < this.nz; iz++) {
+      for (let ix = 0; ix < this.nx; ix++) {
+        const wx = this.minX + ix * this.step - x, wz = this.minZ + iz * this.step - z;
+        if (Math.abs(wx) > hw + blend + 20 && Math.abs(wz) > hd + blend + 20) continue;
+        const lx = wx * c - wz * s, lz = wx * s + wz * c;
+        const d = Math.hypot(Math.max(0, Math.abs(lx) - hw), Math.max(0, Math.abs(lz) - hd));
+        if (d >= blend || lz > clipZ) continue;
+        const i = iz * this.nx + ix;
+        this.heights[i] = lerp(y - 0.03, this.heights[i], d <= 0 ? 0 : smoothstep(0, blend, d));
+      }
+    }
   }
 
   hills(x: number, z: number): number {
@@ -406,7 +695,12 @@ export class Ground {
   base(x: number, z: number, dr = this.riverDist(x, z)): number {
     const h = this.hills(x, z);
     const f = 1 - smoothstep(14, 200, dr);
-    return lerp(h, this.bedY + 1.5, f * 0.92);
+    const v = lerp(h, this.bedY + 1.5, f * 0.92);
+    // the lake: a shallow bowl under its level, a low shore easing back into the hills
+    const L = this.lake, dl = Math.hypot(x - L.x, z - L.z);
+    if (dl > L.r + 70) return v;
+    if (dl < L.r) return Math.min(v, L.y - 0.4 - 1.6 * (1 - (dl / L.r) ** 2));
+    return lerp(L.y + 0.6, v, smoothstep(L.r, L.r + 70, dl));
   }
 
   private assignHeights(): void {
@@ -433,6 +727,36 @@ export class Ground {
     }
     const jy = this.main.frame(this.marks.junction).y;
     for (const p of this.stub.samples) p.y = lerp(jy, p.y, smoothstep(0, 50, p.s));
+    // the road home leaves the main street at its level
+    {
+      const ya = this.main.frame(this.marks.home).y;
+      for (const p of this.homeRoad.samples) p.y = lerp(ya, p.y, smoothstep(0, 30, p.s));
+    }
+    // the branch's dead ends meet it at its own level
+    for (const road of this.branchSpurs) {
+      const ya = this.stub.frame(this.branchAttach.get(road)!).y;
+      for (const p of road.samples) p.y = lerp(ya, p.y, smoothstep(0, 40, p.s));
+    }
+    // side tracks meet the main road at its own level
+    for (const road of this.sideRoads) {
+      const [a, b] = this.attach.get(road)!;
+      const ya = this.main.frame(a).y, yb = b === null ? 0 : this.main.frame(b).y;
+      for (const p of road.samples) {
+        p.y = lerp(ya, p.y, smoothstep(0, 40, p.s));
+        if (b !== null) p.y = lerp(yb, p.y, smoothstep(0, 40, road.length - p.s));
+      }
+    }
+    // a dead end runs out onto the ground it stops on: no ledge down (or wall up) past its last metre;
+    // the quarry track stops on the pit's rim and keeps its drop
+    for (const road of this.roads) {
+      if (!this.deadEnd(road)) continue;
+      const last = road.samples[road.samples.length - 1];
+      if (Math.abs(this.base(last.x, last.z) - last.y) > 1.5) continue;
+      for (const p of road.samples) {
+        const k = smoothstep(0, 20, road.length - p.s);
+        if (k < 1) p.y = lerp(this.base(p.x, p.z), p.y, k);
+      }
+    }
   }
 
   nearestRoad(x: number, z: number, maxR: number): { sample: Sample; s: number; lat: number; along: number; d: number } | null {
@@ -453,7 +777,18 @@ export class Ground {
     return lerp(p.y, road.samples[j].y, clamp(Math.abs(along) / road.spacing, 0, 1));
   }
 
+  /**
+   * Roads whose far end leads nowhere (no other road within a few metres of it): the hunters'
+   * track, the cemetery lane, the end of the branch. Near such an end the terrain must come back up
+   * to the road, or past the last metre of it there is a drop the van can't climb back out of.
+   */
+  private deadEnd(road: Road): boolean {
+    const p = road.samples[road.samples.length - 1];
+    return !this.roads.some((r) => r !== road && r.samples.some((q) => (q.x - p.x) ** 2 + (q.z - p.z) ** 2 < 64));
+  }
+
   private buildGrid(): void {
+    const dead = new Set(this.roads.filter((r) => this.deadEnd(r)));
     let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
     for (const r of this.roads) for (const p of r.samples) {
       minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x); minZ = Math.min(minZ, p.z); maxZ = Math.max(maxZ, p.z);
@@ -475,8 +810,11 @@ export class Ground {
           const zone = hit.sample.road.zoneAt(hit.s);
           if (zone.surface !== 'wood') {
             const half = zone.width / 2;
-            // unmade roads carve deep relief, so sink the coarse terrain grid further below them
-            const target = this.centerY(hit.sample, hit.along) - (zone.surface === 'asphalt' ? 0.5 : 1.15);
+            // unmade roads carve deep relief, so sink the coarse terrain grid further below them;
+            // over a dead end's last stretch the track fades out into the ground instead
+            const road = hit.sample.road;
+            const fade = dead.has(road) ? smoothstep(0, 12, road.length - hit.s) : 1;
+            const target = this.centerY(hit.sample, hit.along) - (zone.surface === 'asphalt' ? 0.5 : 1.15) * fade;
             const d = Math.abs(hit.lat);
             h = d < half + 2.6 ? target : lerp(target, h, smoothstep(half + 2.6, half + 18, d));
           }
@@ -542,7 +880,7 @@ export class Ground {
     out.s = 0;
     out.lat = 0;
     out.half = 0;
-    let surf: Surface = tH < this.waterY - 0.05 ? 'water' : 'grass';
+    let surf: Surface = tH < this.waterAt(x, z) - 0.05 ? 'water' : 'grass';
     const hit = this.nearestRoad(x, z, 12);
     if (hit) {
       const road = hit.sample.road;
@@ -552,7 +890,7 @@ export class Ground {
       out.road = road; out.s = hit.s; out.lat = hit.lat; out.half = half; out.tag = zone.tag;
       const cy = this.centerY(hit.sample, hit.along);
       if (a <= half) {
-        out.height = cy + road.detail(hit.s, hit.lat, zone) + (road === this.stub ? -0.015 : 0);
+        out.height = cy + road.detail(hit.s, hit.lat, zone) + (road !== this.main ? -0.015 : 0);
         surf = road.surfaceAt(hit.s, zone);
         out.onRoad = true;
         const cut = road.puddleCut(hit.s, hit.lat);
@@ -565,6 +903,12 @@ export class Ground {
         surf = 'grass';
       }
     }
+    for (const pad of this.pads) {
+      const dx = x - pad.x, dz = z - pad.z;
+      if (dx * dx + dz * dz > pad.r * pad.r) continue;
+      const lx = dx * pad.c - dz * pad.s, lz = dx * pad.s + dz * pad.c;
+      if (Math.abs(lx) <= pad.hw && Math.abs(lz) <= pad.hd) { out.height = pad.y; surf = pad.surface; }
+    }
     const p = SURF[surf];
     out.surface = surf;
     out.mu = p.mu;
@@ -576,8 +920,22 @@ export class Ground {
       // pull (~7 kN): rush them or engage the low range. Roadside bogs stay milder.
       const core = zone.surface === 'mud';
       const deep = core ? out.road.deepMud(out.s) : out.road.bogAt(out.s) * 0.7;
-      out.crr += deep * (core ? 0.25 : 0.12);
+      out.crr += deep * (core ? 0.25 : 0.12) * (this.thaw ? 1.45 : 1);
       out.mu -= deep * 0.03;
+    }
+    // the thaw: dirt roads are porridge
+    if (this.thaw && surf === 'dirt') { out.mu *= 0.86; out.crr *= 1.35; }
+    if (this.snow > 0.02) {
+      const k = this.snow;
+      // packed snow over ice on the asphalt; loose snow on gravel and dirt; the lowland's mud frozen hard
+      if (surf === 'asphalt') out.mu *= 1 - 0.4 * k;
+      else if (surf === 'gravel' || surf === 'dirt' || surf === 'wood') out.mu *= 1 - 0.26 * k;
+      else if (surf === 'mud') { out.mu = lerp(out.mu, SURF.dirt.mu * 0.72, k); out.crr = lerp(out.crr, SURF.dirt.crr * 1.3, k); out.rough = lerp(out.rough, SURF.dirt.rough, k); }
+      else if (surf === 'grass') { out.mu *= 1 - 0.2 * k; out.crr += 0.03 * k; }
+      // in hard frost the river and the lake carry the van: smooth ice
+      else if (surf === 'water' && k > 0.75) { out.mu = 0.16; out.crr = 0.02; out.rough = 0.05; out.surface = 'grass'; out.height = Math.max(out.height, this.waterAt(x, z) + 0.02); }
+      out.water *= 1 - k;
+      if (k > 0.5) out.puddle = false;
     }
     // soaked ground: slicker clay, softer ruts; asphalt only loses a little
     if (this.wet > 0) {

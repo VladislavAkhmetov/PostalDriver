@@ -98,15 +98,27 @@ export function prepGeo(g: THREE.BufferGeometry, m?: THREE.Matrix4, color?: THRE
   return geo;
 }
 
-/** Collects static geometry by material key and merges it into a handful of draw calls. */
+/**
+ * Collects static geometry by material key and merges it into a handful of draw calls.
+ * With a `cell` size (metres) the merge is also split by ground area, one mesh per material per
+ * cell, so the camera culls whatever is behind it or past the fog instead of drawing the whole map.
+ */
 export class Bucket {
   private parts = new Map<string, THREE.BufferGeometry[]>();
+  private readonly box = new THREE.Box3();
+  private readonly mid = new THREE.Vector3();
+
+  constructor(private readonly cell = 0) {}
 
   add(key: string, g: THREE.BufferGeometry, m?: THREE.Matrix4, color?: THREE.ColorRepresentation): void {
     this.addPrepared(key, prepGeo(g, m, color));
   }
 
   addPrepared(key: string, geo: THREE.BufferGeometry): void {
+    if (this.cell > 0) {
+      this.box.setFromBufferAttribute(geo.attributes.position as THREE.BufferAttribute).getCenter(this.mid);
+      key = `${key}@${cellKey(this.mid.x, this.mid.z, this.cell)}`;
+    }
     let list = this.parts.get(key);
     if (!list) { list = []; this.parts.set(key, list); }
     list.push(geo);
@@ -116,7 +128,7 @@ export class Bucket {
     const group = new THREE.Group();
     group.name = name;
     for (const [key, list] of this.parts) {
-      const mtl = materials[key];
+      const mtl = materials[key.split('@')[0]];
       if (!mtl || list.length === 0) continue;
       const merged = mergeGeometries(list, false);
       if (!merged) continue;
@@ -130,4 +142,9 @@ export class Bucket {
     this.parts.clear();
     return group;
   }
+}
+
+/** The ground cell a point falls in, as a map key (for splitting merged world geometry by area). */
+export function cellKey(x: number, z: number, cell: number): string {
+  return `${Math.floor(x / cell)},${Math.floor(z / cell)}`;
 }

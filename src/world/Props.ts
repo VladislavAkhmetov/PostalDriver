@@ -4,7 +4,15 @@ import { pick, rand, RNG } from '../core/math';
 
 export interface Place { x: number; y: number; z: number; rot: number }
 
-export interface Collider { x: number; z: number; r: number; hw: number; hd: number; rot: number; box: boolean }
+export interface Collider {
+  x: number; z: number; r: number; hw: number; hd: number; rot: number; box: boolean;
+  /** Yielding things (bushes, haystacks, people): little bounce, little damage. */
+  soft?: boolean;
+  /** Mass of a movable obstacle in kg; the van shoves it instead of being stopped dead. */
+  mass?: number;
+  /** A movable obstacle is told it was hit: unit normal pointing away from the van, impulse (N·s), closing speed (m/s). */
+  hit?: (nx: number, nz: number, impulse: number, speed: number) => void;
+}
 
 export function T(p: Place, lx = 0, ly = 0, lz = 0, rx = 0, ry = 0, rz = 0, sx = 1, sy = 1, sz = 1): THREE.Matrix4 {
   return mat(p.x, p.y, p.z, 0, p.rot, 0).multiply(mat(lx, ly, lz, rx, ry, rz, sx, sy, sz));

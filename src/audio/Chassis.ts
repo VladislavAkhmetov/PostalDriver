@@ -26,11 +26,51 @@ export class ChassisSounds {
   private rollPrev = 0;
   private wet: Loop;
   private spray: Loop;
+  /** Transfer case and front-axle gear whine: two always-running tones steered by road speed. */
+  private tcase: { osc: OscillatorNode; filter: BiquadFilterNode; gain: GainNode };
+  private axle: { osc: OscillatorNode; filter: BiquadFilterNode; gain: GainNode };
+  private cabinT = 1;
+  private leafCd = [0, 0, 0, 0];
 
   constructor(private ctx: AudioContext, private inside: AudioNode, private outside: AudioNode, private buf: Record<string, AudioBuffer>) {
     this.wet = this.loop('pink', 'highpass', 2200, 0.5, outside);
     this.spray = this.loop('white', 'lowpass', 3200, 0.5, outside);
+    const whine = (type: OscillatorType, q: number) => {
+      const osc = ctx.createOscillator(); osc.type = type; osc.frequency.value = 200;
+      const filter = ctx.createBiquadFilter(); filter.type = 'bandpass'; filter.Q.value = q; filter.frequency.value = 400;
+      const gain = ctx.createGain(); gain.gain.value = 0;
+      osc.connect(filter).connect(gain).connect(inside);
+      osc.start();
+      return { osc, filter, gain };
+    };
+    this.tcase = whine('sawtooth', 5);
+    this.axle = whine('triangle', 7);
   }
+
+  /**
+   * The UAZ's famous howl: straight-cut gears in the transfer case sing at
+   * (road speed × final ratio × teeth). Louder on the throttle, much louder in
+   * the low range, and the front axle joins in a different pitch once 4×4 is on.
+   */
+  private drivetrain(v: Vehicle, speed: number): void {
+    const t = this.ctx.currentTime;
+    const run = v.engine === 'running' && v.gear !== 0 ? 1 : 0;
+    // road wheel rev/s → propeller shaft (hub-reduction axle ≈ 5.1:1)
+    const prop = (speed / (2 * Math.PI * 0.375)) * 5.125;
+    const lowK = v.low ? 1.94 : 1;
+    const f1 = prop * 23 * lowK, f2 = prop * 17;
+    const drive = clamp(0.3 + v.load * 1.1, 0.3, 1.2);
+    const rise = clamp(speed / 3, 0, 1) * run;
+    const g1 = rise * (0.007 + (v.fourWD ? 0.012 : 0) + (v.low ? 0.026 : 0)) * drive;
+    const g2 = rise * (v.fourWD ? 0.009 + (v.low ? 0.012 : 0) : 0) * drive;
+    this.tcase.osc.frequency.setTargetAtTime(Math.max(60, f1), t, 0.05);
+    this.tcase.filter.frequency.setTargetAtTime(clamp(f1 * 1.04, 200, 3800), t, 0.05);
+    this.tcase.gain.gain.setTargetAtTime(g1, t, 0.12);
+    this.axle.osc.frequency.setTargetAtTime(Math.max(60, f2), t, 0.05);
+    this.axle.filter.frequency.setTargetAtTime(clamp(f2 * 1.03, 200, 3800), t, 0.05);
+    this.axle.gain.gain.setTargetAtTime(g2, t, 0.12);
+  }
+
 
   private loop(buf: string, type: BiquadFilterType, f: number, q: number, dest: AudioNode): Loop {
     const src = this.ctx.createBufferSource(); src.buffer = this.buf[buf]; src.loop = true;
@@ -148,6 +188,13 @@ export class ChassisSounds {
         // the rubber shackle bushes groan lower
         if (Math.random() < 0.6) this.creak(34 * p, 26 * p, 420 * p, 5, 0.035 * k, 0.16 + k * 0.1, dest, t + 0.02);
       }
+      // small strokes still rub the leaves: a quiet, frequent "skrip-skrip" on rough ground
+      this.leafCd[i] -= dt;
+      if (this.leafCd[i] <= 0 && speed > 1.5 && w.F > 30 && Math.abs(w.vel) > 0.05 && Math.sign(pv) !== Math.sign(w.vel)) {
+        this.leafCd[i] = 0.5 + Math.random() * 0.9;
+        const k = clamp(Math.abs(w.vel) / 0.25, 0.2, 1) * rear;
+        this.creak(70 * this.springPitch[i], 105 * this.springPitch[i], 1100 * this.springPitch[i], 8, 0.022 * k, 0.07 + k * 0.05, dest, t);
+      }
       this.prevVel[i] = w.vel;
       // puddles: a broadband "pshh" off the tyre and a soft thud of water in the arch;
       // unpitched, and at most one per wheel every ~0.6 s so a string of puddles never bubbles
@@ -174,6 +221,29 @@ export class ChassisSounds {
       const res = 260 + Math.random() * 260;
       this.creak(18 + Math.random() * 10, 30 + Math.random() * 12, res, 6, 0.03 * k, 0.3 + Math.random() * 0.35, this.out((Math.random() - 0.5) * 0.8, this.inside), t);
     }
+
+    // the cab itself: seat springs, door seals rubbing, dash plastic ticking as the body works
+    this.cabinT -= dt * contact * moving * (0.25 + v.rough * 4 + Math.abs(v.accelLat) * 0.05 + Math.abs(v.accelLong) * 0.04);
+    if (this.cabinT < 0) {
+      this.cabinT = 0.7 + Math.random() * 2.2;
+      const k = clamp(0.35 + v.rough * 2 + Math.abs(v.accelLat) * 0.04, 0.2, 1);
+      const pick = Math.random();
+      if (pick < 0.4) {
+        // seat springs: two short groans
+        const d = this.out(-0.15, this.inside);
+        this.creak(38, 52, 640 + Math.random() * 160, 6, 0.028 * k, 0.16, d, t);
+        this.creak(44, 60, 760 + Math.random() * 160, 6, 0.02 * k, 0.12, d, t + 0.11);
+      } else if (pick < 0.75) {
+        // rubber door seal sliding on the pillar
+        const d = this.out(Math.random() < 0.5 ? -0.7 : 0.7, this.inside);
+        this.noise('pink', 'bandpass', 1500 + Math.random() * 700, 3, 0.05 * k, 0.3 + Math.random() * 0.25, d, t, 900);
+      } else {
+        // dashboard plastic ticking
+        const d = this.out(0.1, this.inside);
+        for (let i = 0; i < 2 + Math.floor(Math.random() * 3); i++) this.creak(110, 150, 2100 + Math.random() * 600, 9, 0.02 * k, 0.05, d, t + i * 0.08);
+      }
+    }
+    this.drivetrain(v, speed);
 
     // gravel and dirt: stones flicked into the floor and the wheel arches
     if ((surf === 'gravel' || surf === 'dirt') && speed > 2) {

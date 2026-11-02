@@ -4,16 +4,20 @@ import { clamp, damp, mulberry32, noise2 } from '../core/math';
 import { makeCanvas, Textures, toTex } from '../core/textures';
 import { RetroRenderer } from '../core/Renderer';
 import { IDLE, Vehicle } from './Vehicle';
+import { Hands, ReachTask } from './Hands';
+import { Smoker } from './Smoking';
 
 /** Driver eye in vehicle space (y=0 is 0.75 m above ground, forward is -Z). */
-export const EYE = new THREE.Vector3(-0.42, 0.95, -1.08);
+export const EYE = new THREE.Vector3(-0.42, 1.06, -1.08);
 /** Resting downward gaze so the wheel, gauges and bonnet line sit in frame. */
 export const EYE_PITCH = -0.25;
+/** Seconds a hand takes to let go of the rim and take it again further round. */
+const REGRIP = 0.32;
 const WHEEL_Y = 0.5;
 const FLOOR = 0.12;
 const D2R = Math.PI / 180;
 /** Windscreen overlay resolution (per pane) and wiper sweep radius in those pixels. */
-const PW = 128, PH = 96, ARM = 80;
+const PW = 192, PH = 144, ARM = 156, ARM_IN = 34;
 const GW = 0.835, GX = GW / 2;
 /** One-piece windscreen: panes meet at the centre, the glass bows forward in the middle. */
 const BOW = 0.055;
@@ -43,16 +47,29 @@ function bendGeo(g: THREE.BufferGeometry, offsetX = 0): THREE.BufferGeometry {
   return g;
 }
 
-export type HotspotId = 'horn' | 'handbrake' | '4wd' | 'low' | 'wipers' | 'lights' | 'tape' | 'map';
+export type HotspotId = 'horn' | 'handbrake' | '4wd' | 'low' | 'wipers' | 'lights' | 'vent' | 'tape' | 'map' | 'smoke' | 'stub';
 export interface Hotspot { mesh: THREE.Mesh; id: HotspotId; label: string }
 
+/** A bead of water on the outside of the glass; r in texels, area is conserved when drops merge. */
+interface Drop { x: number; y: number; r: number; vx: number; vy: number; life: number; dirty?: boolean }
 interface Pane {
   canvas: HTMLCanvasElement;
   ctx: CanvasRenderingContext2D;
   base: ImageData;
+  out: ImageData;
   tex: THREE.CanvasTexture;
-  drops: { x: number; y: number; s: number; vy: number; life: number }[];
+  mesh: THREE.Mesh;
+  drops: Drop[];
+  /** Crack segments (texel coordinates) from stone chips and crashes. */
+  cracks: number[][];
   pivot: [number, number];
+  /** Condensation on the inside, 0…1 per texel. */
+  fog: Float32Array;
+  /** Where fog tends to settle first: the edges and the lower corners. */
+  bias: Float32Array;
+  grain: Float32Array;
+  /** Wet sheen left by a sliding drop or the wiper blade; fades in about a second. */
+  film: Float32Array;
 }
 
 interface Mirror { glass: THREE.Mesh; cam: THREE.PerspectiveCamera; rt: THREE.WebGLRenderTarget; pos: THREE.Vector3; normal: THREE.Vector3 }
@@ -64,6 +81,11 @@ export class Cabin {
   readonly hotspots: Hotspot[] = [];
   lightsOn = false;
   wipersOn = false;
+  /** Windscreen blower: dries the inside of the glass. */
+  ventOn = false;
+  /** 0…1 how misted the glass is now, for hints. */
+  mist = 0;
+  onMist?: () => void;
   private wheel = new THREE.Group();
   private needles: Record<'speed' | 'fuel' | 'temp' | 'oil' | 'amp', THREE.Mesh>;
   private lamps: Record<'brake' | 'oil' | 'charge' | 'beam', THREE.MeshBasicMaterial>;
@@ -73,19 +95,36 @@ export class Cabin {
   private leverLow = new THREE.Group();
   private handbrake = new THREE.Group();
   private fanBlades = new THREE.Group();
-  private toggles: { wipers: THREE.Object3D; lights: THREE.Object3D };
+  private toggles: { wipers: THREE.Object3D; lights: THREE.Object3D; vent: THREE.Object3D };
   private wipers: THREE.Group[] = [];
   private wiperA = 0;
   private wiperPhase = 0;
   private wiperDir = 1;
   private panes: Pane[] = [];
   private paneDirty = true;
+  private fogLevel = 0;
+  private fogTimer = 40;
+  private fogLeft = 0;
+  private fogHinted = false;
+  /** Seconds the wet-sheen layer still has something to fade. */
+  private filmTime = 0;
   private mirrors: Mirror[] = [];
   private fresh = new THREE.Group();
   private freshState = { ax: 0, vx: 0, az: 0, vz: 0 };
   private spots: THREE.SpotLight[] = [];
   private dashLight: THREE.PointLight;
   private temp = 40;
+  private hands!: Hands;
+  /** The pack, lighter and ashtray on the dash, and the routine that uses them. */
+  smoker!: Smoker;
+  /** Where each hand holds the rim, degrees in the wheel's own frame, and its re-grip timer (-1: holding). */
+  private grip: Record<'L' | 'R', { at: number; t: number }> = { L: { at: 165, t: -1 }, R: { at: 15, t: -1 } };
+  private lastWheel = 0;
+  private wheelTilt = new THREE.Group();
+  private key = new THREE.Group();
+  private lastGear = 1;
+  private hornHeld = false;
+  private cassetteMesh!: THREE.Mesh;
   onWiperEnd?: () => void;
 
   constructor(private T: Textures) {
@@ -108,64 +147,69 @@ export class Cabin {
       van: new THREE.MeshLambertMaterial({ map: T.vanSide, vertexColors: true }),
     }, 'cabin'));
 
-    // instrument pod: a black steel box riding on the dash lip, tilted up at the
-    // driver so the gauges sit in the open top half of the wheel
+    // instrument cluster, as in the factory photos: a black rectangular housing with four round
+    // gauges in a row, left of the steering column, turned toward the driver
     const pod = new THREE.Group();
-    pod.position.set(-0.42, 0.525, -1.675);
-    pod.rotation.x = -0.6;
+    // straight in front of the driver, tipped up to face his eyes (as on the real van)
+    pod.position.set(EYE.x, 0.535, -1.672);
+    pod.rotation.set(-0.66, 0, 0);
     this.group.add(pod);
-    const podBody = new THREE.Mesh(new THREE.BoxGeometry(0.54, 0.15, 0.1), M('#1a1a19'));
+    const PWD = 0.42, PHT = 0.131;
+    const podBody = new THREE.Mesh(new THREE.BoxGeometry(PWD + 0.02, PHT + 0.03, 0.1), M('#161615'));
     podBody.position.z = -0.052;
-    const hood = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.014, 0.07), M('#202020'));
-    hood.position.set(0, 0.081, -0.008);
-    const trim = new THREE.Mesh(new THREE.BoxGeometry(0.54, 0.006, 0.006), M('#a8a8a2'));
-    trim.position.set(0, -0.074, 0.002);
-    pod.add(podBody, hood, trim);
+    const trim = new THREE.Mesh(new THREE.BoxGeometry(PWD + 0.02, 0.006, 0.006), M('#a8a8a2'));
+    trim.position.set(0, -(PHT + 0.03) / 2 + 0.002, 0.002);
+    pod.add(podBody, trim);
     this.clusterMat = new THREE.MeshLambertMaterial({ map: T.cluster, emissive: '#a8e0b0', emissiveMap: T.cluster, emissiveIntensity: 0 });
-    const cluster = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 0.125), this.clusterMat);
+    const cluster = new THREE.Mesh(new THREE.PlaneGeometry(PWD, PHT), this.clusterMat);
     cluster.position.z = 0.001;
     pod.add(cluster);
-    const k = 0.5 / 384;
-    const bezel = M('#b4b4ae');
-    for (const [px, rad] of [[192, 43], [40, 24], [94, 24], [290, 24], [344, 24]]) {
-      const ring = new THREE.Mesh(new THREE.TorusGeometry(rad * k, 0.0028, 4, 28), bezel);
+    const k = PWD / 384;
+    const bezel = M('#c4c4be');
+    // four gauges, 96 px apart: speedometer, fuel, coolant temperature, oil pressure
+    const GX = [48, 144, 240, 336];
+    for (const px of GX) {
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(40 * k, 0.0032, 4, 28), bezel);
       ring.position.set((px - 192) * k, 0, 0.003);
       pod.add(ring);
     }
     const needle = (len: number, x: number, y: number) => {
-      const g = new THREE.PlaneGeometry(len, len > 0.03 ? 0.0036 : 0.003);
+      const g = new THREE.PlaneGeometry(len, 0.0036);
       g.translate(len / 2 - 0.004, 0, 0);
       const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: '#ff8a3a' }));
       m.position.set(x, y, 0.002);
       cluster.add(m);
       return m;
     };
+    const gy = 0;
     this.needles = {
-      speed: needle(0.048, 0, 0),
-      fuel: needle(0.025, (40 - 192) * k, 0),
-      temp: needle(0.025, (94 - 192) * k, 0),
-      oil: needle(0.025, (290 - 192) * k, 0),
-      amp: needle(0.025, (344 - 192) * k, 0),
+      speed: needle(0.036, (GX[0] - 192) * k, gy),
+      fuel: needle(0.03, (GX[1] - 192) * k, gy),
+      temp: needle(0.03, (GX[2] - 192) * k, gy),
+      oil: needle(0.03, (GX[3] - 192) * k, gy),
+      // the ammeter shares the oil dial's face in this cluster: a hair-thin second needle
+      amp: needle(0.022, (GX[3] - 192) * k, gy),
     };
+    this.needles.amp.visible = false;
     const lamp = (px: number, py: number, color: string) => {
       const mtl = new THREE.MeshBasicMaterial({ color: '#202020' });
       mtl.userData.on = new THREE.Color(color);
       const m = new THREE.Mesh(new THREE.CircleGeometry(6 * k, 8), mtl);
-      m.position.set((px - 192) * k, (48 - py) * k, 0.002);
+      m.position.set((px - 192) * k, (60 - py) * k, 0.002);
       cluster.add(m);
       return mtl;
     };
-    this.lamps = { brake: lamp(140, 30, '#ff3a2a'), oil: lamp(140, 64, '#ff4a2a'), charge: lamp(244, 30, '#ff4a2a'), beam: lamp(244, 64, '#4a8aff') };
+    this.lamps = { brake: lamp(60, 112, '#ff3a2a'), oil: lamp(156, 112, '#ff4a2a'), charge: lamp(252, 112, '#ff4a2a'), beam: lamp(340, 112, '#4a8aff') };
 
     this.buildWheel();
     this.buildExtras();
     this.buildLevers();
-    this.toggles = { wipers: this.toggle(-0.14, 'wipers', 'Дворники · R'), lights: this.toggle(-0.075, 'lights', 'Фары · F') };
+    this.toggles = { wipers: this.toggle(-0.14, 'wipers', 'Дворники · R'), lights: this.toggle(-0.075, 'lights', 'Фары · F'), vent: this.toggle(-0.205, 'vent', 'Обдув стекла · B') };
     this.buildGlass();
     this.buildMirrors();
     this.buildFreshener();
     this.buildTrinkets();
-    this.addHit('tape', 'Магнитола «Электроника» · C', new THREE.BoxGeometry(0.2, 0.07, 0.16), 0.2, 0.15, -1.62);
+    this.addHit('tape', 'Магнитола · C', new THREE.BoxGeometry(0.2, 0.07, 0.16), 0.2, 0.15, -1.62);
     this.addHit('map', 'Путевой лист и схема · M', new THREE.BoxGeometry(0.25, 0.05, 0.32), 0.0, 0.61, -1.05);
 
     for (const s of [-1, 1]) {
@@ -176,14 +220,150 @@ export class Cabin {
       this.spots.push(sp);
     }
     this.dashLight = new THREE.PointLight('#9fd8a8', 0, 1.2, 2);
-    this.dashLight.position.set(-0.42, 0.62, -1.5);
+    this.dashLight.position.set(EYE.x, 0.62, -1.5);
     this.group.add(this.dashLight);
+    this.buildKey();
+    this.buildDashDetails();
+    this.buildHands();
   }
+
+  /** The rest of the dash and column from the factory photos: boot, red lamp, switch block, glovebox. */
+  private buildDashDetails(): void {
+    // the steering column, wrapped in a black cloth boot that flares toward the floor
+    const boot = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.048, 0.62, 10, 1, true), M('#141414'));
+    boot.rotation.x = Math.PI / 2;
+    boot.position.z = -0.34;
+    boot.material.side = THREE.DoubleSide;
+    this.wheelTilt.add(boot);
+    const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.052, 0.052, 0.05, 10), M('#1c1c1b'));
+    collar.rotation.x = Math.PI / 2;
+    collar.position.z = -0.05;
+    this.wheelTilt.add(collar);
+    const face = (w: number, h: number, d: number, x: number, y: number, color: string) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), M(color));
+      m.position.set(x, y, -1.664 + d / 2);
+      this.group.add(m);
+      return m;
+    };
+    // red telltale and the switch block with three rockers
+    const red = new THREE.Mesh(new THREE.CircleGeometry(0.011, 10), new THREE.MeshBasicMaterial({ color: '#c8281e' }));
+    red.position.set(0.0, 0.5, -1.661);
+    this.group.add(red);
+    face(0.1, 0.045, 0.016, 0.09, 0.485, '#1a1a19');
+    for (const dx of [-0.03, 0, 0.03]) face(0.017, 0.022, 0.026, 0.09 + dx, 0.485, '#d4d4cc');
+    // the glovebox lid on the passenger side, with its latch
+    face(0.36, 0.15, 0.01, 0.46, 0.4, '#c9cfd1');
+    face(0.034, 0.012, 0.016, 0.46, 0.468, '#2a2a28');
+  }
+
+  // ------------------------------------------------------------ the driver's arms
+
+  /** Ignition switch left of the instrument pod: a chrome barrel, a key with a black head. */
+  private buildKey(): void {
+    this.key.position.set(-0.7, 0.43, -1.668);
+    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.012, 10), M('#8a8a86'));
+    barrel.rotation.x = Math.PI / 2;
+    const blade = new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.026, 0.004), M('#c8c8c0'));
+    blade.position.set(0, 0.0, 0.008);
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.014, 0.034, 0.008), M('#151515'));
+    head.position.set(0, 0.016, 0.02);
+    this.key.add(barrel, blade, head);
+    this.group.add(this.key);
+  }
+
+  private wheelPoint(angleDeg: number, out: THREE.Vector3): THREE.Vector3 {
+    const a = angleDeg * D2R;
+    return out.set(Math.cos(a) * 0.245, Math.sin(a) * 0.245, 0).applyMatrix4(this.wheel.matrix).applyMatrix4(this.wheelTilt.matrix);
+  }
+
+  /** Tip of a lever/handle, `len` up its own axis, in cabin space. */
+  private tipOf(g: THREE.Object3D, len: number, out: THREE.Vector3): THREE.Vector3 {
+    g.updateMatrix();
+    return out.set(0, len, 0).applyMatrix4(g.matrix);
+  }
+
+  private buildHands(): void {
+    // the driver himself: a seated figure fitted between the seat and the camera
+    this.hands = new Hands(this.group, new THREE.Vector3(-0.48, 0.4, -0.8), EYE);
+    // at rest: ten and two on the rim, riding the wheel as it turns, palms toward the driver's side of the rim;
+    // past a comfortable arc a hand lets go and takes the rim again further back (hand over hand)
+    const homeL = new THREE.Vector3(), homeR = new THREE.Vector3();
+    const away = new THREE.Vector3(0, 0, -1).transformDirection(this.wheelTilt.matrix);
+    const home = (side: 'L' | 'R', out: THREE.Vector3) => () => {
+      const g = this.grip[side];
+      this.wheelPoint(g.at, out);
+      // lifted off the rim toward the driver on the way to the new hold
+      if (g.t >= 0) out.addScaledVector(away, -0.075 * Math.sin(Math.PI * Math.min(1, g.t / REGRIP)));
+      return out;
+    };
+    const pose = (side: 'L' | 'R') => () => (this.grip[side].t >= 0 && this.grip[side].t < REGRIP * 0.7 ? 'open' : 'grip');
+    // a real hold on the rim: the palm on its outer, driver's-side face pressing in toward the hub,
+    // the back of the hand out and toward the driver, the fingers forward round it to close behind
+    const hub = new THREE.Vector3(), out = { L: new THREE.Vector3(), R: new THREE.Vector3() };
+    const radial = (side: 'L' | 'R') => {
+      hub.set(0, 0, 0).applyMatrix4(this.wheel.matrix).applyMatrix4(this.wheelTilt.matrix);
+      return out[side].copy(side === 'L' ? homeL : homeR).sub(hub).normalize();
+    };
+    const palmOf = { L: new THREE.Vector3(), R: new THREE.Vector3() }, fingOf = { L: new THREE.Vector3(), R: new THREE.Vector3() };
+    const palm = (side: 'L' | 'R') => () => palmOf[side].copy(radial(side)).multiplyScalar(-0.75).addScaledVector(away, 0.66).normalize();
+    const fingers = (side: 'L' | 'R') => () => fingOf[side].copy(radial(side)).multiplyScalar(0.62).addScaledVector(away, 0.78).normalize();
+    this.hands.setHome('L', home('L', homeL), palm('L'), pose('L'), fingers('L'));
+    this.hands.setHome('R', home('R', homeR), palm('R'), pose('R'), fingers('R'));
+    this.smoker = new Smoker(this.group, this.hands, EYE, 0.4955);
+    this.addHit('stub', 'Потушить · Y', new THREE.BoxGeometry(0.1, 0.05, 0.1), -0.13, 0.52, -1.715);
+    this.addHit('smoke', 'Закурить · J', new THREE.BoxGeometry(0.12, 0.06, 0.12), -0.01, 0.52, -1.7);
+    // a cassette to carry to the radio (the real thing is a 2.5 mm-thick box)
+    this.cassetteMesh = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.064, 0.012), new THREE.MeshLambertMaterial({ map: this.T.cassette }));
+  }
+
+  /** The fingers go to a control and press, pull or turn it; called when the player acts. */
+  reach(id: string, opts: { cassette?: boolean } = {}): void {
+    const t = (hand: 'L' | 'R', pose: ReachTask['pose'], hold: number, target: () => THREE.Vector3, palm: THREE.Vector3, extra: Partial<ReachTask> = {}) =>
+      this.hands.reach({ hand, pose, hold, target, palm: palm.clone().normalize(), ...extra });
+    const v = new THREE.Vector3();
+    const toggle = (x: number) => () => v.set(x, 0.405, -1.65);
+    const SIDE = new THREE.Vector3(1, -0.15, -0.25), DOWNF = new THREE.Vector3(0, -1, -0.3);
+    switch (id) {
+      case 'handbrake': t('R', 'grip', 0.55, () => this.tipOf(this.handbrake, 0.44, v), SIDE); break;
+      case '4wd': t('R', 'knob', 0.6, () => this.tipOf(this.lever4, 0.46, v), SIDE); break;
+      case 'low': t('R', 'knob', 0.6, () => this.tipOf(this.leverLow, 0.46, v), SIDE); break;
+      case 'wipers': t('R', 'point', 0.35, toggle(-0.14), DOWNF); break;
+      case 'lights': t('R', 'point', 0.35, toggle(-0.075), DOWNF); break;
+      case 'vent': t('R', 'point', 0.35, toggle(-0.205), DOWNF); break;
+      case 'tapeNext': t('R', 'point', 0.4, () => v.set(0.28, 0.16, -1.56), DOWNF); break;
+      case 'tape':
+        if (opts.cassette) {
+          this.cassetteMesh.rotation.set(0, 0, 0);
+          this.cassetteMesh.position.set(0, 0.075, -0.02);
+          t('R', 'pinch', 0.9, () => v.set(0.2, 0.16, -1.56), new THREE.Vector3(0, -0.5, -0.8), { carry: this.cassetteMesh, push: new THREE.Vector3(0, 0, -0.05) });
+        } else t('R', 'point', 0.4, () => v.set(0.2, 0.16, -1.56), DOWNF);
+        break;
+      case 'map': t('R', 'pinch', 0.8, () => v.set(0, 0.62, -1.05), new THREE.Vector3(0, -1, 0)); break;
+      case 'start': t('L', 'pinch', 1.4, () => v.set(-0.7, 0.44, -1.64), new THREE.Vector3(0.5, -0.2, -0.8)); break;
+    }
+  }
+
+  /** Light up (or take a drag) — the smoke key. */
+  smoke(): void { this.smoker.press(); }
+
+  /** Put the cigarette out in the tin. */
+  stubOut(): void { this.smoker.extinguish(); }
+
+  /** The horn button is the wheel hub: a hand rests on it while the key is held. */
+  setHorn(on: boolean): void {
+    if (on && !this.hornHeld) {
+      const p = new THREE.Vector3();
+      this.hands.reach({ hand: 'R', pose: 'open', hold: 0.15, palm: new THREE.Vector3(0, -0.82, -0.57), until: () => this.hornHeld, target: () => p.set(0, 0, 0.03).applyMatrix4(this.wheel.matrix).applyMatrix4(this.wheelTilt.matrix) });
+    }
+    this.hornHeld = on;
+  }
+
+
 
   private buildShell(b: Bucket): void {
     const add = (key: string, g: THREE.BufferGeometry, x: number, y: number, z: number, rx = 0, ry = 0, rz = 0, c: THREE.ColorRepresentation = '#ffffff') => b.add(key, g, mat(x, y, z, rx, ry, rz), c);
     // UAZ-452 cab: pressed steel in light grey enamel, black rubber, dark grey leatherette
-    const DASH = '#d4dadc', PILLAR = '#c2c8cb', ROOF = '#dde2e4', HUMP = '#4c4c4b', DARK = '#26241f', CHROME = '#b8b8b2';
+    const DASH = '#d4dadc', PILLAR = '#c2c8cb', ROOF = '#dde2e4', HUMP = '#787d80', DARK = '#26241f', CHROME = '#b8b8b2';
     // ---- floor, pedals, front wall
     add('rubber', boxGeo(1.8, 0.04, 1.5, 0.5), 0, FLOOR - 0.02, -1.25);
     add('paint', boxGeo(1.8, 0.4, 0.04), 0, FLOOR + 0.2, -1.95, 0, 0, 0, '#9a9a96');
@@ -245,9 +425,7 @@ export class Cabin {
       add('flat', boxGeo(0.44, 0.024, 0.006), s * 0.45, 1.2, -1.677, 0.1, 0, 0, '#6e6e6a');
       add('flat', new THREE.CylinderGeometry(0.006, 0.006, 0.46, 5), s * 0.45, 1.214, -1.845, 0, 0, Math.PI / 2, CHROME);
     }
-    // small pale interior mirror on a short stalk
-    add('flat', boxGeo(0.165, 0.058, 0.02), 0, 1.075, -1.802, 0, 0, 0, '#a8a8a2');
-    add('flat', boxGeo(0.012, 0.08, 0.012), 0, 1.15, -1.81, 0, 0, 0, '#8a8a86');
+    // (the interior mirror itself is built with the other mirrors, in buildMirrors)
     // ---- doors: pressed steel with stamped panels, sliding windows
     for (const s of [-1, 1]) {
       add('paint', boxGeo(0.035, 0.44, 1.08), s * 0.905, 0.34, -1.24, 0, 0, 0, '#cacac5');
@@ -283,14 +461,18 @@ export class Cabin {
     // the postman's clutter on the hump
     add('newspaper', boxGeo(0.3, 0.05, 0.22, 0.3), 0.24, 0.625, -1.42, 0, 0.25, -0.05);
     add('newspaper', boxGeo(0.28, 0.01, 0.2, 0.28), 0.2, 0.655, -1.4, 0, -0.2);
-    add('flat', new THREE.CylinderGeometry(0.045, 0.045, 0.27, 8), 0.38, 0.72, -0.95, 0, 0, 0, '#5a7a5a');
-    add('flat', new THREE.CylinderGeometry(0.047, 0.047, 0.05, 8), 0.38, 0.87, -0.95, 0, 0, 0, '#9a9a98');
+    // the thermos on the floor between the seats, by the fire extinguisher: out of the way of whoever rides
+    // in the right-hand seat, and out of the driver's view
+    add('flat', new THREE.CylinderGeometry(0.045, 0.045, 0.27, 8), 0.2, FLOOR + 0.135, -0.62, 0, 0, 0, '#5a7a5a');
+    add('flat', new THREE.CylinderGeometry(0.047, 0.047, 0.05, 8), 0.2, FLOOR + 0.285, -0.62, 0, 0, 0, '#9a9a98');
     add('waybill', boxGeo(0.22, 0.012, 0.3, 0.3), 0.1, 0.61, -1.08, 0, 0.15, 0.04);
     // ---- seats: dark vinyl cushions on painted boxes
+    // (the driver's seat is slid forward to the pedals and sits lower, the way a person fits the cab)
     for (const x of [-0.48, 0.62]) {
-      add('seat', boxGeo(0.5, 0.12, 0.46), x, 0.42, -0.6);
-      add('seat', boxGeo(0.5, 0.58, 0.1), x, 0.76, -0.36, 0.12);
-      add('paint', boxGeo(0.46, 0.3, 0.42), x, 0.22, -0.6, 0, 0, 0, '#7a7a76');
+      const dz = x < 0 ? -0.2 : 0;
+      add('seat', boxGeo(0.5, 0.12, 0.46), x, 0.28, -0.6 + dz);
+      add('seat', boxGeo(0.5, 0.58, 0.1), x, 0.62, -0.36 + dz, 0.12);
+      add('paint', boxGeo(0.46, 0.22, 0.42), x, 0.15, -0.6 + dz, 0, 0, 0, '#7a7a76');
     }
     // ---- steering column rising steeply out of the floor
     add('flat', new THREE.CylinderGeometry(0.022, 0.022, 0.62, 6), -0.42, WHEEL_Y - 0.25, -1.62, 0.73, 0, 0, '#1c1c1c');
@@ -484,9 +666,10 @@ export class Cabin {
   }
 
   private buildWheel(): void {
-    const tilt = new THREE.Group();
+    const tilt = this.wheelTilt;
     tilt.position.set(-0.42, WHEEL_Y, -1.42);
     tilt.rotation.x = -0.96;
+    tilt.updateMatrix();
     this.group.add(tilt);
     tilt.add(this.wheel);
     // big thin black bakelite three-spoke wheel with a smooth round rim
@@ -569,35 +752,41 @@ export class Cabin {
     frame.rotation.x = 0.11;
     this.group.add(frame);
     const r = mulberry32(77);
-    for (const [cx, pivotX] of [[-GX, -0.76], [GX, 0.08]]) {
+    for (const [cx, pivotX] of [[-GX, -0.8], [GX, -0.04]]) {
       const canvas = makeCanvas(PW, PH);
       const ctx = canvas.getContext('2d')!;
       const pivot: [number, number] = [((pivotX - cx + GW / 2) / GW) * PW, (1 - 0.03 / 0.62) * PH];
       const base = ctx.createImageData(PW, PH);
+      const fog = new Float32Array(PW * PH), film = new Float32Array(PW * PH), bias = new Float32Array(PW * PH), grain = new Float32Array(PW * PH);
       for (let y = 0; y < PH; y++) for (let x = 0; x < PW; x++) {
         const dx = x - pivot[0], dy = pivot[1] - y;
         const d = Math.hypot(dx, dy), a = Math.atan2(dy, dx);
-        const swept = d < ARM && d > 10 && a > -0.05 && a < 1.9;
-        const edge = Math.max(0, 1 - Math.min(x, PW - 1 - x, y * 2, PH - 1 - y) / 18);
-        let alpha = (0.08 + noise2(x * 0.12, y * 0.12, 3) * 0.12 + edge * 0.26) * (swept ? 0.25 : 1);
-        if (r() < 0.0015) alpha = 0.5;
+        const swept = d < ARM && d > ARM_IN - 6 && a > -0.05 && a < 1.9;
+        const edgeD = Math.min(x, PW - 1 - x, y * 2, PH - 1 - y);
+        const edge = Math.max(0, 1 - edgeD / 27);
+        let alpha = (0.08 + noise2(x * 0.08, y * 0.08, 3) * 0.12 + edge * 0.26) * (swept ? 0.25 : 1);
+        if (r() < 0.001) alpha = 0.5;
         const i = (y * PW + x) * 4;
         base.data[i] = 120; base.data[i + 1] = 108; base.data[i + 2] = 86; base.data[i + 3] = Math.round(clamp(alpha, 0, 1) * 255);
+        const k = y * PW + x;
+        // condensation starts in the corners and along the lower edge, then creeps in
+        bias[k] = clamp(0.45 + edge * 0.55 + (y / PH) * 0.25 + (noise2(x * 0.05, y * 0.05, 11) - 0.5) * 0.5, 0, 1.3);
+        grain[k] = noise2(x * 0.9, y * 0.9, 13);
       }
       const tex = toTex(canvas, { repeat: false, mip: false });
       const mesh = new THREE.Mesh(bendGeo(new THREE.PlaneGeometry(GW, 0.62, 10, 1), cx), new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, fog: false }));
       mesh.position.set(cx, 0.31, 0.004);
       mesh.renderOrder = 5;
       frame.add(mesh);
-      this.panes.push({ canvas, ctx, base, tex, drops: [], pivot });
+      this.panes.push({ canvas, ctx, base, out: ctx.createImageData(PW, PH), tex, mesh, drops: [], cracks: [], pivot, fog, film, bias, grain });
 
       const w = new THREE.Group();
       w.position.set(pivotX, 0.03, 0.014);
       const black = M('#141414');
-      const armM = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.012, 0.008), black);
-      armM.position.x = 0.26;
-      const blade = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.016, 0.012), black);
-      blade.position.set(0.31, 0, -0.006);
+      const armM = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.012, 0.008), black);
+      armM.position.x = 0.34;
+      const blade = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.016, 0.012), black);
+      blade.position.set(0.42, 0, -0.006);
       w.add(armM, blade);
       frame.add(w);
       this.wipers.push(w);
@@ -636,14 +825,21 @@ export class Cabin {
       const cam = new THREE.PerspectiveCamera(26, 1, 0.3, 260);
       this.mirrors.push({ glass, cam, rt, pos, normal: new THREE.Vector3(Math.sin(ry), 0, Math.cos(ry)) });
     }
-    // interior mirror: angled so the driver sees straight back through the cargo bay
-    const pos = new THREE.Vector3(0, 1.075, -1.789);
+    // interior mirror on a stalk from the header, angled so the driver sees straight back through the cargo bay
+    const pos = new THREE.Vector3(0, 0.99, -1.775);
     const normal = new THREE.Vector3().subVectors(EYE, pos).normalize().add(new THREE.Vector3(0, 0, 1)).normalize();
     const rt = new THREE.WebGLRenderTarget(84, 26, { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
     const glass = new THREE.Mesh(new THREE.PlaneGeometry(0.152, 0.047), new THREE.MeshBasicMaterial({ map: flip(rt), color: '#d6dada', fog: false }));
     glass.position.copy(pos);
     glass.lookAt(pos.clone().add(normal));
     this.group.add(glass);
+    const housing = new THREE.Mesh(new THREE.BoxGeometry(0.168, 0.062, 0.02), M('#151515'));
+    housing.position.copy(pos).addScaledVector(normal, -0.012);
+    housing.quaternion.copy(glass.quaternion);
+    const stalk = new THREE.Mesh(new THREE.CylinderGeometry(0.007, 0.007, 0.13, 6), M('#1c1c1c'));
+    stalk.position.set(0, 1.06, -1.8);
+    stalk.rotation.x = -0.1;
+    this.group.add(housing, stalk);
     this.mirrors.push({ glass, cam: new THREE.PerspectiveCamera(22, 0.152 / 0.047, 0.05, 160), rt, pos, normal });
   }
 
@@ -664,6 +860,7 @@ export class Cabin {
   }
 
   toggleWipers(): void { this.wipersOn = !this.wipersOn; }
+  toggleVent(): void { this.ventOn = !this.ventOn; }
 
   /** Period keepsakes: pennant, prayer beads, TO coupon, a postal card in the windscreen. */
   private buildTrinkets(): void {
@@ -755,9 +952,10 @@ export class Cabin {
     const jitter = v.engine === 'running' ? Math.sin(performance.now() * 0.03) * 0.6 : 0;
     this.needles.speed.rotation.z = -(135 + (270 * clamp(kmh + jitter * (kmh > 2 ? 1 : 0), 0, 125)) / 120) * D2R;
     const running = v.engine === 'running';
-    this.temp = damp(this.temp, running ? 86 : 40, running ? 0.02 : 0.005, dt);
+    // coolant temperature from the engine's own (Vehicle.heat: 0.55 is 86 °C, 1 is boiling)
+    this.temp = damp(this.temp, 40 + v.heat * 84, 2, dt);
     const small = (n: THREE.Mesh, f: number) => { n.rotation.z = -(225 + 90 * clamp(f, 0, 1)) * D2R; };
-    small(this.needles.fuel, 0.68 - v.odometer / 60000);
+    small(this.needles.fuel, v.fuel);
     small(this.needles.temp, (this.temp - 40) / 80);
     small(this.needles.oil, running ? 0.25 + (v.rpm / 4200) * 0.55 : 0);
     small(this.needles.amp, running ? 0.58 : v.engine === 'cranking' ? 0.15 : 0.5);
@@ -780,6 +978,7 @@ export class Cabin {
     this.handbrake.rotation.x = damp(this.handbrake.rotation.x, v.handbrake ? 0.2 : 0.95, 12, dt);
     this.toggles.wipers.rotation.x = this.wipersOn ? -0.5 : 0.5;
     this.toggles.lights.rotation.x = this.lightsOn ? -0.5 : 0.5;
+    this.toggles.vent.rotation.x = this.ventOn ? -0.5 : 0.5;
 
     // freshener pendulum
     const fs = this.freshState;
@@ -791,6 +990,53 @@ export class Cabin {
 
     this.updateWipers(dt);
     this.updateRain(dt, v, rain);
+    this.updateHands(dt, v);
+  }
+
+  private updateHands(dt: number, v: Vehicle): void {
+    // the ignition key turns while the starter runs, springs back when the engine catches
+    const goal = v.engine === 'cranking' ? -0.9 : v.engine === 'running' ? -0.35 : 0;
+    this.key.rotation.z = damp(this.key.rotation.z, goal, 12, dt);
+    this.wheel.updateMatrix();
+    // a gear change takes the right hand off the wheel onto the lever
+    if (v.gear !== this.lastGear) {
+      this.lastGear = v.gear;
+      if (v.engine === 'running' && v.gear !== 0) {
+        const p = new THREE.Vector3();
+        this.hands.reach({ hand: 'R', pose: 'knob', hold: 0.5, target: () => this.tipOf(this.gearLever, 0.66, p), palm: new THREE.Vector3(1, -0.2, -0.3).normalize() });
+      }
+    }
+    this.regrip(dt);
+    this.hands.update(dt);
+    this.smoker.speed = v.speedKmh;
+    this.smoker.update(dt);
+  }
+
+  /**
+   * Hand over hand: each hand rides the rim through its own comfortable arc (seen from the seat);
+   * past it, and only while the other hand holds on, it lets go and takes the rim again near its
+   * usual place, set back against the turn so the next stroke is a long one.
+   */
+  private regrip(dt: number): void {
+    const rot = this.wheel.rotation.z / D2R;
+    const turning = rot - this.lastWheel;
+    this.lastWheel = rot;
+    for (const side of ['L', 'R'] as const) {
+      const g = this.grip[side];
+      if (g.t >= 0) { g.t += dt; if (g.t >= REGRIP) g.t = -1; continue; }
+      const [ideal, arc] = side === 'L' ? [165, 72] : [15, 72];
+      // the hand's place on the rim as the driver sees it, relative to where it likes to be
+      const d = ((g.at + rot - ideal) % 360 + 540) % 360 - 180;
+      if (Math.abs(d) < arc) continue;
+      const other = this.grip[side === 'L' ? 'R' : 'L'];
+      const otherFree = this.hands.busy(side === 'L' ? 'R' : 'L');
+      // the other hand must be holding the wheel, unless it is off doing something else
+      if (other.t >= 0 && !otherFree) continue;
+      if (this.hands.busy(side)) continue;
+      const dir = Math.abs(turning) > 1e-3 ? Math.sign(turning) : Math.sign(d);
+      g.at = ideal - dir * 38 - rot;
+      g.t = 0;
+    }
   }
 
   private updateWipers(dt: number): void {
@@ -807,51 +1053,281 @@ export class Cabin {
     const dir = Math.sign(this.wiperA - prev);
     if (dir !== 0 && dir !== this.wiperDir) { this.wiperDir = dir; this.onWiperEnd?.(); }
     for (const w of this.wipers) w.rotation.z = this.wiperA;
-    if (this.wiperA !== prev) {
-      const lo = Math.min(prev, this.wiperA) - 0.02, hi = Math.max(prev, this.wiperA) + 0.02;
-      for (const p of this.panes) {
-        p.drops = p.drops.filter((d) => {
-          const dx = d.x - p.pivot[0], dy = p.pivot[1] - d.y;
-          const dist = Math.hypot(dx, dy), a = Math.atan2(dy, dx);
-          return !(dist < ARM + 3 && a >= lo && a <= hi);
-        });
+    if (this.wiperA !== prev) this.sweep(prev, this.wiperA);
+  }
+
+  /** The blade squeegees everything between its old and new angle: drops go, a wet sheen stays. */
+  private sweep(from: number, to: number): void {
+    const lo = Math.min(from, to) - 0.015, hi = Math.max(from, to) + 0.015;
+    for (const p of this.panes) {
+      p.drops = p.drops.filter((d) => {
+        const dx = d.x - p.pivot[0], dy = p.pivot[1] - d.y;
+        const dist = Math.hypot(dx, dy), a = Math.atan2(dy, dx);
+        return !(dist < ARM + 3 && dist > ARM_IN - 3 && a >= lo && a <= hi);
+      });
+      // the pass leaves a thin film behind the blade, strongest right at it
+      for (let rad = ARM_IN; rad < ARM; rad += 0.8) {
+        for (let a = lo; a <= hi; a += 0.8 / rad) {
+          const x = Math.round(p.pivot[0] + Math.cos(a) * rad), y = Math.round(p.pivot[1] - Math.sin(a) * rad);
+          if (x < 0 || y < 0 || x >= PW || y >= PH) continue;
+          p.film[y * PW + x] = Math.max(p.film[y * PW + x], 0.6);
+        }
       }
-      this.paneDirty = true;
     }
+    this.filmTime = 1.2;
+    this.paneDirty = true;
+  }
+
+  /** Wipes a hand-sized swipe at the point the ray hits the glass: clears mist and rain. */
+  wipeAt(ray: THREE.Raycaster): boolean {
+    const hit = ray.intersectObjects(this.panes.map((p) => p.mesh), false)[0];
+    if (!hit || !hit.uv) return false;
+    const p = this.panes.find((q) => q.mesh === hit.object)!;
+    const cx = hit.uv.x * PW, cy = (1 - hit.uv.y) * PH;
+    const RX = 26, RY = 15;
+    for (let y = Math.max(0, Math.floor(cy - RY)); y <= Math.min(PH - 1, Math.ceil(cy + RY)); y++) {
+      for (let x = Math.max(0, Math.floor(cx - RX)); x <= Math.min(PW - 1, Math.ceil(cx + RX)); x++) {
+        const e = ((x - cx) / RX) ** 2 + ((y - cy) / RY) ** 2;
+        if (e > 1) continue;
+        const k = y * PW + x;
+        p.fog[k] *= Math.min(1, e * 1.6);
+      }
+    }
+    // a bare hand smears the beads inside it too
+    p.drops = p.drops.filter((d) => ((d.x - cx) / RX) ** 2 + ((d.y - cy) / RY) ** 2 > 0.7);
+    this.paneDirty = true;
+    return true;
+  }
+
+  private spawnDrop(p: Pane, speed: number, rain: number): void {
+    const k = Math.random();
+    // fast driving atomises the rain into a fine spray; a downpour adds big beads
+    const fine = clamp(speed / 22, 0, 0.6);
+    const r = k < 0.62 + fine * 0.3 ? 0.7 + Math.random() * 0.6 : k < 0.94 ? 1.4 + Math.random() * 0.9 : 2.3 + Math.random() * (0.8 + rain * 0.6);
+    p.drops.push({ x: Math.random() * PW, y: Math.random() * PH, r, vx: 0, vy: 0, life: 1 });
   }
 
   private updateRain(dt: number, v: Vehicle, rain: number): void {
     const speed = Math.abs(v.vx);
     for (const p of this.panes) {
-      const spawn = rain * (40 + speed * 3.5) * dt;
+      const spawn = rain * (34 + speed * 2.2) * dt;
       let n = Math.floor(spawn) + (Math.random() < spawn % 1 ? 1 : 0);
-      while (n-- > 0 && p.drops.length < 420) p.drops.push({ x: Math.random() * PW, y: Math.random() * PH, s: Math.random() < 0.25 ? 2 : 1, vy: 0, life: 1 });
+      while (n-- > 0 && p.drops.length < 380) this.spawnDrop(p, speed, rain);
       if (p.drops.length) this.paneDirty = true;
+      const wind = speed > 10 ? (speed - 10) * 2.4 : 0;
       for (const d of p.drops) {
-        // airflow pushes drops up the glass at speed; heavy ones creep down when slow
-        const target = speed > 9 ? -(speed - 9) * 2.8 : d.s > 1 ? 6 : 0.8;
-        d.vy = damp(d.vy, target, 2, dt);
-        d.y += d.vy * dt;
-        // without fresh rain the glass slowly dries
-        if (rain < 0.05) d.life -= dt * (0.08 + Math.random() * 0.12);
+        // a bead holds by surface tension until it is heavy enough, then runs
+        const mass = d.r * d.r;
+        const slide = d.r > 2.1 ? (mass - 4.4) * 3.2 : 0;
+        // airflow shoves beads up and across the glass; the small ones go first
+        const push = wind / (0.6 + mass * 0.5);
+        const target = slide - push;
+        d.vy += (target - d.vy) * Math.min(1, dt * 3);
+        d.vx += ((wind > 0 ? (p.mesh.position.x < 0 ? -1 : 1) * push * 0.35 : 0) + (d.r > 2.1 ? Math.sin(d.y * 0.4 + d.x) * 2 : 0) - d.vx) * Math.min(1, dt * 3);
+        const moving = Math.abs(d.vy) > 1.5;
+        if (moving) {
+          d.x += d.vx * dt; d.y += d.vy * dt;
+          // a running drop gathers whatever it touches and leaves a clear wet track
+          const ix = Math.round(d.x), iy = Math.round(d.y);
+          if (ix >= 0 && ix < PW && iy >= 0 && iy < PH) {
+            const w = Math.max(0, Math.round(d.r * 0.5));
+            for (let xx = ix - w; xx <= ix + w; xx++) {
+              if (xx < 0 || xx >= PW) continue;
+              const k = iy * PW + xx;
+              p.film[k] = Math.max(p.film[k], 0.32);
+              this.filmTime = 1.2;
+              p.fog[k] *= 0.15;
+            }
+          }
+          for (const o of p.drops) {
+            if (o === d || o.life <= 0 || o.r > d.r) continue;
+            const dx = o.x - d.x, dy = o.y - d.y, rr = d.r + o.r * 0.8;
+            if (dx * dx + dy * dy < rr * rr) { d.r = Math.sqrt(d.r * d.r + o.r * o.r); o.life = 0; }
+          }
+        }
+        if (rain < 0.05 && !d.dirty) d.life -= dt * (0.06 + Math.random() * 0.1);
       }
-      p.drops = p.drops.filter((d) => d.y > -1 && d.y < PH + 1 && d.life > 0);
+      p.drops = p.drops.filter((d) => d.y > -4 && d.y < PH + 4 && d.x > -4 && d.x < PW + 4 && d.life > 0);
     }
+    this.updateMist(dt, rain, speed);
     if (!this.paneDirty) return;
     this.paneDirty = false;
-    for (const p of this.panes) {
-      p.ctx.putImageData(p.base, 0, 0);
-      for (const d of p.drops) {
-        // a bead: bright refracted sky above, dark lensed ground below
-        const a = Math.min(1, d.life * 1.5);
-        const x = Math.floor(d.x), y = Math.floor(d.y);
-        p.ctx.fillStyle = `rgba(214,222,228,${0.42 * a})`;
-        p.ctx.fillRect(x, y, d.s, 1);
-        p.ctx.fillStyle = `rgba(36,42,46,${0.38 * a})`;
-        p.ctx.fillRect(x, y + 1, d.s, d.s);
-      }
-      p.tex.needsUpdate = true;
+    for (const p of this.panes) this.paint(p);
+  }
+
+  /** Damp air in the cab: now and then, in rain, the glass fogs from the edges inward. */
+  private updateMist(dt: number, rain: number, speed: number): void {
+    if (this.fogLeft > 0) this.fogLeft -= dt;
+    else if (rain > 0.25) {
+      this.fogTimer -= dt * (speed < 4 ? 1.6 : 1);
+      if (this.fogTimer < 0) { this.fogLeft = 28 + Math.random() * 30; this.fogTimer = 70 + Math.random() * 80; }
     }
+    // breath and wet clothes keep it up while an episode lasts; the blower beats it
+    const want = this.fogLeft > 0 ? 0.55 + 0.45 * Math.min(1, rain + 0.2) : 0;
+    const k = this.ventOn ? 0.5 : this.fogLeft > 0 ? 0.14 : 0.03;
+    this.fogLevel += (want - this.fogLevel) * Math.min(1, dt * k);
+    if (this.ventOn) this.fogLevel = Math.max(0, this.fogLevel - dt * 0.12);
+    this.filmTime = Math.max(0, this.filmTime - dt);
+    if (this.fogLevel < 0.002 && this.mist < 0.002 && this.filmTime <= 0) { this.mist = 0; this.fogHinted = false; return; }
+    if (this.filmTime > 0) this.paneDirty = true;
+    let total = 0, count = 0;
+    const grow = dt * 0.4, fade = dt * (this.ventOn ? 0.16 : 0.01);
+    const lvl = this.fogLevel;
+    for (const p of this.panes) {
+      const f = p.fog, bias = p.bias, film = p.film;
+      for (let i = 0; i < f.length; i++) {
+        const t = lvl * bias[i] > 1 ? 1 : lvl * bias[i];
+        const cur = f[i];
+        if (cur < t) f[i] = cur + Math.min(t - cur, grow);
+        else if (cur > t) f[i] = cur - Math.min(cur - t, fade * (0.6 + p.grain[i] * 0.8));
+        if (film[i] > 0) film[i] = Math.max(0, film[i] - dt * 0.9);
+        total += f[i]; count++;
+      }
+      if (lvl > 0.01 || this.ventOn) this.paneDirty = true;
+    }
+    this.mist = total / count;
+    if (this.mist > 0.04) this.paneDirty = true;
+    // sheen needs repainting while it fades
+    if (this.wiperA > 0 || this.wipersOn) this.paneDirty = true;
+    if (this.mist > 0.18 && !this.fogHinted) { this.fogHinted = true; this.onMist?.(); }
+    if (this.mist < 0.02) this.fogHinted = false;
+  }
+
+  /** Base grime, then condensation and sheen, then the beads themselves. */
+  private paint(p: Pane): void {
+    const src = p.base.data, dst = p.out.data, f = p.fog, w = p.film, gr = p.grain;
+    for (let i = 0, n = f.length; i < n; i++) {
+      const o = i * 4;
+      const fa = f[i] > 0.004 ? Math.min(1, f[i] * 0.74 * (0.86 + gr[i] * 0.28)) : 0;
+      const wa = w[i] > 0.004 ? w[i] * 0.18 : 0;
+      const a0 = src[o + 3] / 255;
+      if (fa === 0 && wa === 0) { dst[o] = src[o]; dst[o + 1] = src[o + 1]; dst[o + 2] = src[o + 2]; dst[o + 3] = src[o + 3]; continue; }
+      // fog (cold grey-white) over the grime, sheen on top of both
+      let al = 1 - (1 - a0) * (1 - fa);
+      let r = (src[o] * a0 * (1 - fa) + 206 * fa) / al, g = (src[o + 1] * a0 * (1 - fa) + 214 * fa) / al, b = (src[o + 2] * a0 * (1 - fa) + 218 * fa) / al;
+      const al2 = 1 - (1 - al) * (1 - wa);
+      r = (r * al * (1 - wa) + 236 * wa) / al2; g = (g * al * (1 - wa) + 242 * wa) / al2; b = (b * al * (1 - wa) + 246 * wa) / al2;
+      al = al2;
+      dst[o] = r; dst[o + 1] = g; dst[o + 2] = b; dst[o + 3] = al * 255;
+    }
+    p.ctx.putImageData(p.out, 0, 0);
+    const c = p.ctx;
+    for (const d of p.drops) {
+      const a = Math.min(1, d.life * 1.5);
+      const x = Math.round(d.x), y = Math.round(d.y);
+      const rx = Math.max(0.6, d.r), ry = d.r * (d.r > 2.1 ? 1.25 : 1.05);
+      const hy = Math.ceil(ry);
+      // body: slightly darkened lens, so the drop reads against bright sky and dark road alike
+      c.fillStyle = d.dirty ? `rgba(66,50,34,${0.78 * a})` : `rgba(52,62,68,${0.34 * a})`;
+      for (let dy = -hy; dy <= hy; dy++) {
+        const half = Math.floor(rx * Math.sqrt(Math.max(0, 1 - (dy / (ry + 0.4)) ** 2)) + 0.5);
+        c.fillRect(x - half, y + dy, half * 2 + 1, 1);
+      }
+      // refracted sky: bright crescent on the upper-left, and a bright lower rim
+      c.fillStyle = d.dirty ? `rgba(120,98,70,${0.5 * a})` : `rgba(232,238,242,${0.62 * a})`;
+      c.fillRect(x - Math.floor(rx * 0.45), y - Math.floor(ry * 0.55), Math.max(1, Math.round(rx * 0.7)), Math.max(1, Math.round(ry * 0.45)));
+      if (d.r > 1.3) {
+        c.fillStyle = `rgba(210,218,224,${0.36 * a})`;
+        c.fillRect(x - Math.floor(rx * 0.5), y + hy - 1, Math.max(1, Math.round(rx)), 1);
+      }
+    }
+    if (p.cracks.length) {
+      c.lineWidth = 1;
+      // [x0, y0, x1, y1, strength]: strength fades the thin ends of a crack, 1 is the crushed white at the impact
+      for (const [x0, y0, x1, y1, w = 1] of p.cracks) {
+        c.strokeStyle = `rgba(24,28,32,${0.32 * w})`;
+        c.beginPath(); c.moveTo(x0 + 1, y0 + 1); c.lineTo(x1 + 1, y1 + 1); c.stroke();
+        c.strokeStyle = `rgba(226,234,238,${0.16 + 0.62 * w})`;
+        c.beginPath(); c.moveTo(x0, y0); c.lineTo(x1, y1); c.stroke();
+      }
+    }
+    p.tex.needsUpdate = true;
+  }
+
+  /**
+   * A stone strike on laminated glass: a pit of crushed white at the impact, thin jagged radial cracks
+   * that taper and fork, and chords joining neighbouring rays in rings (a spider web). `sev` 0…1 sets
+   * how far it spreads; a hard crash adds a long split running out toward the edge.
+   */
+  crack(sev: number): void {
+    const p = this.panes[Math.random() < 0.6 ? 0 : 1];
+    const cx = PW * (0.2 + Math.random() * 0.6), cy = PH * (0.2 + Math.random() * 0.5);
+    const out = p.cracks;
+    const reach = 9 + sev * 46;
+    // crushed glass at the impact
+    const pit = 1.5 + sev * 3.5;
+    for (let i = 0; i < 12 + sev * 22; i++) {
+      const a = Math.random() * Math.PI * 2, r = Math.random() * Math.random() * pit;
+      const x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r;
+      out.push([x, y, x + 1, y, 1], [x, y, x, y + (Math.random() < 0.5 ? 1 : 0), 0.8]);
+    }
+    // radial cracks: each walks outward in short wobbly steps, thinning as it goes
+    const rays = 5 + Math.floor(sev * 5) + Math.floor(Math.random() * 3);
+    const spokes: { a: number; pts: [number, number][] }[] = [];
+    const walk = (x: number, y: number, a: number, len: number, w0: number, forks: number): [number, number][] => {
+      const pts: [number, number][] = [[x, y]];
+      let d = 0;
+      while (d < len) {
+        const step = 2 + Math.random() * 3.5;
+        a += (Math.random() - 0.5) * 0.5;
+        const nx = x + Math.cos(a) * step, ny = y + Math.sin(a) * step;
+        d += step;
+        out.push([x, y, nx, ny, w0 * (1 - 0.8 * (d / len))]);
+        x = nx; y = ny; pts.push([x, y]);
+        if (forks > 0 && d > len * 0.3 && d < len * 0.8 && Math.random() < 0.16) {
+          walk(x, y, a + (Math.random() < 0.5 ? -1 : 1) * (0.45 + Math.random() * 0.4), len * (0.2 + Math.random() * 0.3), w0 * 0.6, forks - 1);
+          forks--;
+        }
+      }
+      return pts;
+    };
+    for (let i = 0; i < rays; i++) {
+      const a = ((i + (Math.random() - 0.5) * 0.7) / rays) * Math.PI * 2;
+      const len = reach * (0.35 + Math.random() * 0.75) * (Math.random() < 0.2 ? 1.5 : 1);
+      spokes.push({ a, pts: walk(cx + Math.cos(a) * pit * 0.6, cy + Math.sin(a) * pit * 0.6, a, len, 1, 2) });
+    }
+    // rings: join the points of neighbouring rays at about the same distance from the impact
+    spokes.sort((m, n) => m.a - n.a);
+    const at = (pts: [number, number][], r: number): [number, number] | null => {
+      for (const q of pts) if (Math.hypot(q[0] - cx, q[1] - cy) >= r) return q;
+      return null;
+    };
+    const rings = sev < 0.25 ? 1 : sev < 0.6 ? 2 : 3;
+    for (let k = 0; k < rings; k++) {
+      const r = reach * (0.16 + k * 0.2) * (0.9 + Math.random() * 0.2);
+      for (let i = 0; i < spokes.length; i++) {
+        if (Math.random() < 0.22) continue;
+        const A = at(spokes[i].pts, r), B = at(spokes[(i + 1) % spokes.length].pts, r * (0.92 + Math.random() * 0.16));
+        if (!A || !B) continue;
+        const mx = (A[0] + B[0]) / 2 + (Math.random() - 0.5) * 3, my = (A[1] + B[1]) / 2 + (Math.random() - 0.5) * 3;
+        const w = 0.5 - k * 0.1;
+        out.push([A[0], A[1], mx, my, w], [mx, my, B[0], B[1], w]);
+      }
+    }
+    // a bad crash: one long split from the impact toward the nearest edge
+    if (sev > 0.55) {
+      const a = Math.random() * Math.PI * 2;
+      walk(cx, cy, a, reach * (1.6 + Math.random()), 0.7, 1);
+    }
+    if (out.length > 900) out.splice(0, out.length - 900);
+    this.paneDirty = true;
+  }
+
+  /** Fresh glass: crashes mended at a restart. */
+  repair(): void {
+    for (const p of this.panes) { p.cracks.length = 0; p.drops.length = 0; }
+    this.paneDirty = true;
+  }
+
+  /** Mud or water thrown up onto the windscreen; `dirty` for mud, which is brown and wipes into smears. */
+  splatter(amount: number, dirty: boolean): void {
+    for (const p of this.panes) {
+      const n = Math.floor(amount * (3 + Math.random() * 4));
+      for (let i = 0; i < n && p.drops.length < 380; i++) {
+        p.drops.push({ x: Math.random() * PW, y: PH * (0.45 + Math.random() * 0.55), r: 1.2 + Math.random() * (dirty ? 3 : 1.6), vx: 0, vy: 0, life: 1, dirty });
+      }
+    }
+    this.paneDirty = true;
   }
 
   private readonly _e = new THREE.Vector3();

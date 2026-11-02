@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { drawPlate, plateFor } from './Plates';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { makeCanvas, toTex } from '../core/textures';
 import type { VehicleModel } from './Vehicles';
@@ -7,24 +8,24 @@ import sedanUrl from '../assets/cars/sedan.glb?url';
 import compactUrl from '../assets/cars/compact.glb?url';
 import suvUrl from '../assets/cars/suv.glb?url';
 import taxiUrl from '../assets/cars/taxi.glb?url';
-import policeUrl from '../assets/cars/police.glb?url';
+import { buildPatrol, loadPatrol } from './Patrol';
 
 /**
  * Passenger traffic built on Quaternius' CC0 car pack (src/assets/cars/CREDITS.md):
  * the bodies are foreign-looking, so they carry their 90s identity in paint and
  * decals instead — recoloured per car, Russian 1993-pattern plates, the taxi's
- * chequers and roof sign, the militia's blue stripe and blue plates. Decals are
+ * chequers and roof sign, the militia's blue stripe and blue plates (Plates.ts). Decals are
  * flat quads fitted to the body by raycasting, so any model can wear any
  * livery. Local forward is +Z, wheels on y = 0, metres.
  */
 export type CarKind = 'sedan' | 'compact' | 'suv' | 'taxi' | 'militia' | 'militiaSuv';
 const KINDS: CarKind[] = ['sedan', 'compact', 'suv', 'taxi', 'militia', 'militiaSuv'];
 export const isCarKind = (k: string): k is CarKind => (KINDS as string[]).includes(k);
-/** Police cars: the patrol saloon (asphalt only) and the patrol 4×4, which also takes dirt roads. */
+/** Police cars: the patrol VAZ-2106 (asphalt only) and the patrol Niva, which also takes dirt roads. */
 export type PoliceKind = 'militia' | 'militiaSuv';
 export const isPolice = (k: string): k is PoliceKind => k === 'militia' || k === 'militiaSuv';
 
-const FILES: Record<CarKind, string> = { sedan: sedanUrl, compact: compactUrl, suv: suvUrl, taxi: taxiUrl, militia: policeUrl, militiaSuv: suvUrl };
+const FILES: Record<CarKind, string> = { sedan: sedanUrl, compact: compactUrl, suv: suvUrl, taxi: taxiUrl, militia: '', militiaSuv: '' };
 /** Model materials that take the car's paint. */
 const PAINT: Record<CarKind, string[]> = { sedan: ['Blue'], compact: ['LightBlue'], suv: ['White'], taxi: ['Yellow'], militia: ['White', 'Black'], militiaSuv: ['White'] };
 
@@ -36,10 +37,11 @@ export function loadCars(): Promise<void> {
   return (loading ??= (async () => {
     const loader = new GLTFLoader();
     const byFile = new Map<string, Promise<THREE.Object3D>>();
-    await Promise.all(KINDS.map(async (k) => {
+    // the patrol cars, a VAZ-2106 and a Niva, come prepared on their own (Patrol.ts)
+    await Promise.all([loadPatrol(), ...KINDS.filter((k) => !isPolice(k)).map(async (k) => {
       if (!byFile.has(FILES[k])) byFile.set(FILES[k], loader.loadAsync(FILES[k]).then((g) => g.scene));
       templates[k] = await byFile.get(FILES[k])!;
-    }));
+    })]);
   })());
 }
 
@@ -65,30 +67,10 @@ export const tex = (w: number, h: number, draw: (g: CanvasRenderingContext2D) =>
 
 // ---------------- liveries ----------------
 
-const LETTERS = 'АВЕКМНОРСТУХ';
-const REGIONS = ['62', '62', '62', '50', '77', '71', '48'];
-
-/** A 1993-pattern plate: white with black "А 123 ВС" and the region; militia plates are blue. */
+/** A Bashkir plate of 1997 (see Plates.ts): the new 1993 kind, blue for the militia. */
 function plateTex(seed: number, militia: boolean): THREE.Texture {
-  let s = seed * 9301 + 49297;
-  const rnd = () => ((s = (s * 9301 + 49297) % 233280) / 233280);
-  const L = () => LETTERS[Math.floor(rnd() * LETTERS.length)];
-  const num = String(Math.floor(rnd() * 999) + 1).padStart(3, '0');
-  const region = REGIONS[Math.floor(rnd() * REGIONS.length)];
-  return tex(128, 28, (g) => {
-    g.fillStyle = militia ? '#1d3f8a' : '#f2f0e8'; g.fillRect(0, 0, 128, 28);
-    g.strokeStyle = militia ? '#e8e8e8' : '#1a1a1a'; g.lineWidth = 2; g.strokeRect(1, 1, 126, 26);
-    g.fillStyle = militia ? '#ffffff' : '#141414';
-    g.textBaseline = 'middle'; g.textAlign = 'center';
-    g.font = font(22);
-    // squeeze the number into its field, left of the region box
-    const text = militia ? `${String(Math.floor(rnd() * 9000) + 1000)}` : `${L()} ${num} ${L()}${L()}`;
-    const k = Math.min(1, 88 / g.measureText(text).width);
-    g.save(); g.translate(50, 15); g.scale(k, 1); g.fillText(text, 0, 0); g.restore();
-    g.fillRect(98, 3, 1.5, 22);
-    g.font = font(14); g.fillText(region, 113, 11);
-    g.font = font(7); g.fillText('RUS', 113, 22);
-  });
+  const p = plateFor(seed, militia ? 'militia' : 'new');
+  return tex(128, 28, (g) => drawPlate(g, p, 128, 28));
 }
 
 let checkerTex: THREE.Texture | null = null;
@@ -178,9 +160,10 @@ const crewSpec = (scale: number, x: number, y: number, z: number, door: number):
   driver: { seat: new THREE.Vector3(x, y, z), door: new THREE.Vector3(door, 0, -0.1) },
   partner: { seat: new THREE.Vector3(-x, y, z), door: new THREE.Vector3(-door, 0, -0.1) },
 });
+// front seats of a VAZ-2106 and a Niva: hips about 0.5 m and 0.7 m above the ground
 const CREWS: Record<PoliceKind, CrewSpec> = {
-  militia: crewSpec(0.78, 0.34, -0.15, -0.3, 1.2),
-  militiaSuv: crewSpec(0.82, 0.4, 0.08, -0.3, 1.38),
+  militia: crewSpec(0.9, 0.36, 0.08, -0.05, 1.15),
+  militiaSuv: crewSpec(0.9, 0.38, 0.28, -0.1, 1.2),
 };
 export const crewFor = (k: PoliceKind): CrewSpec => CREWS[k];
 
@@ -221,7 +204,7 @@ function cabin(group: THREE.Group, kind: PoliceKind): void {
 }
 
 /** Roof bar of the 90s: a blue and a red lamp either side of a ГАИ box, hiding the model's own lamps. */
-function lightBar(group: THREE.Group, roof: number, z: number): THREE.MeshLambertMaterial[] {
+export function lightBar(group: THREE.Group, roof: number, z: number): THREE.MeshLambertMaterial[] {
   const base = new THREE.Mesh(new THREE.BoxGeometry(1.02, 0.13, 0.34), lam('#c4c8cc'));
   base.position.set(0, roof + 0.045, z);
   group.add(base);
@@ -245,6 +228,7 @@ function lightBar(group: THREE.Group, roof: number, z: number): THREE.MeshLamber
 // ---------------- build ----------------
 
 export function buildCar(kind: CarKind, color: string, seed = 0, opts: { label?: string } = {}): VehicleModel {
+  if (isPolice(kind)) return buildPatrol(kind);
   const tpl = templates[kind];
   if (!tpl) throw new Error('loadCars() must finish before building cars');
   const root = tpl.clone(true);

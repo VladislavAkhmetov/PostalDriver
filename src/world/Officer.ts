@@ -48,7 +48,8 @@ export class Officer {
   };
 
   constructor(withBaton = true) {
-    const h = this.h = new Human('man', {
+    // the modelled officer (cap, moustache, belt and holster in the mesh and its texture)
+    const h = this.h = new Human('gai', {
       colors: { Shirt: UNIFORM, Pants: TROUSER, Socks: BOOT, Hair: '#3a3028', Skin: SKIN },
       // the base figure wears shorts: trousers down to the shoes, then black shoes
       // white gloves are painted on the hands themselves
@@ -63,111 +64,115 @@ export class Officer {
       gold: lam('#c8a040'), brow: lam('#3a3028'), tie: lam('#c8ccd2'), leather: lam('#5a3a2a'),
     };
 
-    // peaked cap: red band round the whole skull at the forehead (hair included,
-    // so nothing pokes through), grey crown raised at the front, red piping,
-    // black visor hinged at the band, chin strap and cockade
-    const hb = h.bindAt('Head').y;
-    const { top } = headOf(h);
-    const brow = hb + (top - hb) * 0.5;
-    const skull = h.extent(['Head'], brow, top + 0.01);
-    const capZ = (skull.max.z + skull.min.z) / 2;
-    const rx = Math.max(-skull.min.x, skull.max.x) * 1.05 + 0.01, rz = ((skull.max.z - skull.min.z) / 2) * 1.05 + 0.01;
-    const bandH = 0.04, bandTop = brow + bandH;
-    h.attach('Head', mesh(new THREE.CylinderGeometry(1, 1, bandH, 20).scale(rx, 1, rz), M.red, 0, brow + bandH / 2, capZ));
-    // the wide, fairly flat crown of the 90s, its front lifted
-    const crownH = top + 0.018 - bandTop;
-    const crown = new THREE.Group();
-    crown.position.set(0, bandTop - 0.012 + crownH / 2, capZ + 0.008);
-    crown.rotation.x = -0.14;
-    crown.add(mesh(new THREE.CylinderGeometry(1.36, 0.97, crownH, 20).scale(rx, 1, rz), M.uni));
-    crown.add(mesh(new THREE.CylinderGeometry(1.37, 1.37, 0.008, 20).scale(rx, 1, rz), M.red, 0, crownH / 2 - 0.002, 0));
-    // cockade on the front of the crown, just above the band
-    const ck = 0.97 + 0.39 * (0.026 / crownH);
-    crown.add(mesh(new THREE.SphereGeometry(0.016, 8, 5).scale(0.85, 1.15, 0.35), M.gold, 0, -crownH / 2 + 0.026, rz * ck + 0.003));
-    crown.add(mesh(new THREE.SphereGeometry(0.0075, 6, 4).scale(1, 1, 0.4), M.red, 0, -crownH / 2 + 0.026, rz * ck + 0.008));
-    h.attach('Head', crown);
-    // chin strap across the front of the band, with its two side buttons
-    h.attach('Head', mesh(new THREE.CylinderGeometry(1.012, 1.012, 0.009, 16, 1, true, -Math.PI * 0.42, Math.PI * 0.84).scale(rx, 1, rz), M.black, 0, brow + 0.012, capZ));
-    for (const s of [-1, 1]) h.attach('Head', mesh(new THREE.SphereGeometry(0.007, 5, 4), M.gold, s * rx * 0.97 * Math.sin(Math.PI * 0.42), brow + 0.012, capZ + rz * Math.cos(Math.PI * 0.42)));
-    // visor: hinged at the lower edge of the band, angled down over the eyes
-    const visor = new THREE.Group();
-    // pivoted on the band's centre line, so its ends stay inside the band at the temples
-    visor.position.set(0, brow + 0.022, capZ);
-    visor.rotation.x = 0.22;
-    visor.add(mesh(new THREE.CylinderGeometry(1, 1, 0.012, 18, 1, false, -Math.PI / 2, Math.PI).scale(rx * 0.99, 1, rz + 0.052), M.black));
-    h.attach('Head', visor);
-    // a moustache, of course: two drooping halves just above the mouth
-    const headY = h.bindAt('Head').y;
-    const mY = headY + 0.033;
-    const mZ = h.extent(['Head'], mY - 0.012, mY + 0.012, -0.03, 0.03).max.z;
-    if (Number.isFinite(mZ)) {
-      for (const s of [-1, 1]) {
-        const half = mesh(new THREE.BoxGeometry(0.044, 0.011, 0.012), M.brow, s * 0.021, mY - 0.004, mZ - 0.004);
-        half.rotation.z = s * -0.38;
-        half.rotation.y = s * 0.35;
-        h.attach('Head', half);
+    // the old low-poly figure was dressed here piece by piece; the modelled one is already dressed
+    if (h.body !== 'gai') {
+      // peaked cap: red band round the whole skull at the forehead (hair included,
+      // so nothing pokes through), grey crown raised at the front, red piping,
+      // black visor hinged at the band, chin strap and cockade
+      const hb = h.bindAt('Head').y;
+      const { top } = headOf(h);
+      const brow = hb + (top - hb) * 0.5;
+      const skull = h.extent(['Head'], brow, top + 0.01);
+      const capZ = (skull.max.z + skull.min.z) / 2;
+      const rx = Math.max(-skull.min.x, skull.max.x) * 1.05 + 0.01, rz = ((skull.max.z - skull.min.z) / 2) * 1.05 + 0.01;
+      const bandH = 0.04, bandTop = brow + bandH;
+      h.attach('Head', mesh(new THREE.CylinderGeometry(1, 1, bandH, 20).scale(rx, 1, rz), M.red, 0, brow + bandH / 2, capZ));
+      // the wide, fairly flat crown of the 90s, its front lifted
+      const crownH = top + 0.018 - bandTop;
+      const crown = new THREE.Group();
+      crown.position.set(0, bandTop - 0.012 + crownH / 2, capZ + 0.008);
+      crown.rotation.x = -0.14;
+      crown.add(mesh(new THREE.CylinderGeometry(1.36, 0.97, crownH, 20).scale(rx, 1, rz), M.uni));
+      crown.add(mesh(new THREE.CylinderGeometry(1.37, 1.37, 0.008, 20).scale(rx, 1, rz), M.red, 0, crownH / 2 - 0.002, 0));
+      // cockade on the front of the crown, just above the band
+      const ck = 0.97 + 0.39 * (0.026 / crownH);
+      crown.add(mesh(new THREE.SphereGeometry(0.016, 8, 5).scale(0.85, 1.15, 0.35), M.gold, 0, -crownH / 2 + 0.026, rz * ck + 0.003));
+      crown.add(mesh(new THREE.SphereGeometry(0.0075, 6, 4).scale(1, 1, 0.4), M.red, 0, -crownH / 2 + 0.026, rz * ck + 0.008));
+      h.attach('Head', crown);
+      // chin strap across the front of the band, with its two side buttons
+      h.attach('Head', mesh(new THREE.CylinderGeometry(1.012, 1.012, 0.009, 16, 1, true, -Math.PI * 0.42, Math.PI * 0.84).scale(rx, 1, rz), M.black, 0, brow + 0.012, capZ));
+      for (const s of [-1, 1]) h.attach('Head', mesh(new THREE.SphereGeometry(0.007, 5, 4), M.gold, s * rx * 0.97 * Math.sin(Math.PI * 0.42), brow + 0.012, capZ + rz * Math.cos(Math.PI * 0.42)));
+      // visor: hinged at the lower edge of the band, angled down over the eyes
+      const visor = new THREE.Group();
+      // pivoted on the band's centre line, so its ends stay inside the band at the temples
+      visor.position.set(0, brow + 0.022, capZ);
+      visor.rotation.x = 0.22;
+      visor.add(mesh(new THREE.CylinderGeometry(1, 1, 0.012, 18, 1, false, -Math.PI / 2, Math.PI).scale(rx * 0.99, 1, rz + 0.052), M.black));
+      h.attach('Head', visor);
+      // a moustache, of course: two drooping halves just above the mouth
+      const headY = h.bindAt('Head').y;
+      const mY = headY + 0.033;
+      const mZ = h.extent(['Head'], mY - 0.012, mY + 0.012, -0.03, 0.03).max.z;
+      if (Number.isFinite(mZ)) {
+        for (const s of [-1, 1]) {
+          const half = mesh(new THREE.BoxGeometry(0.044, 0.011, 0.012), M.brow, s * 0.021, mY - 0.004, mZ - 0.004);
+          half.rotation.z = s * -0.38;
+          half.rotation.y = s * 0.35;
+          h.attach('Head', half);
+        }
       }
-    }
 
-    // white belt with brass buckle, holster on the right hip, map case on the left
-    const hipY = h.bindAt('Hips').y, torsoY = h.bindAt('Torso').y;
-    const beltY = hipY + (torsoY - hipY) * 0.55;
-    const waist = h.extent([], beltY - 0.025, beltY + 0.025, -0.3, 0.3);
-    const ax = (waist.max.x - waist.min.x) / 2 + 0.012, az = (waist.max.z - waist.min.z) / 2 + 0.012, cz = (waist.max.z + waist.min.z) / 2;
-    h.attach('Hips', mesh(new THREE.CylinderGeometry(1, 1, 0.05, 16).scale(ax, 1, az), M.white, 0, beltY, cz));
-    h.attach('Hips', mesh(new THREE.BoxGeometry(0.06, 0.045, 0.012), M.gold, 0, beltY, cz + az + 0.004));
-    h.attach('Hips', mesh(new THREE.BoxGeometry(0.05, 0.13, 0.07), M.white, -(ax + 0.02), beltY - 0.06, cz + 0.02));
-    h.attach('Hips', mesh(new THREE.BoxGeometry(0.045, 0.2, 0.17), M.leather, ax + 0.025, beltY - 0.11, cz - 0.01));
+      // white belt with brass buckle, holster on the right hip, map case on the left
+      const hipY = h.bindAt('Hips').y, torsoY = h.bindAt('Torso').y;
+      const beltY = hipY + (torsoY - hipY) * 0.55;
+      const waist = h.extent([], beltY - 0.025, beltY + 0.025, -0.3, 0.3);
+      const ax = (waist.max.x - waist.min.x) / 2 + 0.012, az = (waist.max.z - waist.min.z) / 2 + 0.012, cz = (waist.max.z + waist.min.z) / 2;
+      h.attach('Hips', mesh(new THREE.CylinderGeometry(1, 1, 0.05, 16).scale(ax, 1, az), M.white, 0, beltY, cz));
+      h.attach('Hips', mesh(new THREE.BoxGeometry(0.06, 0.045, 0.012), M.gold, 0, beltY, cz + az + 0.004));
+      h.attach('Hips', mesh(new THREE.BoxGeometry(0.05, 0.13, 0.07), M.white, -(ax + 0.02), beltY - 0.06, cz + 0.02));
+      h.attach('Hips', mesh(new THREE.BoxGeometry(0.045, 0.2, 0.17), M.leather, ax + 0.025, beltY - 0.11, cz - 0.01));
 
-    // cross-strap over the right shoulder to the left hip, front and back,
-    // in two runs each so it lies on the chest and the shoulder blades
-    const shR = h.bindAt('UpperArmR');
-    const shX = shR.x * 0.6;
-    // torso and shoulder only: the jaw is at the same height and x
-    const TRUNK = ['Torso', 'Abdomen', 'ShoulderR', 'ShoulderL', 'UpperArmR', 'UpperArmL'];
-    const shTop = h.extent(TRUNK, shR.y - 0.1, shR.y + 0.2, shX - 0.02, shX + 0.02).max.y;
-    const surf = (x: number, y: number, back: boolean) => {
-      // the widest of three probes across the strap, so its edges don't sink in
-      const zs = [-0.02, 0, 0.02].map((dx) => h.probe(x + dx, y, back)).filter(Number.isFinite);
-      const z = zs.length ? (back ? Math.min(...zs) : Math.max(...zs)) : back ? -0.12 : 0.12;
-      return z + (back ? -0.008 : 0.008);
-    };
-    const strip = (p: THREE.Vector3, q: THREE.Vector3, bone: string) => {
-      const o = mesh(new THREE.BoxGeometry(0.044, p.distanceTo(q) + 0.012, 0.008), M.white);
-      o.position.lerpVectors(p, q, 0.5);
-      o.quaternion.setFromUnitVectors(_v.set(0, 1, 0), _w.subVectors(q, p).normalize());
-      h.attach(bone, o);
-    };
-    for (const back of [false, true]) {
-      const at = (t: number) => {
-        const p = new THREE.Vector3(ax * 0.75 + (shX - ax * 0.75) * t, beltY + 0.03 + (shTop - beltY - 0.03) * t, 0);
-        p.z = surf(p.x, p.y, back);
-        return p;
+      // cross-strap over the right shoulder to the left hip, front and back,
+      // in two runs each so it lies on the chest and the shoulder blades
+      const shR = h.bindAt('UpperArmR');
+      const shX = shR.x * 0.6;
+      // torso and shoulder only: the jaw is at the same height and x
+      const TRUNK = ['Torso', 'Abdomen', 'ShoulderR', 'ShoulderL', 'UpperArmR', 'UpperArmL'];
+      const shTop = h.extent(TRUNK, shR.y - 0.1, shR.y + 0.2, shX - 0.02, shX + 0.02).max.y;
+      const surf = (x: number, y: number, back: boolean) => {
+        // the widest of three probes across the strap, so its edges don't sink in
+        const zs = [-0.02, 0, 0.02].map((dx) => h.probe(x + dx, y, back)).filter(Number.isFinite);
+        const z = zs.length ? (back ? Math.min(...zs) : Math.max(...zs)) : back ? -0.12 : 0.12;
+        return z + (back ? -0.008 : 0.008);
       };
-      const pts = [at(0), at(0.45), at(0.8), at(0.93)];
-      // over the top of the shoulder, where the front and back runs meet
-      const top = new THREE.Vector3(shX, shTop + 0.006, (surf(shX, shTop - 0.03, false) + surf(shX, shTop - 0.03, true)) / 2);
-      pts.push(top);
-      for (let i = 0; i + 1 < pts.length; i++) strip(pts[i], pts[i + 1], i === 0 ? 'Abdomen' : 'Torso');
+      const strip = (p: THREE.Vector3, q: THREE.Vector3, bone: string) => {
+        const o = mesh(new THREE.BoxGeometry(0.044, p.distanceTo(q) + 0.012, 0.008), M.white);
+        o.position.lerpVectors(p, q, 0.5);
+        o.quaternion.setFromUnitVectors(_v.set(0, 1, 0), _w.subVectors(q, p).normalize());
+        h.attach(bone, o);
+      };
+      for (const back of [false, true]) {
+        const at = (t: number) => {
+          const p = new THREE.Vector3(ax * 0.75 + (shX - ax * 0.75) * t, beltY + 0.03 + (shTop - beltY - 0.03) * t, 0);
+          p.z = surf(p.x, p.y, back);
+          return p;
+        };
+        const pts = [at(0), at(0.45), at(0.8), at(0.93)];
+        // over the top of the shoulder, where the front and back runs meet
+        const top = new THREE.Vector3(shX, shTop + 0.006, (surf(shX, shTop - 0.03, false) + surf(shX, shTop - 0.03, true)) / 2);
+        pts.push(top);
+        for (let i = 0; i + 1 < pts.length; i++) strip(pts[i], pts[i + 1], i === 0 ? 'Abdomen' : 'Torso');
+      }
+      // shoulder boards with red piping
+      for (const side of ['R', 'L'] as const) {
+        const sh = h.bindAt(`UpperArm${side}`), sx = sh.x * 0.7;
+        const y = h.extent(TRUNK, sh.y - 0.1, sh.y + 0.2, sx - 0.015, sx + 0.015).max.y;
+        h.attach(`Shoulder${side}`, mesh(new THREE.BoxGeometry(0.065, 0.012, 0.14), M.uniD, sx, y + 0.004, sh.z - 0.01));
+        h.attach(`Shoulder${side}`, mesh(new THREE.BoxGeometry(0.068, 0.006, 0.143), M.red, sx, y - 0.002, sh.z - 0.01));
+      }
+      // tie and brass buttons down the front
+      const neckY = h.bindAt('Neck').y;
+      for (let i = 0; i < 4; i++) {
+        const y = neckY - 0.1 - i * 0.11;
+        const z = frontOf(h, y - 0.06, y + 0.06);
+        if (!Number.isFinite(z) || z < 0.03) continue;
+        if (i === 0) h.attach('Torso', mesh(new THREE.BoxGeometry(0.034, 0.14, 0.01), M.uniD, 0, y + 0.02, z + 0.004));
+        else h.attach(y > beltY + 0.15 ? 'Torso' : 'Abdomen', mesh(new THREE.SphereGeometry(0.011, 5, 4), M.gold, 0.012, y, z + 0.004));
+      }
+      const ty = neckY - 0.04, tz = frontOf(h, ty - 0.04, ty + 0.04, false, 0.05);
+      if (Number.isFinite(tz)) h.attach('Torso', mesh(new THREE.BoxGeometry(0.05, 0.07, 0.008), M.tie, 0, ty, tz + 0.003));
+
     }
-    // shoulder boards with red piping
-    for (const side of ['R', 'L'] as const) {
-      const sh = h.bindAt(`UpperArm${side}`), sx = sh.x * 0.7;
-      const y = h.extent(TRUNK, sh.y - 0.1, sh.y + 0.2, sx - 0.015, sx + 0.015).max.y;
-      h.attach(`Shoulder${side}`, mesh(new THREE.BoxGeometry(0.065, 0.012, 0.14), M.uniD, sx, y + 0.004, sh.z - 0.01));
-      h.attach(`Shoulder${side}`, mesh(new THREE.BoxGeometry(0.068, 0.006, 0.143), M.red, sx, y - 0.002, sh.z - 0.01));
-    }
-    // tie and brass buttons down the front
-    const neckY = h.bindAt('Neck').y;
-    for (let i = 0; i < 4; i++) {
-      const y = neckY - 0.1 - i * 0.11;
-      const z = frontOf(h, y - 0.06, y + 0.06);
-      if (!Number.isFinite(z) || z < 0.03) continue;
-      if (i === 0) h.attach('Torso', mesh(new THREE.BoxGeometry(0.034, 0.14, 0.01), M.uniD, 0, y + 0.02, z + 0.004));
-      else h.attach(y > beltY + 0.15 ? 'Torso' : 'Abdomen', mesh(new THREE.SphereGeometry(0.011, 5, 4), M.gold, 0.012, y, z + 0.004));
-    }
-    const ty = neckY - 0.04, tz = frontOf(h, ty - 0.04, ty + 0.04, false, 0.05);
-    if (Number.isFinite(tz)) h.attach('Torso', mesh(new THREE.BoxGeometry(0.05, 0.07, 0.008), M.tie, 0, ty, tz + 0.003));
 
     // white gauntlet cuffs over the forearms (the gloves are painted on)
     const along = (geo: THREE.BufferGeometry, from: THREE.Vector3, to: THREE.Vector3, t: number, m: THREE.Material) => {
@@ -179,7 +184,7 @@ export class Officer {
     const ends: Record<string, { palm: THREE.Vector3; dir: THREE.Vector3 }> = {};
     for (const side of ['R', 'L'] as const) {
       const lo = h.bindAt(`LowerArm${side}`), palm = h.bindAt(`Palm${side}`);
-      h.attach(`LowerArm${side}`, along(new THREE.CylinderGeometry(0.05, 0.043, 0.09, 8), lo, palm, 0.85, M.white));
+      if (h.body !== 'gai') h.attach(`LowerArm${side}`, along(new THREE.CylinderGeometry(0.05, 0.043, 0.09, 8), lo, palm, 0.85, M.white));
       ends[side] = { palm, dir: new THREE.Vector3().subVectors(palm, lo).normalize() };
     }
 
