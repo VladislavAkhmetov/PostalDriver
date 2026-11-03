@@ -12,10 +12,11 @@
 import { createRequire } from 'node:module';
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
 const ts = require('typescript');
-const ROOT = new URL('..', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('..', import.meta.url));
 
 // ---- the same normalisation and id as src/audio/Voice.ts
 const voiceText = (t) => t.replace(/<br\s*\/?>/gi, ' ').replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/[\u00a0\u2009\u202f]/g, ' ').replace(/\s+/g, ' ').trim().replace(/^«(.*)»$/, '$1').trim();

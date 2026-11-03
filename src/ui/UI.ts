@@ -1022,7 +1022,7 @@ export class UI {
         <div class="st-text"><span class="st-chapter">${eyebrow}</span>${opts.title ? `<span class="st-title">${opts.title}</span>` : ''}<span class="st-rule"></span>
           ${opts.speaker ? `<span class="st-who">${opts.speaker}</span><p class="st-body quote">«${text}»</p>` : `<p class="st-body">${text}</p>`}
           <div class="st-answers"></div><div class="st-foot">${dots}</div></div></div>`;
-    this.voiced(opts.speaker ?? 'Рассказчик', text, 'page');
+    if (opts.speaker) this.voiced(opts.speaker, text, 'page');
     const box = s.querySelector('.st-answers')!;
     const foot = s.querySelector('.st-foot')!;
     let done = false;
@@ -1066,7 +1066,6 @@ export class UI {
     if (!b.isConnected) this.root.appendChild(b);
     b.innerHTML = `<div class="bo-card"><span class="eyebrow">${title}</span><p>${text}</p>${stamp ? `<span class="stamp thump${stamp === 'Протокол' ? ' fine' : ''}">${stamp}</span>` : ''}${skip ? '<span class="bo-skip">Дальше <span class="kbd">Enter</span></span>' : ''}</div>`;
     b.classList.remove('out');
-    this.voiced('Рассказчик', text, 'page');
     let midDone = false, over = false;
     const runMid = () => { if (!midDone) { midDone = true; mid(); } };
     const finish = () => {

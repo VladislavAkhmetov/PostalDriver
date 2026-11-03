@@ -8,18 +8,26 @@
 // The script is the body of an async function run once window.__uaz is there; the prelude runs before
 // the game's own code on every page load (set localStorage, window.__P…).
 import { spawn } from 'node:child_process';
-import { readFileSync, mkdirSync, rmSync } from 'node:fs';
+import { readFileSync, mkdirSync, rmSync, existsSync } from 'node:fs';
+import os from 'node:os';
 
 const body = readFileSync(process.argv[2], 'utf8');
 const pre = process.argv[3] ? readFileSync(process.argv[3], 'utf8') : '';
 const url = process.env.URL || 'http://localhost:4180/';
-const profile = process.env.PROFILE || '/tmp/playtest/profile';
+
+const defaultProfile = process.platform === 'win32' ? `${os.tmpdir()}/playtest/profile` : '/tmp/playtest/profile';
+const profile = process.env.PROFILE || defaultProfile;
 mkdirSync(profile, { recursive: true });
 for (const f of ['SingletonLock', 'SingletonSocket', 'SingletonCookie']) rmSync(`${profile}/${f}`, { force: true });
 const port = 9300 + Math.floor(Math.random() * 500);
-const ch = spawn(process.env.CHROME || '/usr/bin/chromium', ['--headless=new', '--no-sandbox', '--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--mute-audio',
+
+const defaultChrome = process.platform === 'win32'
+  ? ['C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe', 'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe'].find(existsSync)
+  : '/usr/bin/chromium';
+
+const ch = spawn(process.env.CHROME || defaultChrome, ['--headless=new', '--no-sandbox', '--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--mute-audio',
   '--autoplay-policy=no-user-gesture-required', `--remote-debugging-port=${port}`, '--window-size=480,300', `--user-data-dir=${profile}`, 'about:blank'], { stdio: 'ignore' });
-process.on('exit', () => { try { ch.kill('SIGKILL'); } catch { /* gone */ } });
+process.on('exit', () => { try { ch.kill(); } catch { /* gone */ } });
 process.on('SIGTERM', () => process.exit(1));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
