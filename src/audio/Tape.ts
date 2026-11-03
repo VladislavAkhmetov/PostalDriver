@@ -148,6 +148,14 @@ export class Tape {
 
   /** The radio has been taken off the dashboard (until the next day). */
   private gone = false;
+  /** Someone speaks over it (a recorded voice, Voice.ts): the dial goes down to a third, and back. */
+  duck(on: boolean): void {
+    this.ducked = on ? 0.3 : 1;
+    if (this.on) this.bus.gain.setTargetAtTime(dialGain(this.volume) * this.ducked, this.ctx.currentTime, on ? 0.12 : 0.6);
+  }
+  private ducked = 1;
+  /** The presenter's recorded words for the break `onBreak` has just announced (Voice.ts), or null. */
+  presenterClip: AudioBuffer | null = null;
   takeAway(): void { if (this.on) this.toggle(); this.gone = true; }
   giveBack(): void { this.gone = false; }
 
@@ -155,7 +163,7 @@ export class Tape {
     if (this.gone) return false;
     this.on = !this.on;
     if (!this.on) { this.starting = false; this.special = null; }
-    this.bus.gain.setTargetAtTime(this.on ? dialGain(this.volume) : 0, this.ctx.currentTime, 0.05);
+    this.bus.gain.setTargetAtTime(this.on ? dialGain(this.volume) * this.ducked : 0, this.ctx.currentTime, 0.05);
     if (this.on) this.tune(); else this.el.pause();
     return this.on;
   }
@@ -164,7 +172,7 @@ export class Tape {
   setVolume(v: number): number {
     this.volume = Math.min(1, Math.max(0, Math.round(v * 100) / 100));
     try { localStorage.setItem(VOL_KEY, String(this.volume)); } catch { /* private mode */ }
-    if (this.on) this.bus.gain.setTargetAtTime(dialGain(this.volume), this.ctx.currentTime, 0.04);
+    if (this.on) this.bus.gain.setTargetAtTime(dialGain(this.volume) * this.ducked, this.ctx.currentTime, 0.04);
     return this.volume;
   }
 
@@ -270,8 +278,16 @@ export class Tape {
     const words = this.onBreak();
     if (words <= 0) { this.nextSong(); return; }
     this.jingle();
-    const talk = Math.min(9, 1.5 + words * 0.06);
-    this.voice(1.4, talk);
+    // the recorded presenter, through the same old speaker as the songs; or her murmur under the subtitles
+    const clip = this.presenterClip;
+    this.presenterClip = null;
+    const talk = clip ? clip.duration : Math.min(9, 1.5 + words * 0.06);
+    if (clip) {
+      const src = this.ctx.createBufferSource();
+      src.buffer = clip;
+      src.connect(this.dropout);
+      src.start(this.ctx.currentTime + 1.4);
+    } else this.voice(1.4, talk);
     this.talking = true;
     setTimeout(() => { this.talking = false; if (this.on && !this.gone && this.el.paused) this.nextSong(); }, (1.4 + talk + 0.8) * 1000);
   }

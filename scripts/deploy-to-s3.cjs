@@ -127,7 +127,7 @@ async function main() {
     console.log(`Found ${files.length} files in dist/ to upload to s3://${BUCKET}/`);
 
     let completed = 0;
-    const concurrency = 5;
+    const concurrency = 15;
     let idx = 0;
 
     async function worker() {

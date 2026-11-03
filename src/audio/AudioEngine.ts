@@ -27,6 +27,8 @@ export class AudioEngine {
   /** On the title screen only the radio is audible; the engine and the world wait for the drive. */
   private radioOnly = true;
   private master!: GainNode;
+  /** Recorded voices (Voice.ts): dry, straight to the master — they are in the cab, or at its window. */
+  voiceBus: GainNode | null = null;
   private cabin!: BiquadFilterNode;
   private world!: GainNode;
   private engine: AudioWorkletNode | null = null;
@@ -74,6 +76,8 @@ export class AudioEngine {
     this.master = ctx.createGain();
     this.master.gain.value = this.muted ? 0 : 0.85;
     this.master.connect(comp).connect(ctx.destination);
+    this.voiceBus = ctx.createGain();
+    this.voiceBus.connect(this.master);
     // cabin muffling for exterior sounds
     this.cabin = ctx.createBiquadFilter();
     this.cabin.type = 'lowpass'; this.cabin.frequency.value = 2400; this.cabin.Q.value = 0.5;
@@ -747,7 +751,31 @@ export class AudioEngine {
       }
     }
   }
-  animal(kind: 'dog' | 'rooster' | 'cow'): void {
+  /** Bees loose in the cab, 0 (none) … 1 (a cloud of them): a buzz that wanders in pitch and loudness. */
+  buzz(level: number): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    if (!this.bees) {
+      if (level <= 0) return;
+      const g = ctx.createGain(); g.gain.value = 0;
+      const f = ctx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 1400; f.Q.value = 1.2;
+      const oscs = [205, 231, 248].map((fr) => {
+        const o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.value = fr;
+        // each bee's pitch drifts as it flies about
+        const lfo = ctx.createOscillator(); lfo.frequency.value = 2 + Math.random() * 5;
+        const lg = ctx.createGain(); lg.gain.value = 18 + Math.random() * 16;
+        lfo.connect(lg).connect(o.frequency); lfo.start(); o.start();
+        o.connect(f);
+        return o;
+      });
+      f.connect(g).connect(this.master);
+      this.bees = { g, oscs };
+    }
+    this.bees.g.gain.setTargetAtTime(Math.min(1, level) * 0.06, ctx.currentTime, 0.15);
+  }
+  private bees: { g: GainNode; oscs: OscillatorNode[] } | null = null;
+
+  animal(kind: 'dog' | 'rooster' | 'cow' | 'sheep'): void {
     const ctx = this.ctx!;
     const t = ctx.currentTime;
     const pan = ctx.createStereoPanner(); pan.pan.value = Math.random() * 1.6 - 0.8;
@@ -759,6 +787,9 @@ export class AudioEngine {
     } else if (kind === 'rooster') {
       let at = 0;
       for (const [fr, d] of [[520, 0.15], [780, 0.2], [700, 0.5]]) { this.tone('sawtooth', fr, 0.035, 0.03, d, f, t + at, fr * 0.9); at += d; }
+    } else if (kind === 'sheep') {
+      // «бе-е-е»: a shaky bleat in three pulses
+      for (let i = 0; i < 3; i++) this.tone('sawtooth', 330 - i * 12, 0.06, 0.03, 0.2, f, t + i * 0.17, 300 - i * 12);
     } else {
       this.tone('sawtooth', 140, 0.08, 0.3, 1.2, f, t, 110);
     }

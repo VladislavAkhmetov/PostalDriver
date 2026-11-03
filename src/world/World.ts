@@ -101,6 +101,10 @@ export class World {
   /** Rain intensity for the villagers (set by the game loop). */
   setWeather(rain: number): void { this.rainNow = rain; }
   readonly cowSpots: THREE.Vector3[] = [];
+  /** The summer fisherman on the jetty (off it while the lake is frozen: Countryside). */
+  lakeFisher: Person | null = null;
+  /** The benches by the gates in the villages (Countryside seats the old women on some). */
+  readonly benches: Place[] = [];
   /** The filling station's origin: a van parked in its pump bays is refuelled. */
   fuelBay: { x: number; z: number; rot: number } | null = null;
   readonly startPose: { x: number; z: number; yaw: number };
@@ -761,6 +765,7 @@ export class World {
       fisher.group.rotation.y = jp.rot + Math.PI;
       this.group.add(fisher.group);
       this.people.push(fisher);
+      this.lakeFisher = fisher;
       // his rod, out over the water
       const rod = local(jp, 0.5, -5.2);
       b.add('flat', new THREE.CylinderGeometry(0.012, 0.02, 3.4, 4), T({ ...rod, y: L.y + 1.3 }, 0, 0, -1.2, -0.95, 0, 0), '#3a2e22');
@@ -831,7 +836,7 @@ export class World {
       this.group.add(keeper.group);
       this.people.push(keeper);
       this.stops.push({ id: 'camp', name: 'Пионерлагерь «Звёздочка»', s: g.marks.junction - 1 + B.camp * 1e-4, pos: new THREE.Vector3(mp.x, mp.y, mp.z), person: keeper,
-        speaker: 'Михалыч, сторож лагеря', line: 'О, почта! Сюда уж года три никто не заезжал, кроме меня и ворон. Давай газеты — почитаю горнисту. Он у нас один остался, гипсовый.',
+        speaker: 'Михалыч, сторож лагеря', line: 'О, почта! Сюда уж лет пять никто не заезжал, кроме меня и ворон. Давай газеты — почитаю горнисту. Он у нас один остался, гипсовый.',
         cargo: '', done: false, branch: true });
     }
 
@@ -1228,7 +1233,7 @@ export class World {
             this.fenceAlong(b, s + 1, c - 1.6, fl, r, false, road);
             this.fenceAlong(b, c + 1.6, s + plotW - 1, fl, r, false, road);
           }
-          if (r() < 0.5) bench(b, at(c + 2.6, side * (half + 5.9)));
+          if (r() < 0.5) { const bp = at(c + 2.6, side * (half + 5.9)); bench(b, bp); this.benches.push(bp); }
           if (!wellDone && r() < 0.3) { well(b, at(c + plotW / 2, side * (half + 4)), cols); wellDone = true; }
         }
         s += plotW;
@@ -1622,6 +1627,31 @@ export class World {
       this.group.add(mesh);
     }
     this.trees.clear();
+  }
+
+  /** Farm animals out (grazing season) or in the byres (late autumn to spring). Dogs stay out. */
+  setGrazing(on: boolean): void {
+    for (const a of this.fauna) if (a.kind !== 'dog') a.stabled = !on;
+  }
+
+  /** A farm animal put into the world later (the herd that crosses the village street). */
+  spawnAnimal(kind: AnimalKind, x: number, z: number, yaw: number, leash = 10): Animal {
+    const a = new Animal(kind, x, z, yaw, this.ground, leash);
+    a.onHit = (an, sp) => { this.onAnimalHit?.(an.kind, sp); };
+    this.group.add(a.group);
+    this.fauna.push(a);
+    this.colliders.dynamic.push(a.col);
+    return a;
+  }
+
+  /** What the land is at a point: a ploughed field, stubble, or neither (as the terrain is painted). */
+  fieldKind(x: number, z: number): 'plough' | 'stubble' | null {
+    const lay = this.layout(x, z);
+    if (!(lay.dens < 0.22 && lay.d > 45)) return null;
+    // not in a village: houses, yards and the rest keep their ground
+    if (this.exclusions.some((e) => Math.hypot(e.x - x, e.z - z) < e.r + 25)) return null;
+    const n = fbm(x * 0.0022, z * 0.0022, 2, 23);
+    return n > 0.63 ? 'plough' : n > 0.56 ? 'stubble' : null;
   }
 
   private buildFauna(r: RNG): void {

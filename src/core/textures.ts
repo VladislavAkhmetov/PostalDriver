@@ -619,12 +619,11 @@ export function createTextures() {
         g.fillStyle = '#2a2a2a'; g.beginPath(); g.arc(x, 112, 7, 0, 7); g.fill();
         g.strokeStyle = '#6a6a66'; g.lineWidth = 1; g.beginPath(); g.arc(x, 112, 7, 0, 7); g.stroke();
       }
-      label(g, 'УАЗ', 22, 112, `bold 8px ${NARROW}`, '#7a7a74', 'left');
     }, { repeat: false }),
     cassette: paint(64, 32, (g, w, h) => {
       g.fillStyle = '#1a1a1a'; g.fillRect(0, 0, w, h);
       g.fillStyle = '#9a9a96'; g.fillRect(2, 2, w - 4, 9);
-      label(g, 'ЭЛЕКТРОНИКА', w / 2, 6.5, `bold 7px ${NARROW}`, '#1a1a1a');
+      label(g, 'КАССЕТА · 60', w / 2, 6.5, `bold 7px ${NARROW}`, '#1a1a1a');
       g.fillStyle = '#3a3a3a'; g.fillRect(14, 14, 36, 12);
       g.fillStyle = '#c9c0a8'; g.beginPath(); g.arc(23, 20, 3.5, 0, 7); g.arc(41, 20, 3.5, 0, 7); g.fill();
       for (let i = 0; i < 5; i++) { g.fillStyle = '#5a5a5a'; g.fillRect(4 + i * 5, 28, 4, 3); }

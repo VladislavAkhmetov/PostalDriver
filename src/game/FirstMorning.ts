@@ -78,8 +78,21 @@ interface Step {
   enter?: () => void;
   /** Already so when it begins: this is said instead, and on to the next. */
   already?: (c: Ctx) => boolean;
-  alreadyLine?: string;
+  alreadyLine?: string | ((c: Ctx) => string);
+  /** Run when it is done (not when skipped). */
+  onDone?: () => void;
 }
+
+/**
+ * Remarks tied to a place rather than to a lesson: said as the van gets there, whatever lesson is on
+ * (a lesson that drags on must not make him talk about Muha after the shop is behind).
+ */
+interface Sight { id: string; at: (c: Ctx) => boolean; line: string }
+
+/** A line waiting to be said; one that has waited too long for its moment is dropped, not said late. */
+interface Queued { line: string; pri: number; at: number; step: number }
+/** How long a line may wait, by priority (0, the talk in passing, waits for a quiet spell any time). */
+const KEEP = [Infinity, 8, 10, 6];
 
 /** In between the lessons, while the road is quiet: the people, the work, life. */
 const TALK: string[] = [
@@ -96,7 +109,7 @@ const TALK: string[] = [
   'А в Уфу ты поедешь. Почта — это пока. Хорошее «пока», честное. Но пока.',
 ];
 const SPEEDING = [
-  'Не гони, улым. Буханка не «Жигули».',
+  'Не гони, улым. Буханка не легковушка.',
   'Тише! Куда летишь — почта никуда не денется.',
   'Сбавь, говорю. Я в твои годы тоже гонял — потом мост менял.',
 ];
@@ -106,8 +119,19 @@ export class FirstMorning {
   private i = 0;
   private active = false;
   private stepT = 0;
-  /** Lines waiting to be said, most pressing first: 3 a warning (speed, stuck, the wrong way), 2 the lesson, 1 a word of praise, 0 the talk. */
-  private queue: { line: string; pri: number }[] = [];
+  /** Lines waiting to be said, most pressing first: 3 a warning (speed, stuck, the wrong way), 2 the lesson or a place, 1 a word of praise, 0 the talk. */
+  private queue: Queued[] = [];
+  private sights: Sight[];
+  private seen = new Set<string>();
+  /** Stopped at the GAI post as asked (the visit, then his word about Kuzmin). */
+  private pulledIn = false;
+  /** Seconds the van has stood still. */
+  private stillT = 0;
+  /** On the asphalt with the front axle still in. */
+  private axleT = 0;
+  private axleTold = false;
+  /** The lesson whose instruction was last said aloud (its praise only follows if it was). */
+  private saidStep = -1;
   private gap = 0;
   private idle = 0;
   private talkI = 0;
@@ -153,9 +177,10 @@ export class FirstMorning {
       { id: 'village', at: onHome, line: 'По деревне — двадцать, не больше. Куры, дети, бабки. Задавишь курицу — до пенсии не отмоешься.', done: (c) => c.t > 6 },
       { id: 'horn', at: (c) => c.p !== null && c.p > nb - 32, line: 'Вон соседка у калитки — посигналь ей, H. Она каждое утро почту провожает.',
         hint: ['Гудок — H.', 'H'], done: () => this.horned, praise: 'Видишь — машет. У адресата так же: встал, ручник, два раза — и выходят.',
-        skip: (c) => c.p !== null && c.p > nb + 45, skipLine: 'Не посигналил — обидится. Ладно, вечером сам извинюсь.' },
+        skip: (c) => c.p !== null && c.p > nb + 45, skipLine: 'Не посигналил — обидится. Ладно, өләсәй ей скажет: торопились к автобусу.' },
       { id: 'lights', at: (c) => c.p !== null && c.p > Vp + 12, line: 'Лес пошёл. Фары включи — F. Солнце солнцем, а под ёлками тень: с фарами тебя издалека видно.',
         hint: ['Фары — F.', 'F'], done: (c) => c.cab.lights, praise: 'Вот. И гаишники любят, когда с фарами.',
+        nag: [12, 'Фары, говорю, — F.'], skip: (c) => c.p !== null && c.p > Vp + 95, skipLine: 'Ладно, без фар. Но в туман — обязательно, F, запомни.',
         already: (c) => c.cab.lights, alreadyLine: 'Лес пошёл. Фары у тебя горят — правильно, в лесу сумрак.' },
       { id: 'look', at: (c) => c.p !== null && c.p > Vp + 50, line: 'Оглядывайся почаще: мышью — по сторонам, в зеркала, V — назад. Сзади лесовоз может догнать.',
         hint: ['Обзор — мышь (на телефоне — свайп). Назад — держи V.', 'V'], done: (c) => c.t > 5 || Math.abs(c.cab.lookYaw) > 0.6 || c.cab.lookBack },
@@ -175,11 +200,13 @@ export class FirstMorning {
       { id: 'mud', at: (c) => c.p !== null && c.p > Hp - 32, line: 'Газ ровно, руль прямо, не дёргай. Пошла, пошла, родная…', done: (c) => c.p !== null && c.p > Hp + 40,
         praise: 'Выбрались! А ты говоришь — буханка.' },
       { id: 'low-off', at: () => true, line: 'Понижайку выключи — X: на ней далеко не уедешь, мотор замучаешь.',
-        hint: ['Понижающая — X ещё раз.', 'X'], done: (c) => !c.v.low, already: (c) => !c.v.low, alreadyLine: '' },
+        hint: ['Понижающая — X ещё раз.', 'X'], done: (c) => !c.v.low, already: (c) => !c.v.low, alreadyLine: '',
+        nag: [10, 'Понижайку выключи, говорю, — X. Слышишь, как воет?'],
+        skip: (c) => (c.p !== null && c.p > Hp + 170) || (c.rs !== null && c.rs < 115), skipLine: 'Так на понижайке и поползём? Ну, мотор твой теперь.' },
       { id: 'map', at: (c) => c.p !== null && c.p > Hp + 60, line: 'Глянь карту — M. Вон наш лес, вон Ключевск, синие точки — кому сегодня везти. Закроешь — M ещё раз.',
         hint: ['Карта — M (или Tab). Закрыть — M ещё раз.', 'M'], done: () => this.mapClosed, nag: [18, 'Карту, говорю, глянь — M. Пригодится.'],
         skip: (c) => c.rs !== null && c.rs < 110 },
-      { id: 'gearbox', at: () => true, line: 'Коробка — автомат. Захочешь сам — G, потом Q — ниже, E — выше. Я всю жизнь сам, привычка.',
+      { id: 'gearbox', at: () => true, line: 'Передачи пока не трогай — первое время я за тебя переключать буду, на слух. Привыкнешь — G, и сам: Q — ниже, E — выше. Я всю жизнь сам.',
         hint: ['Ручная коробка — G; передачи — Q ниже, E выше.', 'G · Q · E'], done: (c) => c.t > 7 || this.acts.has('gearMode'), skip: (c) => c.rs !== null && c.rs < 95 },
       { id: 'radio', at: () => true, line: 'Радио — C, следующая песня — N, громкость — плюс и минус. Но меня сперва дослушай.',
         hint: ['Радио — C · песня — N · громкость — + и −.', 'C · N'], done: (c) => c.t > 6 || this.acts.has('tape') || this.acts.has('tapeNext'), skip: (c) => c.rs !== null && c.rs < 82 },
@@ -194,23 +221,30 @@ export class FirstMorning {
         skip: (c) => c.ms !== null, skipLine: 'Без остановки вылетел! Повезло. Дальше так не делай.' },
       { id: '4wd-off', at: () => true, line: 'На асфальте передний мост ни к чему — выключи, Z. Резину съест.',
         hint: ['Передний мост — Z ещё раз.', 'Z'], done: (c) => !c.v.fourWD, already: (c) => !c.v.fourWD, alreadyLine: '',
-        skip: (c) => c.ms !== null && c.ms < g.marks.home - 70 },
+        // (not a hold-up: past the turn it gives way to the post, and a reminder comes later if need be)
+        skip: (c) => c.ms !== null && c.ms < g.marks.home - 8 },
       { id: 'turn', at: () => true, line: () => `Теперь ${this.turnWord} — к посёлку. Руль плавно, газ потом.`,
-        done: (c) => c.ms !== null && c.ms < g.marks.home - 12 },
+        done: (c) => c.ms !== null && c.ms < g.marks.home - 12, already: (c) => c.ms !== null && c.ms < g.marks.home - 12, alreadyLine: '' },
       // the GAI post, just up the road: a word with an old acquaintance (the van is held to a crawl meanwhile)
       { id: 'gai-ask', at: (c) => c.ms !== null, line: () => `Притормози-ка у поста — к Кузьмину заедем, поздороваемся. Карман у будки — ${this.laybyWord}, за шлагбаумом. Встань там — и на ручник.`,
         hint: ['Пост ГАИ: встань в кармане у будки и затяни ручник.', 'S · Пробел'], enter: () => { this.assist = 25; },
-        done: (c) => c.kmh < 1 && c.v.handbrake && c.toPost < 35,
-        skip: (c) => c.ms !== null && c.ms < this.world.gai.sPost - 70, skipLine: 'Проехал! Ну ладно, вечером сам к нему зайду.' },
-      { id: 'gai-visit', at: () => true, line: '', enter: () => { this.queue.length = 0; this.visiting = !!this.hooks.visit?.(() => { this.visiting = false; }); },
+        // stopped by the box: on the handbrake, or just standing a couple of seconds
+        done: (c) => c.kmh < 1 && c.toPost < 45 && (c.v.handbrake || this.stillT > 2), onDone: () => { this.pulledIn = true; },
+        skip: (c) => c.ms !== null && c.ms < this.world.gai.sPost - 70, skipLine: 'Проехал! Ну ладно — из Уфы ему позвоню, привет передам.' },
+      // Kuzmin at the window (only if the van has pulled in): the grandfather keeps quiet meanwhile
+      { id: 'gai-visit', at: () => true, line: '', already: () => !this.pulledIn, alreadyLine: '',
+        enter: () => { this.visiting = !!this.hooks.visit?.(() => { this.visiting = false; }); },
         done: () => !this.visiting },
       { id: 'gai-after', at: () => true, line: 'Кузьмин мужик неплохой. Но денег ему не суй: один раз сунешь — всю жизнь платить будешь. Поехали, в посёлок.',
+        already: () => !this.pulledIn, alreadyLine: 'Кузьмин мужик неплохой. Но денег ему не суй: один раз сунешь — всю жизнь платить будешь.',
         done: (c) => c.t > 4 },
       { id: 'road', at: (c) => c.ms !== null, line: 'На асфальте держись правее. Обгоняй, только где далеко видно, — и не на горке.', done: (c) => c.t > 6 },
-      { id: 'town', at: (c) => c.ms !== null && c.ms < g.marks.town + 30, line: 'Ключевск. В посёлке — шестьдесят, а лучше сорок: дети, куры.', done: (c) => c.t > 6 },
-      { id: 'muha', at: (c) => c.ms !== null && c.ms < 105, line: 'Вон Муха твой у магазина. Ты с ним, улым, поосторожнее. Дружба дружбой, а почта — казённая.', done: (c) => c.t > 5 },
-      { id: 'door', at: (c) => c.toDoor < 110, line: 'Вон почта. Подъезжай к дверям, к Зинаиде, — метров двадцать, не дальше. Встал — ручник — два раза посигналил. Так у каждого адресата.',
+      { id: 'door', at: (c) => c.toDoor < 90, line: 'Вон почта. Подъезжай к дверям, к Зинаиде, — метров двадцать, не дальше. Встал — ручник — два раза посигналил. Так у каждого адресата.',
         hint: ['У дверей почты: стоп · ручник (пробел) · два гудка (H, H).', 'Пробел · H'], done: () => this.atDoor },
+    ];
+    this.sights = [
+      { id: 'town', at: (c) => c.ms !== null && c.ms < g.marks.town + 30 && c.ms > g.marks.town - 60, line: 'Ключевск. В посёлке — шестьдесят, а лучше сорок: дети, куры.' },
+      { id: 'muha', at: (c) => c.ms !== null && c.ms < 150 && c.ms > 70, line: 'Вон Муха твой у магазина. Ты с ним, улым, поосторожнее. Дружба дружбой, а почта — казённая.' },
     ];
   }
 
@@ -233,12 +267,19 @@ export class FirstMorning {
     return lat < 0 ? 'справа' : 'слева';
   }
 
-  private say(line: string, pri = 2): void {
+  /** Queue a line; `step` ties a lesson's instruction to its lesson (it goes unsaid once the lesson is over). */
+  private say(line: string, pri = 2, step = -1): void {
     if (!line) return;
     // a new lesson pushes out what was still to be said in passing
     if (pri >= 2) this.queue = this.queue.filter((q) => q.pri >= 2);
-    this.queue.push({ line, pri });
+    this.queue.push({ line, pri, at: this.t, step });
     this.queue.sort((a, b) => b.pri - a.pri);
+  }
+
+  /** Lines whose moment has gone: an instruction for a lesson already over, or anything kept too long. */
+  private stale(q: Queued): boolean {
+    if (q.step >= 0) return q.step !== this.i;
+    return this.t - q.at > KEEP[q.pri];
   }
 
   private on = false;
@@ -280,20 +321,28 @@ export class FirstMorning {
           this.active = true;
           this.stepT = 0;
           c.t = 0;
-          if (st.already?.(c)) { this.say(st.alreadyLine ?? '', 1); this.next(); }
+          if (st.already?.(c)) { const al = st.alreadyLine ?? ''; this.say(typeof al === 'string' ? al : al(c), 1); this.next(); }
           else {
-            this.say(typeof st.line === 'string' ? st.line : st.line(c));
+            this.say(typeof st.line === 'string' ? st.line : st.line(c), 2, this.i);
             if (st.hint) this.hooks.hint(`ob-${st.id}`, st.hint[0], st.hint[1] || undefined);
             st.enter?.();
           }
         }
       } else {
         this.stepT += dt;
-        if (st.done(c)) { this.say(st.praise ?? '', 1); this.next(); }
+        // (no «вот так» for a lesson done before he had a chance to say what to do)
+        if (st.done(c)) { st.onDone?.(); if (this.saidStep === this.i || !st.line) this.say(st.praise ?? '', 1); this.next(); }
         else if (st.skip?.(c)) { this.say(st.skipLine ?? '', 1); this.next(); }
         else if (st.nag && this.stepT > st.nag[0] && this.stepT - dt <= st.nag[0]) this.say(st.nag[1], 3);
       }
     }
+
+    // the places on the way: said as they come, whatever the lesson
+    for (const sg of this.sights) if (!this.seen.has(sg.id) && sg.at(c)) { this.seen.add(sg.id); this.say(sg.line, 2); }
+    this.stillT = c.kmh < 0.5 ? this.stillT + dt : 0;
+    // the front axle left in on the asphalt: a word, once (the lesson for it has given way to the post)
+    this.axleT = c.ms !== null && v.fourWD ? this.axleT + dt : 0;
+    if (!this.axleTold && this.axleT > 12 && !this.visiting) { this.axleTold = true; this.say('Мост-то передний так и не выключил — Z. На асфальте резину съест.', 3); }
 
     // the speed on each stretch: the yard, the village, the forest, the hollow, the town
     const limit = c.p !== null && c.p < 4 ? 15
@@ -315,10 +364,13 @@ export class FirstMorning {
     if (!this.wrongTold && c.ms !== null && c.ms > g.marks.home + 45) { this.wrongTold = true; this.say('Не туда! Почта — в другую сторону, разворачивайся.', 3); }
 
     // say what is queued, one line at a time; in a quiet spell, the talk
+    // (what has missed its moment is dropped; while Kuzmin is at the window, he holds his tongue)
+    this.queue = this.queue.filter((q) => !this.stale(q));
     this.gap -= dt;
     // (a lesson waits less behind a line already said: the hint card shows it at once anyway)
-    if (this.queue.length && (this.gap <= 0 || (this.queue[0].pri >= 2 && this.gap <= this.gapFull * 0.5))) {
-      const { line } = this.queue.shift()!;
+    if (this.queue.length && !this.visiting && (this.gap <= 0 || (this.queue[0].pri >= 2 && this.gap <= this.gapFull * 0.5))) {
+      const { line, step } = this.queue.shift()!;
+      if (step >= 0) this.saidStep = step;
       this.hooks.say(KARTATAY, line);
       this.onSay?.(2 + line.length * 0.03);
       this.gapFull = this.gap = 1.6 + line.length * 0.026;

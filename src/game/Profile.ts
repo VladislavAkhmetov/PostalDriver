@@ -4,6 +4,7 @@ import type { MuhaState } from './MuhaStory';
 import type { RoadStopState } from './RoadStop';
 import type { LettersState } from './Letters';
 import type { GaiMemory } from '../world/Police';
+import type { CasesSaved } from './Cases';
 /** What carries over from run to run, kept in the browser. */
 export interface Profile {
   /** Roubles in the depot's till. */
@@ -31,6 +32,8 @@ export interface Profile {
   garage?: number;
   /** The prologue has been played: Timur is home and has the keys. */
   prologue?: boolean;
+  /** What came of the season's «случаи» (Cases.ts): done, refused or missed. */
+  cases?: CasesSaved;
   /** «Тормозят на дороге»: once in the service, and how it went. */
   roadStop?: RoadStopState;
   /** The old letters from the cupboard: which have gone home, which is on its way. */
@@ -58,6 +61,7 @@ export function loadProfile(): Profile {
       prologue: p.prologue ?? false,
       roadStop: p.roadStop && typeof p.roadStop.done === 'boolean' ? p.roadStop : undefined,
       letters: p.letters && Array.isArray(p.letters.done) ? p.letters : undefined,
+      cases: p.cases && typeof p.cases === 'object' && !Array.isArray(p.cases) ? p.cases : undefined,
       exams: p.exams, examYear: p.examYear,
       gai: p.gai && ['met', 'bribes', 'refused', 'warned'].every((k) => typeof p.gai[k] === 'number') ? p.gai : undefined };
   } catch { /* private mode or bad data */ }
@@ -68,7 +72,7 @@ export function saveProfile(p: Profile): void {
   try { localStorage.setItem(KEY, JSON.stringify(p)); } catch { /* private mode */ }
 }
 
-/** How the van gets mended: by Timur alone in his grandfather's garage at home (parts only — the grandfather is in hospital in Ufa), or at Kolka's workshop (parts and labour). */
+/** How the van gets mended: in his grandfather's garage at home (parts only — Timur alone while the grandfather is in hospital in Ufa, then with him on the stool by the pit), or at Kolka's workshop (parts and labour). */
 export type RepairKind = 'grandpa' | 'kolka';
 /** Parts for a full repair, 1997 roubles: the body and engine, the steering linkage, the radiator. */
 const FULL_REPAIR = 300000, STEER_PARTS = 70000, RAD_PARTS = 50000;
@@ -99,18 +103,29 @@ export function repair(p: Profile, kind: RepairKind): number {
  * call from the hospital in Ufa, one evening at a time — the work, the old days on this route, and
  * now and then a hint at what he never told (docs/design.md, «Тайна картатая»).
  */
+/** In the garage of an evening, from the stool by the pit (the grandfather home from hospital). */
 const GRANDPA: string[] = [
   'Тягу на сколько затягивал? На четырнадцать?.. Ключ на тринадцать, улым! Армия армией, а ключи учить надо.',
   'В семьдесят девятом у меня на этой самой буханке тяга лопнула под Сосновкой. Шёл пешком, мешок на плече. Баба Шура тогда ещё молодая была, накормила. Привет ей передай.',
-  'Радиатор паял? Олово, канифоль да терпение. Терпения у тебя, улым, пока на одну пайку. Тут врачи тоже всё про терпение.',
+  'Радиатор паял? Олово, канифоль да терпение. Терпения у тебя, улым, пока на одну пайку. Ничего, у меня тоже на одну было.',
   'Зинаида на почту девчонкой пришла, собак боялась. А теперь собаки её боятся. И начальство тоже. Ты её слушай.',
   'Знаешь, почему в Заречье почту ждут? Я ни разу не опоздал. Ну, один раз. Мост тогда смыло — так я вброд.',
-  'Есть одно письмо… Ладно. Не по телефону. Приеду — расскажу. Гайки на колёсах проверь.',
-  'Машину не жалеешь — себя не жалеешь. Ты ей ласково: «Ну, давай, родная». Она и пойдёт. Вот как тут медсёстры со мной.',
-  'Өләсәй твоя за меня вышла, потому что я ей письма сам носил. От себя же. Ты ей там помогай — одной тяжело.',
+  'Есть одно письмо… Ладно. Не сегодня. Гайки на колёсах проверь.',
+  'Машину не жалеешь — себя не жалеешь. Ты ей ласково: «Ну, давай, родная». Она и пойдёт. Вот как өләсәй со мной.',
+  'Өләсәй твоя за меня вышла, потому что я ей письма сам носил. От себя же. Ты ей помогай — она за нас двоих тянет.',
   'Муха этот твой… Мальчишкой у меня в гараже велосипеды чинил. Руки золотые были. Куда он их теперь дел?',
   'В шкафу у Зинаиды пачка писем лежит, «до востребования», с девяносто первого. Никто не востребовал. Ты загляни как-нибудь.',
   'Я в твои годы тоже в город хотел. Не поехал — дед заболел. Вот и я заболел. А ты всё равно поедешь. Я сказал.',
   'Развал на глаз выставил? Завтра проедешь — скажешь, как. Тянет — значит, глаз ещё не набил. Ничего, набьёшь.',
+  'Митяй опять свой мотоцикл заводил — слышал? Полвека заводит. Вот это, улым, характер.',
 ];
-export const grandpaLine = (p: Profile): string => GRANDPA[((p.garage ?? 1) - 1) % GRANDPA.length];
+/** The first weeks, while he is in hospital in Ufa: on the trunk line to the post office. */
+const GRANDPA_PHONE: string[] = [
+  'Тягу на сколько затягивал? На четырнадцать?.. Ключ на тринадцать, улым! Армия армией, а ключи учить надо.',
+  'Радиатор паял? Олово, канифоль да терпение. Тут врачи тоже всё про терпение.',
+  'Есть одно письмо… Ладно. Не по телефону. Приеду — расскажу. Гайки на колёсах проверь.',
+];
+export const grandpaLine = (p: Profile, home = true): string => {
+  const l = home ? GRANDPA : GRANDPA_PHONE;
+  return l[((p.garage ?? 1) - 1) % l.length];
+};

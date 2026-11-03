@@ -28,6 +28,8 @@ export interface RoadStopHooks {
   choice(speaker: string, line: string, options: string[], pick: (i: number) => void): void;
   closeChoice(): void;
   choiceOpen(): boolean;
+  /** Someone else already rides in the cab's one passenger seat (another story's rider). */
+  seatTaken?(): boolean;
   say(speaker: string, line: string): void;
   hint(id: string, text: string, keys?: string): void;
   toast(text: string): void;
@@ -176,6 +178,7 @@ export class RoadStop {
   private talk(): void {
     const h = this.hooks;
     const after = () => { this.s.done = true; this.s.day = this.day; this.state = 'parked'; this.removeMen(); };
+    if (this.kind === 'kid' && h.seatTaken?.()) this.kind = 'fuel';
     if (this.kind === 'kid') {
       const ahead = this.mission.stops.filter((st) => !st.done && st.s > this.s0 + 100 && !st.branch);
       this.dest = ahead[0] ?? null;
@@ -194,7 +197,7 @@ export class RoadStop {
         } else {
           this.s.outcome = 'robbed';
           h.say(BRITYI, 'Нету? А магнитола у тебя на что играет? Сымай, Вован. Конфискуем — за моральный ущерб. Езжай, почтальон, не задерживай.');
-          setTimeout(() => { h.takeRadio(); h.toast('Магнитолу сняли · радио молчит до завтра'); }, 1800);
+          setTimeout(() => { h.takeRadio(); h.toast('Магнитолу сняли · радио молчит до конца дня'); }, 1800);
         }
         after();
       });

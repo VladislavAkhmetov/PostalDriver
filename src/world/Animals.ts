@@ -74,6 +74,8 @@ export class Animal {
   x: number; z: number; yaw: number;
   /** The animal is a roadblock until it is hooted off the track. */
   blocker = false;
+  /** In the byre for the winter: not in the world at all. */
+  stabled = false;
   private readonly home: THREE.Vector3;
   private readonly leash: number;
   private readonly mixer: THREE.AnimationMixer;
@@ -168,6 +170,11 @@ export class Animal {
   roadDir?: { x: number; z: number };
 
   update(dt: number, van: VanView): void {
+    if (this.stabled) {
+      this.group.visible = false;
+      this.col.x = 1e9; this.col.z = 1e9;
+      return;
+    }
     const roadDir = this.roadDir;
     const dx = van.x - this.x, dz = van.z - this.z, d = Math.hypot(dx, dz);
     const vspeed = Math.hypot(van.vx, van.vz);
@@ -242,6 +249,15 @@ export class Animal {
     this.tz = this.z + pz * sgn * (10 + Math.random() * 5);
     this.state = 'run';
     this.timer = d < 10 ? 4 : 3;
+    this.blocker = false;
+  }
+
+  /** Walk to (x, z) and graze there — driven along by somebody (the herd boy). */
+  lead(x: number, z: number): void {
+    if (this.state === 'down') return;
+    this.tx = x; this.tz = z;
+    this.home.set(x, 0, z);
+    this.state = 'walk';
     this.blocker = false;
   }
 

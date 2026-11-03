@@ -60,6 +60,7 @@ export class Input {
       if (e.code === 'Tab' || e.code === 'Space' || e.code === 'Backspace' || e.code === 'Enter' || e.code.startsWith('Arrow') || e.code === 'F1') e.preventDefault();
       if (e.repeat) return;
       this.keys.add(e.code);
+      if (e.code === 'KeyH') this.hornTaps++;
       const a = KEYMAP[e.code];
       if (a) this.onAction?.(a);
       if (e.code === 'KeyV') this.lookBack = true;
@@ -134,12 +135,22 @@ export class Input {
   };
 
   private down(...codes: string[]): boolean { return codes.some((c) => this.keys.has(c)); }
+  /**
+   * Horn presses not yet seen by a frame: a quick tap on a slow machine can begin and end between two
+   * frames, and the delivery ritual counts two honks — each tap is a frame of horn, with a frame of
+   * silence between taps so that two quick ones are still two.
+   */
+  private hornTaps = 0;
 
   update(dt: number, speed: number): void {
     const k = this.enabled;
     const left = k && this.down('KeyA', 'ArrowLeft'), right = k && this.down('KeyD', 'ArrowRight');
     const gasK = k && this.down('KeyW', 'ArrowUp'), brakeK = k && this.down('KeyS', 'ArrowDown');
-    this.horn = (k && this.down('KeyH')) || this.touchHorn;
+    const held = (k && this.down('KeyH')) || this.touchHorn;
+    if (!k) this.hornTaps = 0;
+    if (this.hornTaps > 0 && !this.horn) { this.horn = true; this.hornTaps--; }
+    else if (this.hornTaps > 0) this.horn = false;
+    else this.horn = held;
     if (this.touchSteer !== null) {
       this.steer = damp(this.steer, this.touchSteer, 7, dt);
     } else if (this.tilt && this.tiltV !== null && !left && !right) {

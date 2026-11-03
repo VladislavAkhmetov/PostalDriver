@@ -9,11 +9,15 @@ import { Atmosphere, WINTER } from './world/Atmosphere';
 import { Vehicle } from './vehicle/Vehicle';
 import { Cabin, EYE, EYE_PITCH, HotspotId } from './vehicle/Cabin';
 import { AudioEngine } from './audio/AudioEngine';
+import { Voice } from './audio/Voice';
 import { Mission } from './game/Mission';
 import { freshProfile, grandpaLine, loadProfile, repair, saveProfile, type RepairKind } from './game/Profile';
 import { clearDay, dayLabel, loadDay, replayedExtra, saveDay, type DaySave } from './game/Autosave';
-import { boardFor, destName, newPlaceToday, paydays, reckon, TALONS_DAY, TALONS_MAX, type Order } from './game/Career';
+import { boardFor, daysBetween, destName, newPlaceToday, paydays, reckon, TALONS_DAY, TALONS_MAX, type Order } from './game/Career';
 import { Encounters } from './game/Encounters';
+import { Cases, GRANDPA_HOME, morningCase, weekBefore, type MorningCase } from './game/Cases';
+import { BeeCloud } from './vehicle/Bees';
+import { Countryside } from './world/Countryside';
 import { MuhaStory } from './game/MuhaStory';
 import { RoadsideFix } from './game/Roadside';
 import { farewellPages, keysPage, Prologue } from './game/Prologue';
@@ -65,6 +69,10 @@ async function boot(): Promise<void> {
   const rain = new Rain();
   scene.add(rain.group);
   const fx = new Effects(ground);
+  // the life round the road by the calendar: benches, the herd, the tractor, the combines, the ice, Sabantuy
+  const country = new Countryside(world, ground, fx);
+  /** The world as today's date has it. */
+  const dayWorld = () => { const dp = dateParts(today.day); country.setDay(dp.m, dp.d); };
   scene.add(fx.group);
   const rainTint = new THREE.Color();
   const WHITE = new THREE.Color(1, 1, 1);
@@ -125,10 +133,18 @@ async function boot(): Promise<void> {
     ui.setGarage(profile);
     if (share <= 0) { ui.toast('Нечего чинить или касса пуста', 2.4); return; }
     const part = share < 0.99 ? ' Денег хватило не на всё — остальное в другой раз.' : '';
-    if (kind === 'grandpa') ui.blackout('Гараж картатая, вечер', `Лампочка над ямой, радио «Маяк», дедовы ключи на табуретке — сам. Потом — межгород из Уфы, картатай из больницы:<br><br>«${grandpaLine(profile)}»${part}`, 5, () => {}, () => {}, 'Починили');
+    // (the day just played: in the evening the profile has already moved on to tomorrow)
+    const home = (mission?.finished ? profile.day - 1 : profile.day) >= GRANDPA_HOME;
+    if (kind === 'grandpa') ui.blackout('Гараж картатая, вечер', home
+      ? `Лампочка над ямой, радио «Маяк». Картатай на табуретке у ямы — подаёт ключи и не молчит:<br><br>«${grandpaLine(profile)}»${part}`
+      : `Лампочка над ямой, радио «Маяк», дедовы ключи на табуретке — сам. Потом — межгород из Уфы, картатай из больницы:<br><br>«${grandpaLine(profile, false)}»${part}`, 5, () => {}, () => {}, 'Починили');
     else ui.toast(`Колька, мастерская МТС: «Сделано. Деньги вперёд — как договаривались».${part}`, 3.4);
   };
   const audio = new AudioEngine();
+  // recorded voices, when there are files for them (docs/voice/README.md): every line on screen asks for its own
+  const voice = new Voice(() => audio.ctx, () => audio.voiceBus);
+  voice.onDuck = (on) => audio.tape?.duck(on);
+  ui.onLine = (who, text, kind) => voice.say(who, text, kind);
   ui.buildMap(ground, world.stops);
 
   // an arrest holds the van on the handbrake, hands off the pedals: the brake
@@ -187,20 +203,21 @@ async function boot(): Promise<void> {
   // the working day: this morning's board at the post office
   let today = boardFor(profile.day, profile.trust);
   // the title scene is filmed in the day's own weather, with the season's snow lying
-  atmo.setDayWeather(today.weather);
+  atmo.setDayWeather(today.weather); dayWorld();
   snowNow = today.snow;
-  ui.onNewCareer = () => {
+  /** Everything from the start: a fresh profile (the story's state too), no day saved. */
+  const wipeCareer = () => {
+    // (cleared first: the story's own records — Muha, the letters, the GAI's memory — are not in a fresh profile)
+    for (const k of Object.keys(profile)) delete (profile as unknown as Record<string, unknown>)[k];
     Object.assign(profile, freshProfile());
-    // a new service begins from the bus from Ufa again
     saveProfile(profile);
     clearDay();
     ui.setResume(null);
     vehicle.damage = 0;
     cabin.repair();
     today = boardFor(profile.day, profile.trust);
-    atmo.setDayWeather(today.weather);
+    atmo.setDayWeather(today.weather); dayWorld();
     ui.setGarage(profile);
-    ui.toast('Новая служба · день первый', 2.4);
   };
   const newMission = (orders: Order[] = []) => new Mission(world, ground, {
     hint: (id, text, keys) => ui.hint(id, text, keys),
@@ -224,6 +241,7 @@ async function boot(): Promise<void> {
       if (story) profile.muha = story.state;
       if (roadStop) profile.roadStop = roadStop.saved;
       if (letters) profile.letters = letters.saved;
+      if (cases) profile.cases = cases.result;
       profile.gai = { ...police.memory };
       const grandpa = !!letters?.grandpaTonight;
       // tomorrow's fuel coupons
@@ -237,7 +255,7 @@ async function boot(): Promise<void> {
       setTimeout(() => {
         ui.showEvening(day, st, rec, profile, { onRepair: (kind) => ui.onRepair?.(kind), onNext: toMorning, pay, premium });
         // the evening the grandfather's own letter went home: before the journal, his story
-        if (grandpa) ui.blackout('Вечер, межгород из Уфы', GRANDPA_LETTER, 9, () => {}, () => {}, '');
+        if (grandpa) ui.blackout('Вечер, лавка у ворот', GRANDPA_LETTER, 9, () => {}, () => {}, '');
       }, 600);
       audio.chime(); input.enabled = false;
     },
@@ -252,6 +270,7 @@ async function boot(): Promise<void> {
   world.onBark = () => audio.animal('dog');
   let eventN = 0;
   world.onEvent = (text) => ui.hint(`event${eventN++}`, text);
+  country.onEvent = (text) => { if (started && !morning) ui.hint('herd', text); };
   world.villagers.onHit = (sp) => { audio.impact(sp * 0.5); shake = Math.min(1.4, shake + 0.5); ui.toast('Вы сбили человека!', 3); mission.crash(sp); };
 
   let forestAmb = 0;
@@ -260,7 +279,7 @@ async function boot(): Promise<void> {
     vehicle.place(p.x, p.z, p.yaw, ground);
   };
   reset();
-  if (import.meta.env.DEV) Object.assign(window, { __uaz: { input, vehicle, ground, world, cabin, atmo, camera, scene, renderer, police, rain, ui, audio, get mission() { return mission; }, get encounters() { return encounters; }, get story() { return story; }, get roadStop() { return roadStop; }, get title() { return title; }, fx, grandpaSeat, get first() { return first; } } });
+  if (import.meta.env.DEV) Object.assign(window, { __uaz: { input, vehicle, ground, world, cabin, atmo, camera, scene, renderer, police, rain, ui, audio, get mission() { return mission; }, get encounters() { return encounters; }, get story() { return story; }, get roadStop() { return roadStop; }, get title() { return title; }, fx, grandpaSeat, get first() { return first; }, country, get cases() { return cases; }, get profile() { return profile; }, voice, get morning() { return morning; }, get birth() { return birth; }, get today() { return today; } } });
 
   // ---- vehicle feedback
   let shake = 0;
@@ -291,7 +310,13 @@ async function boot(): Promise<void> {
       }
     }
   };
-  vehicle.onBump = (s) => { shake = Math.min(1.2, shake + s * 0.25); if (s > 0.2) audio.rattle(s); if (started) mission.jolt(s); };
+  vehicle.onBump = (s) => {
+    shake = Math.min(1.2, shake + s * 0.25);
+    if (s > 0.2) audio.rattle(s);
+    if (started) { mission.jolt(s); cases?.jolt(s); }
+    // the morning's passenger to the maternity feels every pothole
+    if (birth && s > 0.5 && birth.cool <= 0) { const b = birth.mc.ride!.bump; ui.dialogue('Зульфия', b[birth.said++ % b.length], null); birth.cool = 6; birth.bumps++; }
+  };
   vehicle.onShift = () => audio.gearShift();
   vehicle.onSplash = (s) => audio.splash(s);
   vehicle.onPlank = () => audio.plank(clamp(Math.abs(vehicle.vx) / 8, 0.3, 1));
@@ -387,11 +412,24 @@ async function boot(): Promise<void> {
 
   // the day's roadside encounters: riders, favours, a nail in a tyre
   let encounters: Encounters | null = null;
+  /** The day's «случаи» (Cases.ts): the neighbours, the beekeeper, the wedding. */
+  let cases: Cases | null = null;
+  /** Bees in the cab, the day the beekeeper rides with his hives. */
+  const bees = new BeeCloud(cabin.group);
+  let beeLevel = 0;
+  /**
+   * The morning a neighbour's wife is in labour (MORNING_CASES): she rides to the district hospital,
+   * across from the post office, before the route sheet; what it earns goes into the day's journal.
+   */
+  let birth: { mc: MorningCase; t: number; cool: number; said: number; bumps: number; hurried: boolean } | null = null;
+  let morningExtra: [string, number, number] | null = null;
   let story: MuhaStory | null = null;
   let roadside: RoadsideFix | null = null;
   let roadStop: RoadStop | null = null;
   let letters: Letters | null = null;
   let news: RadioNews | null = null;
+  /** The cab has one passenger seat: whoever of the day's stories has someone in it. */
+  const seatTaken = () => !!(encounters?.riding || cases?.riding || roadStop?.riding || story?.aboard);
   const newEncounters = (resume?: DaySave) => {
     wearTold.steer = wearTold.rad = false;
     // mending at the roadside: never at an addressee's door, with the GAI about, or with a flat (the spare comes first)
@@ -402,6 +440,20 @@ async function boot(): Promise<void> {
       toast: (text) => ui.toast(text, 3),
       blackout: (title, text, sec, mid, done, stamp) => ui.blackout(title, text, sec, mid, done, stamp),
     }, () => vehicle.flat || (police.state !== 'idle' && police.state !== 'cool') || mission.stops.some((s) => !s.done && Math.hypot(s.pos.x - vehicle.x, s.pos.z - vehicle.z) < 40));
+    cases?.dispose();
+    cases = new Cases(world, ground, mission, {
+      choice: (who, line, opts, pick) => { audio.paper(); ui.choice(who, line, opts, pick); },
+      closeChoice: () => ui.closeChoice(),
+      choiceOpen: () => ui.choiceOpen,
+      say: (who, line) => { ui.dialogue(who, line, null); audio.paper(); },
+      hint: (id, text, keys) => ui.hint(id, text, keys),
+      toast: (text) => ui.toast(text, 3),
+      blackout: (title, text, sec, mid, done, stamp) => ui.blackout(title, text, sec, mid, done, stamp),
+      bees: (k) => { beeLevel = k; audio.buzz(k); },
+      bleat: () => audio.animal('sheep'),
+      seatTaken,
+    }, today.day, profile.cases);
+    const cs = cases;
     encounters?.dispose();
     encounters = new Encounters(world, ground, mission, {
       choice: (who, line, opts, pick) => { audio.paper(); ui.choice(who, line, opts, pick); },
@@ -412,9 +464,10 @@ async function boot(): Promise<void> {
       toast: (text) => ui.toast(text, 3),
       blackout: (title, text, sec, mid, done, stamp) => ui.blackout(title, text, sec, mid, done, stamp),
       flat: () => { audio.impact(3); shake = Math.min(1.4, shake + 0.7); },
-    }, today.day);
+      seatTaken,
+    }, today.day, cs.roadRider);
     const enc = encounters;
-    mission.hold = () => enc.riding;
+    mission.hold = () => enc.riding || cs.riding;
     // Muha's story, from where the last finished day left it
     story?.dispose();
     story = new MuhaStory(world, mission, police, {
@@ -429,6 +482,7 @@ async function boot(): Promise<void> {
       boom: (level) => audio.boombox(level),
       shout: (level) => audio.shout(level),
       slam: (level) => audio.doorSlam(level),
+      seatTaken,
     }, today.day, profile.muha);
     // «Тормозят на дороге»: once in the service, never on the day of the sawmill's block
     roadStop?.dispose();
@@ -447,16 +501,18 @@ async function boot(): Promise<void> {
       fine: (amount, note) => { mission.record('fine', amount); ui.toast(`Штраф ${rub(amount)} · ${note}`, 3); },
       takeRadio: () => audio.tape?.takeAway(),
       police: () => police.state === 'signal' || police.state === 'talk',
-    }, today.day, resume?.roadStop ?? profile.roadStop, !!story?.busyToday);
+      seatTaken,
+    }, today.day, resume?.roadStop ?? profile.roadStop, !!story?.busyToday || cs.busyToday);
     // the radio's words between the songs, for this day
     news = new RadioNews(profile);
+    voice.prefetch(news.all);
     letters = new Letters(mission, {
       say: (who, line) => { ui.dialogue(who, line, null); audio.paper(); },
       toast: (text) => ui.toast(text, 3),
     }, today.day, resume?.letters ?? profile.letters);
     const rs = roadStop;
     const st = story;
-    mission.hold = () => enc.riding || rs.riding || st.aboard;
+    mission.hold = () => enc.riding || rs.riding || st.aboard || cs.riding;
   };
 
   /**
@@ -475,6 +531,7 @@ async function boot(): Promise<void> {
   /** Between days, and on the morning drive before the route sheet: no riders, no Muha, no roadside stop. */
   const endDaySystems = () => {
     encounters?.dispose(); encounters = null;
+    cases?.dispose(); cases = null;
     story?.dispose(); story = null;
     roadStop?.dispose(); roadStop = null;
     audio.tape?.giveBack();
@@ -504,6 +561,7 @@ async function boot(): Promise<void> {
   let morning = false;
   /** The board was opened at the post office door after the morning drive: the van stays where it stopped. */
   let fromMorning = false;
+  /** The word at the porch in the mornings: өләсәй's, while the grandfather is in hospital… */
   const MORNING = [
     'Чай попил, улым? Беги, Зинаида ждать не любит.',
     'Перемячи в дорогу, в газетке. Одну Зинаиде Павловне дай — она любит.',
@@ -511,11 +569,43 @@ async function boot(): Promise<void> {
     'Шапку надень! …Ну, хоть шарф. Зинаида, поди, уже мешки разложила.',
     'Әсәй с ночной пришла, спит. Тихонько со двора, не газуй под окнами.',
   ];
+  /**
+   * …and once he is home, his or hers, by turns — those that fit the day: the hat in the cold months,
+   * a bow to Нина Петровна when the route goes through Sosnovka, Степаныч's when it goes to the hamlet.
+   */
+  type MorningDay = { stops: Set<string>; cold: boolean };
+  const MORNING_HOME: [string, string, ((t: MorningDay) => boolean)?][] = [
+    ['Картатай', 'Масло проверил? Проверь. Я в твои годы не проверял — потом мост менял.'],
+    ['Өләсәй', 'Перемячи в дорогу, в газетке. Одну Зинаиде Павловне дай — она любит.'],
+    ['Картатай', 'Нине Петровне — поклон. Скажи, Урал ещё живой, на лавке сидит, всех пересидит.', (t) => t.stops.has('sosnovka')],
+    ['Өләсәй', 'Шапку надень! …Ну, хоть шарф. Картатай вон без шапки — и что? Кашляет.', (t) => t.cold],
+    ['Картатай', 'На хутор поедешь — Степанычу привет. Скажи, в субботу — на рыбалку, на зорьке. Я сказал.', (t) => t.stops.has('khutor')],
+    ['Өләсәй', 'Әсәй с ночной пришла, спит. Тихонько со двора, не газуй под окнами.'],
+    ['Картатай', 'Митяй опять с утра у ворот — что-то затевает. Ты, улым, не вмешивайся. Ну, разве что чуть-чуть.'],
+  ];
+  /** The day's word: one that fits it, in turn after the one said the played day before (worked out the same way). */
+  const morningHome = (day: number): [string, string] => {
+    const b = day === profile.day ? today : boardFor(day, profile.trust);
+    const t: MorningDay = { stops: new Set(b.orders.map((o) => o.dest)), cold: b.season !== 'spring' && b.season !== 'autumn' || /октябр/.test(b.date) };
+    const n = MORNING_HOME.length;
+    const said = day - 1 > GRANDPA_HOME ? morningHome(day - 1)[1] : null;
+    const prev = said !== null ? MORNING_HOME.findIndex(([, l]) => l === said) : (day - 2 + n) % n;
+    for (let k = 1; k <= n; k++) {
+      const [who, line, when] = MORNING_HOME[(prev + k) % n];
+      if (!when || when(t)) return [who, line];
+    }
+    return [MORNING_HOME[0][0], MORNING_HOME[0][1]];
+  };
+  /** The fade before a morning: how long since the last played day. */
+  const weekTitle = (day: number): string => {
+    const n = daysBetween(day - 1);
+    return n <= 3 ? 'Через пару дней' : n <= 9 ? 'Неделя спустя' : n <= 17 ? 'Две недели спустя' : n <= 24 ? 'Три недели спустя' : 'Месяц спустя';
+  };
   const ZINAIDA = [
     'Явился. Путевой лист на стойке, мешки — сам знаешь где.',
     'Доброе утро, Тимур. Почта сегодня тяжёлая — смотри не растеряй.',
     'Опять последний! Ладно, ладно — вот твой лист. Распишись.',
-    'А, улым. Чайник горячий, но тебе некогда. Держи лист.',
+    'А, Тимурка. Чайник горячий, но тебе некогда. Держи лист.',
   ];
   const placeHome = () => { const h = world.homePose; vehicle.place(h.x, h.z, h.yaw, ground); };
   /**
@@ -526,8 +616,8 @@ async function boot(): Promise<void> {
     grandpaSeat.visible = on;
     if (world.home.grandpa) world.setAway(world.home.grandpa, on || inHospital());
   };
-  /** In hospital in Ufa: from the first morning's goodbye at the post office on. */
-  const inHospital = () => profile.runs >= 1 || seenOff;
+  /** In hospital in Ufa: from the first morning's goodbye at the post office until he is home (GRANDPA_HOME). */
+  const inHospital = () => profile.day < GRANDPA_HOME && (profile.runs >= 1 || seenOff);
   /** The grandfather has been seen off at the post office this morning (he waits on its porch for the bus). */
   let seenOff = false;
   /** «Первый чистый лист» is due as the first route begins (after the goodbye and the keys). */
@@ -548,6 +638,11 @@ async function boot(): Promise<void> {
     const firstDay = profile.runs === 0;
     seenOff = firstSheetDue = false;
     showPorch(false);
+    birth = null;
+    morningExtra = null;
+    // a neighbour at the gate before dawn: the morning starts dark
+    const sky = !firstDay ? morningCase(profile.day, profile.cases)?.sky : undefined;
+    if (sky) atmo.setDayWeather(sky);
     seatGrandpa(firstDay);
     first = firstDay ? new FirstMorning(world, ground, {
       say: (who, line) => { ui.dialogue(who, line, null); audio.paper(); },
@@ -570,12 +665,71 @@ async function boot(): Promise<void> {
         });
         return;
       }
-      ui.choice('Өләсәй', MORNING[(profile.day - 1) % MORNING.length], ['Поехали — до почты своим ходом', 'Сразу к почте'], (i) => {
+      // the week between (a fade, skippable), the neighbour with something that will not wait, then the word at the porch
+      const day = profile.day;
+      const card = () => {
         if (!morning) return;
-        if (i === 1) { reset(); vehicle.handbrake = true; atPostDoor(); return; }
-        ui.hint('morning', 'Почта — в Ключевске: по улице и лесом до трассы, там направо — мимо поста ГАИ, в посёлок. Встань у дверей, где Зинаида Павловна, и затяни ручник — там путевой лист.', 'Пробел');
-      });
-    }, 1500);
+        audio.paper();
+        const [who, line] = day === GRANDPA_HOME
+          ? ['Картатай', 'Ну что, почтальон. Мне теперь — на лавке сидеть, кур считать. А ты — езжай. Вечером расскажешь, как там Нина Петровна.']
+          : day > GRANDPA_HOME ? morningHome(day) : ['Өләсәй', MORNING[(day - 1) % MORNING.length]];
+        ui.choice(who, line, ['Поехали — до почты своим ходом', 'Сразу к почте'], (i) => {
+          if (!morning) return;
+          if (i === 1) { reset(); vehicle.handbrake = true; atPostDoor(); return; }
+          ui.hint('morning', 'Почта — в Ключевске: по улице и лесом до трассы, там направо — мимо поста ГАИ, в посёлок. Встань у дверей, где Зинаида Павловна, и затяни ручник — там путевой лист.', 'Пробел');
+        });
+      };
+      const mc = morningCase(day, profile.cases);
+      const then = () => { if (morning) { if (mc) playMorningCase(mc, card); else card(); } };
+      const week = weekBefore(day, profile.cases);
+      if (week) ui.blackout(weekTitle(day), week, clamp(2.5 + week.length * 0.035, 4, 9), () => {}, then, '', true);
+      else then();
+    }, 900);
+  };
+  /** The neighbour at the gate before the drive (Cases.MORNING_CASES): a ride to the hospital, or a tow in the frost. */
+  const playMorningCase = (mc: MorningCase, next: () => void) => {
+    const mark = (m: 'done' | 'refused') => { profile.cases = { ...(profile.cases ?? {}), [mc.id]: m }; };
+    audio.paper();
+    ui.choice(mc.who, mc.ask, mc.options, (i) => {
+      if (!morning) return;
+      if (i === 1) {
+        mark('refused');
+        ui.dialogue(mc.who, mc.refused, null);
+        setTimeout(next, 3200);
+        return;
+      }
+      mark('done');
+      if (mc.fade) {
+        const f = mc.fade;
+        ui.blackout(f.title, f.text, 4.5, () => {}, () => {
+          if (!morning) return;
+          ui.dialogue(mc.who, f.thanks, null);
+          morningExtra = [`Выручил соседа · ${mc.who.toLowerCase()}`, f.money, 2];
+          setTimeout(next, 3400);
+        }, 'Трос');
+      } else if (mc.ride) {
+        birth = { mc, t: 0, cool: 4, said: 0, bumps: 0, hurried: false };
+        ui.toast(`${mc.who.split(',')[0]} и Зульфия — в кабине · райбольница, Ключевск`, 3.2);
+        ui.hint('birth', mc.ride.hint, 'F');
+      }
+    });
+  };
+  /** The drive to the district hospital, across from the post office: in at the door, then on to the post. */
+  const birthUpdate = (dt: number) => {
+    const b = birth!, R = b.mc.ride!;
+    b.t += dt; b.cool -= dt;
+    if (!b.hurried && b.t > 140) { b.hurried = true; ui.dialogue('Зульфия', R.hurry, null); }
+    const h = world.hospital.pos;
+    if (Math.hypot(h.x - vehicle.x, h.z - vehicle.z) < 26 && Math.abs(vehicle.speedKmh) < 2) {
+      birth = null;
+      ui.clearHint('birth');
+      ui.dialogue(R.arrive[0], R.arrive[1], null);
+      world.hospital.nurse.wave = 4;
+      audio.chime();
+      // a smooth ride is remembered (the bumps are counted)
+      morningExtra = [R.label, R.money, Math.max(2, R.trust - Math.floor(b.bumps / 2))];
+      setTimeout(() => ui.hint('morning', 'Теперь — к почте, через дорогу. Встань у дверей и затяни ручник.', 'Пробел'), 3000);
+    }
   };
   /**
    * At the post office door: Zinaida's word, and the day's orders on the counter. The first
@@ -676,7 +830,7 @@ async function boot(): Promise<void> {
     sandbox = free;
     const quiet = !!at.home;
     // the morning's drive to the post office, before the route sheet, has no roadside encounters and no Muha yet
-    if (!free) { mission = newMission(orders); atmo.setDayWeather(today.weather); snowNow = today.snow; if (!quiet) newEncounters(at.resume); else if (at.home) endDaySystems(); if (!quiet && muhaHelps()) mission.addTime(-90); }
+    if (!free) { mission = newMission(orders); atmo.setDayWeather(today.weather); dayWorld(); snowNow = today.snow; if (!quiet) newEncounters(at.resume); else if (at.home) endDaySystems(); if (!quiet && muhaHelps()) mission.addTime(-90); }
     else { atmo.setDayWeather(null); story?.dispose(); story = null; }
     if (at.resume) mission.restore(at.resume);
     if (!free) { policeDay(); seatGrandpa(false); }
@@ -730,6 +884,8 @@ async function boot(): Promise<void> {
       const text = !sandbox && !ui.choiceOpen && !first && !prologue ? news?.next() ?? null : null;
       if (!text) return 0;
       ui.dialogue('Радио «Заречье» · 101,7', text, null);
+      voice.note('Радио «Заречье»', text, 'radio');
+      audio.tape!.presenterClip = voice.bufferNow(text);
       return text.length;
     };
     // the first morning the grandfather teaches the ignition: the engine waits for Enter
@@ -768,7 +924,19 @@ async function boot(): Promise<void> {
     });
     prologue.start();
   };
-  ui.onPrologue = () => { if (!started && !ui.boardOpen && !ui.storyOpen) runPrologue(); };
+  // «Новая игра» over a career: wiped, and straight into the opening page and the first morning
+  ui.onNewGame = () => {
+    if (started || ui.boardOpen || ui.storyOpen) return;
+    wipeCareer();
+    runPrologue();
+  };
+  // «В главное меню» from the pause: the day saved where the van stands, and the page starts over at the title
+  // (a fresh start of everything, rather than unwinding a day in progress piece by piece)
+  ui.onToTitle = () => {
+    checkpoint();
+    audio.music(null, 0.4);
+    ui.leave(() => location.reload());
+  };
   ui.onStart = () => {
     if (started || ui.boardOpen || ui.storyOpen) return;
     if (!profile.prologue) { runPrologue(); return; }
@@ -789,7 +957,7 @@ async function boot(): Promise<void> {
    */
   const startDay = (orders: Order[], at: 'post' | 'here' | 'home' = 'post') => {
     const home = at === 'home';
-    atmo.setDayWeather(today.weather);
+    atmo.setDayWeather(today.weather); dayWorld();
     snowNow = today.snow;
     vehicle.engine = 'off';
     vehicle.handbrake = true;
@@ -812,6 +980,7 @@ async function boot(): Promise<void> {
     mission = newMission(orders);
     mission.relocate(vehicle.x, vehicle.z);
     if (!sandbox && !home && muhaHelps()) mission.addTime(-90);
+    if (!home && morningExtra) { mission.extra(...morningExtra); morningExtra = null; }
     vehicle.flat = false;
     ui.closeChoice();
     if (!sandbox) { if (home) endDaySystems(); else newEncounters(); }
@@ -885,6 +1054,8 @@ async function boot(): Promise<void> {
     const controls = held ? { steer: 0, gas: 0, brake: 0 }
       : started && input.enabled && !ui.mapOpen ? { steer: input.steer, gas: input.gas, brake: input.brake } : { steer: 0, gas: 0, brake: 0 };
     // the first morning, while the grandfather asks to pull in at the post: the van eases off by itself
+    // bees loose in the cab twitch the wheel
+    if (cases?.steerNudge) controls.steer = clamp(controls.steer + cases.steerNudge, -1, 1);
     const assist = morning ? first?.assist ?? null : null;
     if (assist !== null && Math.abs(vehicle.speedKmh) > assist) {
       controls.gas = 0;
@@ -967,6 +1138,7 @@ async function boot(): Promise<void> {
     world.setAtmosphere(atmo.state.dark, atmo.state.wet, atmo.state.skyColor, atmo.state.fogColor);
     world.setSnow(snowNow);
     world.update(dt, t, camWorld);
+    country.update(dt, started ? { x: vehicle.x, z: vehicle.z, speed: Math.abs(vehicle.vx) } : { x: camWorld.x, z: camWorld.z, speed: 0 }, { rain: atmo.state.rain, dark: atmo.state.dark, snow: snowNow });
     const life = world.updateLife(dt, t, vehicle.x, vehicle.z, pvx, pvz, atmo.state.dark, vehicle.yaw);
     // falling snow melts on the warm glass: the wipers have work in winter too
     const onGlass = Math.max(atmo.state.rain, atmo.state.snow * 0.5);
@@ -996,7 +1168,7 @@ async function boot(): Promise<void> {
     fx.update(dt);
 
     if (started) {
-      if (!sandbox) { encounters?.update(dt, vehicle, mission.routeS); story?.update(dt, vehicle); roadside?.update(dt, vehicle); roadStop?.update(dt, vehicle); }
+      if (!sandbox) { encounters?.update(dt, vehicle, mission.routeS); cases?.update(dt, vehicle); story?.update(dt, vehicle); roadside?.update(dt, vehicle); roadStop?.update(dt, vehicle); }
       if (!sandbox) mission.update(dt, vehicle, horn, { lights: cabin.lightsOn, wipers: cabin.wipersOn, rain: Math.max(atmo.state.rain, atmo.state.snow * 0.5), dark: atmo.state.dark });
       const m = ground.marks;
       const s = sandbox ? sandboxS : mission.routeS;
@@ -1020,7 +1192,9 @@ async function boot(): Promise<void> {
       if (!sandbox) police.update(dt, t, vehicle.x, vehicle.z, pvx, pvz, vehicle.yaw);
       // the morning: stopped on the handbrake at the post office door, the route sheet
       if (morning && first) first.update(dt, vehicle);
-      if (morning && !ui.boardOpen && (!first || first.atDoor) && vehicle.handbrake && Math.abs(vehicle.speedKmh) < 1 && Math.hypot(world.postDoor.x - vehicle.x, world.postDoor.z - vehicle.z) < (first ? 22 : 16)) atPostDoor();
+      if (birth) birthUpdate(dt);
+      bees.update(dt, beeLevel);
+      if (morning && !birth && !ui.boardOpen && (!first || first.atDoor) && vehicle.handbrake && Math.abs(vehicle.speedKmh) < 1 && Math.hypot(world.postDoor.x - vehicle.x, world.postDoor.z - vehicle.z) < (first ? 22 : 16)) atPostDoor();
       // the autosave on the road, every so often
       saveT -= dt;
       if (saveT < 0) { saveT = 20; checkpoint(); }

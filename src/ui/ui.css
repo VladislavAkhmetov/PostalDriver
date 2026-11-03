@@ -105,6 +105,9 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: var(--nigh
 .btn-primary:hover { transform: translateY(-1px); }
 .btn-primary:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--blue-deep); }
 .btn-line { padding: var(--s-2) var(--s-4); border: 1px solid var(--ink-soft) !important; border-radius: var(--r-2); font-family: var(--f-narrow) !important; font-size: var(--t-md) !important; letter-spacing: 0.08em; text-transform: uppercase; text-align: left; }
+.menu .btn-line.warn { color: #9a3a1c !important; border-color: #9a3a1c !important; }
+.leave-veil { position: fixed; inset: 0; z-index: 9999; background: #0b0b0b; opacity: 0; transition: opacity 0.4s ease; pointer-events: all; }
+.leave-veil.on { opacity: 1; }
 .btn-line:hover { background: rgba(29, 78, 166, 0.08) !important; border-color: var(--blue) !important; color: var(--blue) !important; }
 
 /* ---------- Title: the live scene, grain, a stencilled name and a quiet menu ---------- */
@@ -329,6 +332,9 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: var(--nigh
 
 .blackout { position: absolute; inset: 0; display: grid; place-items: center; padding: var(--s-6); background: #070707; z-index: 40; pointer-events: auto; transition: opacity 1.2s ease; }
 .blackout.out { opacity: 0; pointer-events: none; }
+.bo-skip { display: inline-flex; align-items: center; gap: var(--s-2); margin-top: var(--s-4); font-family: var(--f-narrow); font-size: var(--t-xs); letter-spacing: 0.12em; text-transform: uppercase; color: var(--paper); opacity: 0; animation: bo-skip-in 0.8s 2.4s ease forwards; }
+.bo-skip .kbd { color: var(--paper); }
+@keyframes bo-skip-in { to { opacity: 0.55; } }
 /* the story between drives: a page of the family album — a photo print with the camera's date, the words beside it */
 .blackout.story { z-index: 42; overflow: hidden; padding: clamp(var(--s-4), 5vw, var(--s-7)); transition: opacity 0.6s ease;
   background: radial-gradient(120% 95% at 32% 42%, var(--album) 0%, var(--night) 62%, var(--night-deep) 100%); }

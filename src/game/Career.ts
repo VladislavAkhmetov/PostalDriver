@@ -119,7 +119,7 @@ const DESTS: Dest[] = [
       ['medicine', 'Инсулин и шприцы для медпункта. В холодке, не трясти.'],
       ['pension', 'Пенсии на Кайынлы — Фарида-апа раздаст по дворам.'],
       ['papers', '«Кызыл таң» и районка на татарском, подписка сельсовета.'],
-      ['letters', 'Письма из Казани и из армии — сыну Галиевых, с части.'],
+      ['letters', 'Письма из Казани и из армии — сыну Сафиных, с части.'],
       ['parcel', 'Банки с вареньем от дочки из Уфы. Стекло!'],
     ],
   },
@@ -180,10 +180,10 @@ const REQUESTS: Record<string, [string, string, number, boolean][]> = {
   sosnovka: [
     ['Валентина из сельпо', 'Мешок сахара Нине Петровне — та к варенью просила.', 15000, false],
     ['Сосед по подъезду', 'Банки с соленьями тёще в Сосновку. Осторожно, стекло.', 18000, true],
-    ['Учительница из Ключевска', 'Стопку учебников для сосновской начальной школы.', 12000, false],
+    ['Учительница Анна Сергеевна', 'Стопку учебников для сосновской начальной школы.', 12000, false],
   ],
   zarechye: [
-    ['Тракторист Колька', 'Канистру масла — оставь у сельпо, он заберёт.', 20000, false],
+    ['Колька из МТС', 'Канистру масла — оставь у сельпо, он на тракторе заберёт.', 20000, false],
     ['Фельдшер райбольницы', 'Коробку бинтов и ваты в заречный медпункт.', 15000, false],
     ['Тётка с рынка', 'Ящик рассады в банках сестре в Заречье.', 16000, true],
   ],
@@ -193,7 +193,7 @@ const REQUESTS: Record<string, [string, string, number, boolean][]> = {
   ],
   kolkhoz: [
     ['Завхоз фермы', 'Ящик гвоздей и рулон рубероида на ферму.', 25000, false],
-    ['Жена зоотехника', 'Сумку с обедом и термос — Галине Ивановне.', 8000, true],
+    ['Муж Галины Ивановны', 'Сумку с обедом и термос — жене на ферму: «опять поесть забыла».', 8000, true],
   ],
   forestry: [
     ['Охотник Палыч', 'Сухари, чай и батарейки к рации — леснику.', 10000, false],
@@ -205,7 +205,7 @@ const REQUESTS: Record<string, [string, string, number, boolean][]> = {
   kainly: [
     ['Мулла из райцентра', 'Стопку календарей и книжек для мечети в Кайынлы.', 15000, false],
     ['Апа с рынка', 'Корзину яиц сестре в Кайынлы — к свадьбе печь будут.', 14000, true],
-    ['Тракторист Ильдар', 'Сальники и ремень — брату на Кайынлы, у него «Беларусь» встал.', 18000, false],
+    ['Механизатор Рамиль', 'Сальники и ремень — брату в Кайынлы, у него трактор встал.', 18000, false],
   ],
   camp: [
     ['Бывшая пионервожатая', 'Коробку старых фотографий — Михалычу, «пусть в лагере будут».', 12000, false],
@@ -215,23 +215,55 @@ const REQUESTS: Record<string, [string, string, number, boolean][]> = {
 const WEEKDAYS = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота', 'Воскресенье'];
 const MONTHS = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
 
-/** Day 1 is Wednesday, 17 September 1997; Sundays the post office is shut and the calendar skips them. */
+/**
+ * The season (docs/design.md, «Календарь сезона»): the working days that are played, a week or two
+ * apart — Timur works the ones in between too, off screen (the evening of each played day is the end
+ * of its week). From the first morning, Wednesday 17 September 1997, to the first working day of
+ * July 1998, back from the exams in Ufa; the beats of the year on their dates — the grandfather home in October,
+ * the first snow, New Year's week, the Old New Year, the 23rd of February and the 8th of March, the
+ * thaw, the spring, Sabantuy in June. After it the service goes on a week at a time.
+ */
+const SEASON: [number, number, number][] = [
+  [1997, 8, 17], [1997, 8, 19], [1997, 8, 23], [1997, 8, 29],
+  [1997, 9, 4], [1997, 9, 9], [1997, 9, 15], [1997, 9, 21], [1997, 9, 29],
+  [1997, 10, 5], [1997, 10, 13], [1997, 10, 19], [1997, 10, 27],
+  [1997, 11, 5], [1997, 11, 11], [1997, 11, 17], [1997, 11, 23], [1997, 11, 30],
+  [1998, 0, 14], [1998, 0, 29], [1998, 1, 10], [1998, 1, 23],
+  [1998, 2, 6], [1998, 2, 19], [1998, 3, 9], [1998, 3, 28],
+  [1998, 4, 15], [1998, 5, 13], [1998, 6, 20],
+];
+/** The played day the grandfather is home from hospital in Ufa (the Saturday of the first October week). */
+export const GRANDPA_HOME = 5;
+/** Played days in the season (the last is July's, the exams). */
+export const SEASON_DAYS = SEASON.length;
+
+/** The date of a played day (UTC midnight): from the table, then a week on each time (never a Sunday). */
+function dateFor(day: number): Date {
+  const i = Math.max(1, day) - 1;
+  if (i < SEASON.length) { const [y, m, d] = SEASON[i]; return new Date(Date.UTC(y, m, d)); }
+  const [y, m, d] = SEASON[SEASON.length - 1];
+  const t = new Date(Date.UTC(y, m, d + 7 * (i - SEASON.length + 1)));
+  if (t.getUTCDay() === 0) t.setUTCDate(t.getUTCDate() + 1);
+  return t;
+}
+
+/** Calendar days between one played day and the next (the week that passed in between). */
+export function daysBetween(day: number): number {
+  return Math.round((dateFor(day + 1).getTime() - dateFor(day).getTime()) / 86400000);
+}
+
 /** The calendar of the service: «Пятница, 19 сентября» and the postmark's «19·09·97». */
 export function calendar(day: number): { text: string; short: string } {
-  const d = new Date(Date.UTC(1997, 8, 17));
-  let n = day - 1;
-  while (n > 0) { d.setUTCDate(d.getUTCDate() + 1); if (d.getUTCDay() !== 0) n--; }
+  const d = dateFor(day);
   const pad = (x: number) => String(x).padStart(2, '0');
-  return { text: dateOf(day).text, short: `${pad(d.getUTCDate())}·${pad(d.getUTCMonth() + 1)}·97` };
+  return { text: dateOf(day).text, short: `${pad(d.getUTCDate())}·${pad(d.getUTCMonth() + 1)}·${String(d.getUTCFullYear()).slice(2)}` };
 }
 
 /** The working day's date: month (0 = January), day of the month, weekday (0 = Monday). */
 export function dateParts(day: number): { y: number; m: number; d: number; wd: number } { const x = dateOf(day); return { y: x.y, m: x.m, d: x.d, wd: x.wd }; }
 
 function dateOf(day: number): { text: string; wd: number; y: number; m: number; d: number } {
-  const d = new Date(Date.UTC(1997, 8, 17));
-  let n = day - 1;
-  while (n > 0) { d.setUTCDate(d.getUTCDate() + 1); if (d.getUTCDay() !== 0) n--; }
+  const d = dateFor(day);
   const wd = (d.getUTCDay() + 6) % 7;
   return { text: `${WEEKDAYS[wd]}, ${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`, wd, y: d.getUTCFullYear(), m: d.getUTCMonth(), d: d.getUTCDate() };
 }
@@ -267,6 +299,20 @@ const SEASON_WEATHER: Partial<Record<Season, [string | null, string, number][]>>
   ],
 };
 
+/**
+ * What only makes sense at its time of year (month 0…11): seedlings in the spring, kumys while the
+ * mares are milked, eggs for Kainly's wedding baking in the weeks before it (Cases.ts, 13 November).
+ */
+const SEASONAL: [RegExp, (m: number, d: number) => boolean][] = [
+  [/[Рр]ассад/, (m) => m >= 2 && m <= 4],
+  [/кумыс/, (m) => m >= 4 && m <= 8],
+  [/к свадьбе/, (m, d) => (m === 9 && d >= 15) || (m === 10 && d <= 13)],
+  // the berries from June, the honey harvest from the sainfoin and the lime
+  [/к варенью/, (m) => m >= 5 && m <= 8],
+  [/под мёд/, (m) => m >= 4 && m <= 8],
+];
+const inSeason = (note: string, m: number, d: number) => SEASONAL.every(([re, ok]) => !re.test(note) || ok(m, d));
+
 /** The morning at the post office: today's waybill by the timetable, and the requests. Same day, same morning. */
 export function boardFor(day: number, _trust = 0): DayInfo {
   const r = mulberry32(day * 7919 + 97);
@@ -291,7 +337,7 @@ export function boardFor(day: number, _trust = 0): DayInfo {
   for (const d of stops) {
     // the first day is the original run: a pension to Sosnovka and jars to Zarechye
     if (day === 1) { add(d, d.kinds[0]); continue; }
-    const kinds = d.kinds.filter(([k]) => k !== 'pension' || pensionDays);
+    const kinds = d.kinds.filter(([k, note]) => (k !== 'pension' || pensionDays) && inSeason(note, date.m, date.d));
     const n = 1 + (r() < 0.5 ? 1 : 0);
     const used = new Set<OrderKind>();
     for (let i = 0; i < n && used.size < kinds.length; i++) {
@@ -303,18 +349,31 @@ export function boardFor(day: number, _trust = 0): DayInfo {
     }
   }
   // two or three requests for places on today's route
-  const pool = stops.flatMap((d) => (REQUESTS[d.id] ?? []).map((q) => [d, q] as const));
+  const pool = stops.flatMap((d) => (REQUESTS[d.id] ?? []).filter((q) => inSeason(q[1], date.m, date.d)).map((q) => [d, q] as const));
   const requests: Order[] = [];
   const nReq = day === 1 ? 1 : 2 + (r() < 0.4 ? 1 : 0);
   while (requests.length < nReq && pool.length) {
     const [d, [from, note, pay, fragile]] = pool.splice(Math.floor(r() * pool.length), 1)[0];
     requests.push({ id: `${day}-r${requests.length}`, dest: d.id, kind: 'parcel', title: 'Просьба', note, pay, fragile, due: null, from });
   }
-  // New Year's week: cards and parcels for everyone on the route
+  // the holidays of the year: cards (and mimosa) for everyone on the route, and Zinaida's word for the day
   let note: string | null = null;
+  const toAll = (key: string, title: string, what: string) => { for (const st of stops) orders.push({ id: `${day}-${key}-${st.id}`, dest: st.id, kind: 'letters', title, note: what, pay: 0, fragile: false, due: null }); };
   if (date.m === 11 && date.d >= 22) {
     note = 'Зинаида Павловна: «Новогодняя неделя — открытки и посылки мешками. Без опозданий — будет премия к празднику».';
-    for (const st of stops) orders.push({ id: `${day}-ny-${st.id}`, dest: st.id, kind: 'letters', title: 'Новогодние открытки', note: 'Полный мешок: «С Новым 1998 годом!», «Здоровья и счастья», «Ждём в гости».', pay: 0, fragile: false, due: null });
+    toAll('ny', 'Новогодние открытки', 'Полный мешок: «С Новым 1998 годом!», «Здоровья и счастья», «Ждём в гости».');
+  } else if (date.m === 0 && date.d >= 12 && date.d <= 15) {
+    note = 'Зинаида Павловна: «Старый Новый год, а открытки всё идут. Кто к Новому не успел — к Старому шлёт».';
+  } else if (date.m === 1 && date.d >= 19 && date.d <= 23) {
+    note = 'Зинаида Павловна: «Двадцать третье февраля — день мужской. Открытки мужикам — по всему маршруту. И тебе будет — вечером».';
+    toAll('feb', 'Открытки к 23 Февраля', '«С Днём Советской Армии!» — по старой памяти, и «Защитнику Отечества» — по новой.');
+  } else if (date.m === 2 && date.d >= 2 && date.d <= 7) {
+    note = 'Зинаида Павловна: «Восьмое марта на носу. Открытки и мимоза из райцентра — по всему маршруту. Мимоза нежная, не помни».';
+    toAll('mar', 'Мимоза и открытки к 8 Марта', 'Веточки мимозы в газете и открытки с тюльпанами — женщинам на маршруте.');
+  } else if (date.m === 5 && date.d >= 10 && date.d <= 14) {
+    note = 'Зинаида Павловна: «В Сосновке сегодня Сабантуй! Скачки, бег в мешках, столб с петухом. Развезёшь почту — иди гуляй».';
+  } else if (day === GRANDPA_HOME) {
+    note = 'Зинаида Павловна: «Урал-агай вернулся? Слава богу. Передай — пусть заходит, чай у меня всегда есть. Только пешком — я его знаю».';
   }
   return { day, date: date.text, weather, forecast, route: route.name, orders, requests, season, snow: snowOf(date.m, date.d), note };
 }
@@ -354,16 +413,16 @@ export interface Reckoning {
 export function reckon(done: Delivery[], fines: number, arrests: number, damage: number, trust: number, extras: [string, number, number][] = []): Reckoning {
   const journal: [string, string][] = [];
   const lines: [string, number, string?][] = [];
-  let dTrust = 0, premium = 0, clean = true;
+  let dTrust = 0, premium = 0, clean = true, broke = false, wasLate = false;
   for (const d of done) {
     // an old letter from the cupboard is written up by itself (Letters.ts)
     if (d.order.letter) continue;
     const notes: string[] = [];
     let ok = true;
-    if (d.late > 0) { notes.push(`опоздание ${Math.ceil(d.late / 60)} мин`); dTrust -= 1; ok = false; }
+    if (d.late > 0) { notes.push(`опоздание ${Math.ceil(d.late / 60)} мин`); dTrust -= 1; ok = false; wasLate = true; }
     else if (d.order.due !== null) dTrust += 2;
     else dTrust += 1;
-    if (d.order.fragile && d.cargo < 90) { notes.push(`побито ${Math.round(100 - d.cargo)} %`); ok = false; if (d.cargo < 60) dTrust -= 2; }
+    if (d.order.fragile && d.cargo < 90) { notes.push(`побито ${Math.round(100 - d.cargo)} %`); ok = false; broke = true; if (d.cargo < 60) dTrust -= 2; }
     if (!ok) clean = false;
     if (d.order.from) {
       // a request: paid in cash, less what broke
@@ -384,7 +443,11 @@ export function reckon(done: Delivery[], fines: number, arrests: number, damage:
   if (arrests) { journal.push(['Задержание ГАИ', 'объяснительная, минус к премии']); premium -= 5; dTrust -= 2; }
   const total = lines.reduce((a, [, v]) => a + v, 0);
   const after = Math.max(0, Math.min(100, trust + dTrust));
-  const word = dTrust >= 4 ? '«Люди звонили, хвалили. Так держать.»'
+  // the postmistress sees the whole day: the praise, and what broke, and the clock, and the militia
+  const word = arrests ? '«Из милиции звонили. Объяснительная — завтра у меня на столе. Почта, Тимур, а не гонки.»'
+    : dTrust >= 1 && broke ? '«Люди-то хвалят, а хрупкое — побил. Хвалю — наполовину. Тише на ямах.»'
+    : dTrust >= 1 && wasLate ? '«Люди-то довольны, а ждали тебя. Часы тебе подарить, что ли?»'
+    : dTrust >= 4 ? '«Люди звонили, хвалили. Так держать.»'
     : dTrust >= 1 ? '«Нормально съездил. Завтра — новый путевой лист.»'
     : dTrust === 0 ? '«Без происшествий — и то хорошо.»'
     : '«Жалобы были. Ничего, бывает — завтра исправишься.»';
@@ -413,22 +476,24 @@ export function paydays(book: PayBook, day: number): { lines: [string, number, s
   const lines: [string, number, string?][] = [], notes: [string, string][] = [];
   const { y, m, d } = dateOf(day);
   const keys: [string, number, number, boolean][] = [];
-  const prevM = m === 0 ? 11 : m - 1, prevY = m === 0 ? y - 1 : y;
-  // last month's main pay is due as soon as the new month starts; this month's from the 28th
-  if (!(prevY === 1997 && prevM < 8)) keys.push([`${prevY}-${prevM}-B`, prevY, prevM, true]);
-  // he starts on the 17th of September: no advance for that month
-  if (d >= 15 && !(y === 1997 && m === 8)) keys.push([`${y}-${m}-A`, y, m, false]);
-  if (d >= 28) keys.push([`${y}-${m}-B`, y, m, true]);
+  // every month since September 1997: the advance from the 15th, the main pay from the 28th —
+  // all that has fallen due by today (a week or two passes between played days, so a payday may lie between)
+  for (let yy = 1997, mm = 8; yy < y || (yy === y && mm <= m); mm === 11 ? (yy++, mm = 0) : mm++) {
+    const past = yy < y || mm < m;
+    // he starts on the 17th of September: no advance for that month
+    if ((past || d >= 15) && !(yy === 1997 && mm === 8)) keys.push([`${yy}-${mm}-A`, yy, mm, false]);
+    if (past || d >= 28) keys.push([`${yy}-${mm}-B`, yy, mm, true]);
+  }
   for (const [key, , mm, main] of keys) {
     if (book.paid.includes(key)) continue;
     if (book.at[key] === undefined) {
       const rr = mulberry32(key.split('').reduce((a, c) => a * 31 + c.charCodeAt(0), 7) >>> 0);
-      book.at[key] = day + (rr() < 0.6 ? 0 : 1 + Math.floor(rr() * 4));
+      // more often than not on time; otherwise «нет денег в кассе» until the next time he is in
+      book.at[key] = day + (rr() < 0.65 ? 0 : 1);
     }
     const what = `${main ? 'Получка' : 'Аванс'} за ${MONTH_NOM[mm]}`;
     if (day < book.at[key]) {
-      const n = book.at[key] - day;
-      notes.push([what, `задерживают: «денег в кассе нет, ${n === 1 ? 'будет завтра' : `будет через ${n} ${n < 5 ? 'дня' : 'дней'}`}»`]);
+      notes.push([what, 'задерживают: «денег в кассе нет — на следующей неделе»']);
       continue;
     }
     book.paid.push(key);

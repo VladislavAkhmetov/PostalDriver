@@ -58,7 +58,8 @@ export class Mission {
   private stuckFor = 0;
   private stuckCount = 0;
   private bumps = 0;
-  private deliveredT = -1;
+  /** Mission time of the last hand-over, null before the first (the time itself may start below zero: Muha's head start). */
+  private deliveredT: number | null = null;
   finished = false;
   /** Parcels' condition, 100 % at the start. */
   cargo = 100;
@@ -327,7 +328,7 @@ export class Mission {
       this.step = step;
     } else this.step = 'near';
 
-    if (!this.nextStop && this.deliveredT > 0 && this.time - this.deliveredT > 9 && !this.hold?.()) {
+    if (!this.nextStop && this.deliveredT !== null && this.time - this.deliveredT > 9 && !this.hold?.()) {
       this.finished = true;
       this.ev.finished(this.stats(v.odometer));
     }

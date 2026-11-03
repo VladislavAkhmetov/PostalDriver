@@ -103,6 +103,16 @@ function postmark(date: string): string {
     <text x="60" y="65" font-size="13" text-anchor="middle" letter-spacing="1.5">${date}</text></svg>`;
 }
 
+/**
+ * The money box: «… из 3 000 000 ₽» and how far to Ufa — until the exams are passed (the three million
+ * went on them); after that, what is in it.
+ */
+function piggy(p: Profile): string {
+  if (p.exams === 'passed') return rub(p.money);
+  const saved = Math.min(1, p.money / GOAL);
+  return `${rub(p.money)} из ${rub(GOAL)} <span class="goal"><i style="width:${(saved * 100).toFixed(1)}%"></i></span>`;
+}
+
 export class UI {
   readonly root = el('div', 'ui');
   private titleEl!: HTMLElement;
@@ -174,10 +184,13 @@ export class UI {
   private ttItems: { el: HTMLButtonElement; go: () => void }[] = [];
   private ttSel = 0;
   private ttLast = performance.now();
-  private ttConfirm = false;
-  onNewCareer?: () => void;
-  /** Play the prologue again (from the title). */
-  onPrologue?: () => void;
+  /** A title entry asking to be pressed again (wiping the career): put back if the choice moves on. */
+  private ttConfirm: { el: HTMLButtonElement; label: string } | null = null;
+  /** «Новая игра»: everything from the start — the prologue, then the first morning with the grandfather. */
+  onNewGame?: () => void;
+  /** «В главное меню» from the pause: the day is saved and the title comes back. */
+  onToTitle?: () => void;
+  private toTitleBtn!: HTMLButtonElement;
   /** «Начать день заново»: drop the day saved part-way and start it from the morning at home. */
   onFreshDay?: () => void;
   /** The day saved part-way, for the title's «Продолжить» (null: none, the day starts at home). */
@@ -214,7 +227,18 @@ export class UI {
   private ttSelect(i: number): void {
     const n = this.ttItems.length;
     this.ttSel = ((i % n) + n) % n;
+    if (this.ttConfirm && this.ttItems[this.ttSel]?.el !== this.ttConfirm.el) this.unconfirm();
     this.ttItems.forEach((it, k) => it.el.classList.toggle('sel', k === this.ttSel));
+  }
+
+  /** A pressed-once «Новая игра» back to its own words. */
+  private unconfirm(): void {
+    const c = this.ttConfirm;
+    if (!c) return;
+    this.ttConfirm = null;
+    c.el.querySelector('.tt-label')!.textContent = c.label;
+    c.el.querySelector('.tt-note')!.textContent = 'всё сначала — с первого утра';
+    c.el.classList.remove('warn');
   }
 
   /** The title menu and postmark for the career as it stands. */
@@ -222,6 +246,8 @@ export class UI {
     const menu = this.titleEl.querySelector('.tt-menu')!;
     const cal = calendar(p.day);
     const fresh = p.day <= 1 && p.runs === 0;
+    // started at all: the opening page seen, or a day behind
+    const begun = !!p.prologue || !fresh;
     menu.innerHTML = '';
     this.ttItems = [];
     const item = (label: string, sub: string, go: () => void) => {
@@ -233,18 +259,27 @@ export class UI {
       this.ttItems.push({ el: b, go });
       return b;
     };
-    const cond = Math.round((1 - p.damage) * 100);
     const resume = !fresh && this.resume;
-    item(fresh ? 'Начать службу' : 'Продолжить', fresh ? `день первый · ${cal.text.toLowerCase()}` : resume ? `день ${p.day} · ${resume}` : `день ${p.day} · ${cal.text.toLowerCase()}<span class="tt-more"> · копилка ${rub(p.money)} из ${rub(GOAL)}</span>`, () => this.onStart?.());
-    if (resume) item('Начать день заново', 'утро, дома', () => this.onFreshDay?.());
-    if (!fresh) {
-      const nb = item('Новая служба', '', () => {
-        if (!this.ttConfirm) { this.ttConfirm = true; nb.querySelector('.tt-label')!.textContent = 'Начать с первого дня?'; nb.classList.add('warn'); return; }
-        this.ttConfirm = false;
-        this.onNewCareer?.();
+    this.ttConfirm = null;
+    if (!begun) {
+      // nothing played yet: one way in — the opening page, then the first morning
+      item('Новая игра', `день первый · ${cal.text.toLowerCase()}`, () => this.onStart?.());
+    } else {
+      item('Продолжить', resume ? `день ${p.day} · ${resume}` : `день ${p.day} · ${cal.text.toLowerCase()}<span class="tt-more"> · копилка ${rub(p.money)} из ${rub(GOAL)}</span>`, () => this.onStart?.());
+      if (resume) item('Начать день заново', 'утро, дома', () => this.onFreshDay?.());
+      // everything from the start, onboarding included; asks once more, as it wipes the career
+      const nb = item('Новая игра', 'всё сначала — с первого утра', () => {
+        if (this.ttConfirm?.el !== nb) {
+          this.ttConfirm = { el: nb, label: 'Новая игра' };
+          nb.querySelector('.tt-label')!.textContent = 'Точно всё сначала?';
+          nb.querySelector('.tt-note')!.textContent = p.money > 0 ? `копилка ${rub(p.money)} и все дни сотрутся` : 'прогресс сотрётся · нажмите ещё раз';
+          nb.classList.add('warn');
+          return;
+        }
+        this.ttConfirm = null;
+        this.onNewGame?.();
       });
     }
-    if (!fresh) item('Пролог', 'дембель, дорога домой, ключи', () => this.onPrologue?.());
     item('Песочница', '', () => this.onStartSandbox?.());
     item('Управление', '', () => this.toggleHelp(true));
     this.ttSelect(0);
@@ -301,7 +336,7 @@ export class UI {
     horn.addEventListener('click', (e) => { e.stopPropagation(); horn.blur(); });
     panel.appendChild(horn);
     mk('tape', 'Радио', 'tape', 'C', CTL_ICON.tape);
-    mk('tapeNext', 'Волна', 'tapeNext', 'N', CTL_ICON.next);
+    mk('tapeNext', 'Песня', 'tapeNext', 'N', CTL_ICON.next);
     // radio volume: a slider, also on − and +
     const vol = el('div', 'ctl ctl-vol', `<span class="ctl-ico">${CTL_ICON.volume}</span><span class="ctl-txt"><span class="ctl-name">Громкость радио</span><span class="vol-row"><input type="range" min="0" max="100" step="1" aria-label="Громкость радио"><b class="vol-val">40</b></span></span><span class="ctl-key"><span class="kbd">− +</span></span>`);
     this.volSlider = vol.querySelector('input')!;
@@ -461,6 +496,17 @@ export class UI {
     this.ritualEl.classList.remove('out');
   }
 
+  /**
+   * Every line said goes through here to the voices (Voice.ts): who, what, and where — a word under
+   * the picture, a question on a card, an album page or a fade's card (the narrator). It answers
+   * with the recording's length (0 without one), and the words stay up as long as the voice.
+   */
+  onLine: ((speaker: string, text: string, kind: 'say' | 'ask' | 'page') => Promise<number> | number) | null = null;
+  private voiced(speaker: string, text: string, kind: 'say' | 'ask' | 'page', hold?: (sec: number) => void): void {
+    const r = this.onLine?.(speaker, text, kind);
+    if (r && hold) void Promise.resolve(r).then((sec) => { if (sec > 0) hold(sec); });
+  }
+
   dialogue(speaker: string, line: string, stamp: string | null = 'Вручено'): void {
     const tone = stamp === 'Штраф' ? ' fine' : stamp === 'Предупреждение' || stamp === 'Проверено' ? ' warn' : '';
     this.dialogueEl.innerHTML = `${faceHtml(speaker)}${stamp ? `<span class="stamp thump${tone}">${stamp}</span>` : ''}<span class="who">${speaker}</span><p></p>`;
@@ -468,6 +514,11 @@ export class UI {
     this.dlgTyping = { full: `«${line}»`, i: 0, t: 0, p: this.dialogueEl.querySelector('p')! };
     this.dialogueEl.classList.remove('out');
     this.dlgHide = 6 + line.length * 0.045;
+    // (the radio's presenter is voiced through the radio itself: Tape.presenterClip)
+    if (!speaker.startsWith('Радио')) {
+      const el = this.dlgTyping!;
+      this.voiced(speaker, line, 'say', (sec) => { if (this.dlgTyping === el || this.dlgTyping?.full === el.full) this.dlgHide = Math.max(this.dlgHide, sec + 1.2); });
+    }
   }
 
   // ------------------------------------------------------------- talk with a choice
@@ -489,6 +540,7 @@ export class UI {
       box.appendChild(b);
     });
     this.choiceEl.classList.remove('out');
+    this.voiced(speaker, line, 'ask');
     if (this.choiceKeys) window.removeEventListener('keydown', this.choiceKeys, true);
     this.choiceKeys = (e: KeyboardEvent) => {
       const n = /^(?:Digit|Numpad)([1-9])$/.exec(e.code)?.[1];
@@ -579,6 +631,11 @@ export class UI {
     btn('Продолжить рейс', () => this.onAction?.('pause'));
     btn('Вытащить на дорогу', () => { this.onAction?.('reset'); this.onAction?.('pause'); });
     this.restartBtn = btn('Начать рейс заново', () => this.onRestart?.());
+    // out to the title: asks once more (the day is saved, but the game stops)
+    const toTitle = this.toTitleBtn = btn('В главное меню', () => {
+      if (!toTitle.classList.contains('warn')) { toTitle.classList.add('warn'); toTitle.textContent = this.sandbox ? 'Точно в меню?' : 'Точно в меню? День сохранится'; return; }
+      this.onToTitle?.();
+    });
     this.tpBox = el('div', 'tp');
     this.tpBox.hidden = true;
     menu.appendChild(this.tpBox);
@@ -676,7 +733,19 @@ export class UI {
     this.tpBox.appendChild(out);
   }
 
-  setPaused(p: boolean): void { this.paused = p; this.pauseEl.classList.toggle('out', !p); }
+  setPaused(p: boolean): void {
+    this.paused = p;
+    this.pauseEl.classList.toggle('out', !p);
+    if (!p && this.toTitleBtn) { this.toTitleBtn.classList.remove('warn'); this.toTitleBtn.textContent = 'В главное меню'; }
+  }
+
+  /** A short fade to dark, then `done` (on the way back to the title). */
+  leave(done: () => void): void {
+    const veil = el('div', 'leave-veil');
+    document.body.appendChild(veil);
+    requestAnimationFrame(() => veil.classList.add('on'));
+    setTimeout(done, 450);
+  }
 
   /** Pre-renders the static part of the paper map. */
   buildMap(ground: Ground, stops: Stop[]): void {
@@ -852,8 +921,7 @@ export class UI {
         b.classList.toggle('picked', on);
         b.disabled = !on && picked.size >= CAPACITY;
       });
-      const saved = Math.min(1, p.money / GOAL);
-      status.innerHTML = `<dt>Копилка</dt><dd>${rub(p.money)} из ${rub(GOAL)} <span class="goal"><i style="width:${(saved * 100).toFixed(1)}%"></i></span></dd><dt>Талоны</dt><dd>${p.talons.toFixed(0)} л на бензин</dd><dt>Бак</dt><dd>${Math.round(p.fuel * 100)} %${p.fuel < 0.45 ? ' · заправься по пути (АЗС за посёлком)' : ''}</dd><dt>Машина</dt><dd>${carLine(p)}</dd><dt>Премия</dt><dd>${pct(Math.max(0, p.pay.premium))} % за месяц</dd>`;
+      status.innerHTML = `<dt>Копилка</dt><dd>${piggy(p)}</dd><dt>Талоны</dt><dd>${p.talons.toFixed(0)} л на бензин</dd><dt>Бак</dt><dd>${Math.round(p.fuel * 100)} %${p.fuel < 0.45 ? ' · заправься по пути (АЗС за посёлком)' : ''}</dd><dt>Машина</dt><dd>${carLine(p)}</dd><dt>Премия</dt><dd>${pct(Math.max(0, p.pay.premium))} % за месяц</dd>`;
       actions.innerHTML = '';
       for (const b of repairButtons(p, 'btn-line', (kind) => { extra.onRepair(kind); refresh(); })) actions.appendChild(b);
       actions.appendChild(go);
@@ -901,13 +969,12 @@ export class UI {
     const total = cash.reduce((a, [, v]) => a + v, 0);
     const dp = rec.premium;
     const dt = rec.trustAfter - rec.trustBefore;
-    const saved = Math.min(1, p.money / GOAL);
     card.innerHTML = `<span class="eyebrow">Вечер · день ${info.day} · ${info.date}</span><h2>Журнал</h2>
       <span class="stamp thump grade g${st.grade}">${st.grade}<small>${words[st.grade]}</small></span>
       <p>Зинаида Павловна: ${rec.word}${st.remarks.length ? `<br><span class="remarks">Замечания: ${st.remarks.join(', ')}.</span>` : ''}</p>
       <dl class="fields">${journal}<dt>Премия за месяц</dt><dd>${pct(extra.premium)} %${dp ? ` (${dp > 0 ? '+' : '−'}${pct(Math.abs(dp))})` : ''}</dd></dl>
       ${cash.length ? `<dl class="fields payout">${cash.map(row).join('')}<dt>Итого за день</dt><dd><b>${money(total)}</b></dd></dl>` : ''}
-      <dl class="fields"><dt>Копилка</dt><dd>${rub(p.money)} из ${rub(GOAL)} <span class="goal"><i style="width:${(saved * 100).toFixed(1)}%"></i></span></dd>
+      <dl class="fields"><dt>Копилка</dt><dd>${piggy(p)}</dd>
       <dt>Доверие</dt><dd>${rec.trustBefore} → <b>${rec.trustAfter}</b>${dt ? ` (${dt > 0 ? '+' : ''}${dt})` : ''}</dd>
       <dt>В пути</dt><dd>${mm} мин ${ss} с · ${(st.distance / 1000).toFixed(1).replace('.', ',')} км</dd>
       <dt>ГАИ</dt><dd>${policeLine(st)}</dd>
@@ -955,6 +1022,7 @@ export class UI {
         <div class="st-text"><span class="st-chapter">${eyebrow}</span>${opts.title ? `<span class="st-title">${opts.title}</span>` : ''}<span class="st-rule"></span>
           ${opts.speaker ? `<span class="st-who">${opts.speaker}</span><p class="st-body quote">«${text}»</p>` : `<p class="st-body">${text}</p>`}
           <div class="st-answers"></div><div class="st-foot">${dots}</div></div></div>`;
+    this.voiced(opts.speaker ?? 'Рассказчик', text, 'page');
     const box = s.querySelector('.st-answers')!;
     const foot = s.querySelector('.st-foot')!;
     let done = false;
@@ -992,13 +1060,32 @@ export class UI {
     if (this.storyKeys) { window.removeEventListener('keydown', this.storyKeys, true); this.storyKeys = null; }
   }
 
-  blackout(title: string, text: string, seconds: number, mid: () => void, done: () => void, stamp = 'Протокол'): void {
+  /** A fade to black with a card; `skip`: a tap, Enter or Space ends it early (the week between days). */
+  blackout(title: string, text: string, seconds: number, mid: () => void, done: () => void, stamp = 'Протокол', skip = false): void {
     const b = this.blackEl;
     if (!b.isConnected) this.root.appendChild(b);
-    b.innerHTML = `<div class="bo-card"><span class="eyebrow">${title}</span><p>${text}</p>${stamp ? `<span class="stamp thump${stamp === 'Протокол' ? ' fine' : ''}">${stamp}</span>` : ''}</div>`;
+    b.innerHTML = `<div class="bo-card"><span class="eyebrow">${title}</span><p>${text}</p>${stamp ? `<span class="stamp thump${stamp === 'Протокол' ? ' fine' : ''}">${stamp}</span>` : ''}${skip ? '<span class="bo-skip">Дальше <span class="kbd">Enter</span></span>' : ''}</div>`;
     b.classList.remove('out');
-    setTimeout(mid, 1300);
-    setTimeout(() => { b.classList.add('out'); done(); }, 1300 + seconds * 1000);
+    this.voiced('Рассказчик', text, 'page');
+    let midDone = false, over = false;
+    const runMid = () => { if (!midDone) { midDone = true; mid(); } };
+    const finish = () => {
+      if (over) return;
+      over = true;
+      runMid();
+      b.classList.add('out');
+      b.removeEventListener('pointerdown', onTap);
+      window.removeEventListener('keydown', onKey, true);
+      done();
+    };
+    const onTap = () => finish();
+    const onKey = (e: KeyboardEvent) => { if (e.code === 'Enter' || e.code === 'Space' || e.code === 'NumpadEnter') { e.preventDefault(); e.stopPropagation(); finish(); } };
+    if (skip) {
+      // (not straight away: the key that started the day must not skip its first words)
+      setTimeout(() => { if (!over) { b.addEventListener('pointerdown', onTap); window.addEventListener('keydown', onKey, true); } }, 600);
+    }
+    setTimeout(runMid, 1300);
+    setTimeout(finish, 1300 + seconds * 1000);
   }
 
   // ------------------------------------------------------------- touch
@@ -1041,7 +1128,7 @@ export class UI {
     tb('tape', 'Радио', 'tape', drawer);
     tb('volDown', 'Тише', 'volDown', drawer);
     tb('volUp', 'Громче', 'volUp', drawer);
-    tb('tapeNext', 'Волна', 'tapeNext', drawer);
+    tb('tapeNext', 'Песня', 'tapeNext', drawer);
     tb('smoke', 'Закурить', 'smoke', drawer);
     tb('stub', 'Потушить', 'stub', drawer);
     btns.appendChild(drawer);

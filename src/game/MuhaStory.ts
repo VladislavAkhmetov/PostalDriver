@@ -2,7 +2,8 @@ import { clamp } from '../core/math';
 import type { Police } from '../world/Police';
 import type { Stop, World } from '../world/World';
 import type { Vehicle } from '../vehicle/Vehicle';
-import { destTo, type Order } from './Career';
+import { dateParts, destTo, type Order } from './Career';
+import { seasonOf } from './Season';
 import type { Mission } from './Mission';
 
 /**
@@ -70,6 +71,8 @@ export interface StoryHooks {
   choice(speaker: string, line: string, options: string[], pick: (i: number) => void): void;
   closeChoice(): void;
   choiceOpen(): boolean;
+  /** Someone else already rides in the cab's one passenger seat (another story's rider). */
+  seatTaken?(): boolean;
   say(speaker: string, line: string): void;
   hint(id: string, text: string, keys?: string): void;
   toast(text: string): void;
@@ -128,6 +131,8 @@ export class MuhaStory {
   private s: MuhaState;
   private still = 0;
   private busy = false;
+  /** Chapter three: has said the seat is taken. */
+  private pressFull = false;
   private hinted = false;
   /** The box is in the back today. */
   private carrying = false;
@@ -200,7 +205,9 @@ export class MuhaStory {
       world.placeMuha(world.roadside(s, -(world.ground.main.zoneAt(s).width / 2 + 2.8)));
     } else if (after) {
       // quit and mended, he is back by the shop on foot — not before chapter four's day
-      const back = this.s.ending === 'quit' && (this.s.step === 'end' || (this.s.step === 'finale' && day >= this.s.day + FINALE_GAP));
+      // (from the first snow to the thaw he stokes the boiler house in Klyuchevsk, and is not out by the shop in his vest)
+      const dp = dateParts(day), cold = ['first-snow', 'winter'].includes(seasonOf(dp.m, dp.d));
+      const back = this.s.ending === 'quit' && (this.s.step === 'end' || (this.s.step === 'finale' && day >= this.s.day + FINALE_GAP)) && !(this.s.step === 'end' && cold);
       world.placeMuha(back ? null : 'away');
     }
     else world.placeMuha(null);
@@ -317,6 +324,11 @@ export class MuhaStory {
     this.still = d < NEAR && kmh < 3 ? this.still + dt : 0;
     if (this.still > 0.7 && !this.hooks.choiceOpen()) {
       this.still = 0;
+      // chapter three needs the passenger seat: with somebody in it, he waits on his bench
+      if (this.s.step === 'pressed' && this.hooks.seatTaken?.()) {
+        if (!this.pressFull) { this.pressFull = true; this.hooks.say(MUHA, 'Ты сначала своего довези, Тимур. Я посижу… Я никуда не денусь. Мне некуда.'); }
+        return;
+      }
       this.busy = true;
       if (this.s.step === 'meet') this.meet();
       else if (this.s.step === 'ask') this.ask();
@@ -543,7 +555,7 @@ export class MuhaStory {
     const o = this.s.saw, warned = this.s.warned;
     const end = (bond: number) => this.done('pressed', bond);
     if (o === 'asked') {
-      h.choice(MUHA, 'Ты ещё и спрашивать к ним полез — «что случилось»?! Тимур, ты дурак? Лысый меня вчера полчаса пытал, что за почта такая любопытная.',
+      h.choice(MUHA, 'Ты ещё и спрашивать к ним полез — «что случилось»?! Тимур, ты дурак? Лысый меня потом полчаса пытал, что за почта такая любопытная.',
         ['Жень, уходи ты от них', 'Сам разберусь, Жень'], (i) => {
           h.say(MUHA, i === 0 ? 'Куда я уйду? На почту, газеты таскать? …Ладно. Подумаю. Только не лезь туда больше, а.' : 'Ну разбирайся. Только потом не говори, что я не предупреждал.');
           end(i === 0 ? 1 : -1);
@@ -557,7 +569,7 @@ export class MuhaStory {
     } else if (o === 'detour') {
       h.choice(MUHA, warned
         ? 'Ну что, объехал? Молодец, что послушал. Разъехались там без всего — покричали и разъехались. Пилорама теперь Лысого.'
-        : 'Слыхал, ты вчера к пилораме подъезжал — пацаны буханку видели. Хорошо, что развернулся. Я тебя утром предупредить хотел, а ты мимо пролетел.',
+        : 'Слыхал, ты в тот день к пилораме подъезжал — пацаны буханку видели. Хорошо, что развернулся. Я тебя утром предупредить хотел, а ты мимо пролетел.',
       ['Жень, а ты там был?', 'Мне-то что, я почту вожу'], (i) => {
         h.say(MUHA, i === 0
           ? 'Был. Позвали всё-таки, под конец. Стоял у машины, как дурак. Витьку жалко — он там двадцать лет пилил, а теперь «под Лысым». Ладно, не бери в голову.'
@@ -565,7 +577,7 @@ export class MuhaStory {
         end(i === 0 ? 1 : 0);
       });
     } else {
-      h.say(MUHA, 'Вчера у пилорамы шумно было. Хорошо, что ты туда не сунулся. Пилорама теперь Лысого — вот так, Тимур.');
+      h.say(MUHA, 'В тот день у пилорамы шумно было. Хорошо, что ты туда не сунулся. Пилорама теперь Лысого — вот так, Тимур.');
       end(0);
     }
   }

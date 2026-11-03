@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "deploy": "npm run build && node scripts/deploy-to-s3.cjs"
+    "deploy": "npm run build && node scripts/deploy-to-s3.cjs",
+    "voice:script": "node scripts/voice-script.mjs",
+    "playtest": "node scripts/playtest/cdp.mjs scripts/playtest/autopilot.js"
   },
   "dependencies": {
     "three": "^0.170.0"

@@ -11,7 +11,9 @@ const WHO: [RegExp, string][] = [
   [/Кузьмин/, 'kuzmin'], [/Бритый/, 'brityi'], [/Пацан/, 'kid'], [/кожанке/, 'leather'], [/Серый/, 'seryi'],
   [/Нина Петровна/, 'nina'], [/Валентина/, 'valentina'], [/Степанович/, 'stepanych'], [/Галина Ивановна/, 'galina'],
   [/Фёдор/, 'fedor'], [/Рашит/, 'rashit'], [/Фарида/, 'farida'], [/Михалыч/, 'mikhalych'],
-  [/Баба Шура/, 'shura'], [/Дед Митяй/, 'mityai'], [/Оля/, 'olya'], [/Петрович/, 'petrovich'], [/Тамара/, 'tamara'], [/Колька/, 'kolka'],
+  [/Баба Шура/, 'shura'], [/[Дд]ед Митяй/, 'mityai'], [/Оля/, 'olya'], [/Петрович/, 'petrovich'], [/Тамара/, 'tamara'], [/Колька/, 'kolka'],
+  [/Ринат/, 'rinat'], [/Зульфия/, 'zulfiya'], [/Гоша/, 'gosha'], [/Дружка/, 'druzhka'], [/Белов/, 'belov'], [/Нюра/, 'nyura'],
+  [/Лида/, 'lida'], [/Рамиль/, 'ramil'], [/Анна Сергеевна/, 'teacher'], [/лесовоза/, 'logger'],
 ];
 
 /** Speakers that are not a face: the radio, the tools under the seat. */
