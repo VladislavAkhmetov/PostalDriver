@@ -27,7 +27,7 @@ import { Passenger } from './vehicle/Passenger';
 import { RoadStop } from './game/RoadStop';
 import { GRANDPA_LETTER, Letters, letterForBoard } from './game/Letters';
 import { RadioNews } from './game/RadioNews';
-import { playSummer, summerDue } from './game/Summer';
+import { playSeasonFinale, playSummer, seasonFinaleDue, summerDue } from './game/Summer';
 import { dateParts } from './game/Career';
 import { rub } from './game/Money';
 import { UI, Settings } from './ui/UI';
@@ -72,7 +72,7 @@ async function boot(): Promise<void> {
   // the life round the road by the calendar: benches, the herd, the tractor, the combines, the ice, Sabantuy
   const country = new Countryside(world, ground, fx);
   /** The world as today's date has it. */
-  const dayWorld = () => { const dp = dateParts(today.day); country.setDay(dp.m, dp.d); };
+  const dayWorld = () => { const dp = dateParts(today.day); country.setDay(dp.m, dp.d); world.setDay(dp.m, dp.d); };
   scene.add(fx.group);
   const rainTint = new THREE.Color();
   const WHITE = new THREE.Color(1, 1, 1);
@@ -766,6 +766,21 @@ async function boot(): Promise<void> {
   /** The next day (or the first after a reload): it starts in the yard at home. */
   const toMorning = () => {
     ui.hideEnd();
+    if (seasonFinaleDue(profile, profile.day)) {
+      input.enabled = false;
+      playSeasonFinale(profile, {
+        page: (eyebrow, text, opts) => { audio.paper(); ui.storyPage(eyebrow, text, opts); },
+        done: () => {
+          saveProfile(profile);
+          ui.setGarage(profile);
+          ui.hideStory();
+          today = boardFor(profile.day, profile.trust);
+          if (!started) void begin(false, [], { home: true });
+          else startDay([], 'home');
+        },
+      });
+      return;
+    }
     today = boardFor(profile.day, profile.trust);
     if (!started) void begin(false, [], { home: true });
     else startDay([], 'home');

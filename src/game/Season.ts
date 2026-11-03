@@ -3,14 +3,15 @@
  * in the second half of November, winter from December to February, the thaw in March, and the
  * spring and summer after. By the calendar's month (0 = January) and day of the month.
  */
-export type Season = 'autumn' | 'first-snow' | 'winter' | 'thaw' | 'spring';
+export type Season = 'autumn' | 'first-snow' | 'winter' | 'thaw' | 'spring' | 'summer';
 
 export function seasonOf(m: number, d: number): Season {
   if (m === 8 || m === 9 || (m === 10 && d < 15)) return 'autumn';
   if (m === 10) return 'first-snow';
   if (m === 11 || m === 0 || m === 1) return 'winter';
   if (m === 2 || (m === 3 && d < 10)) return 'thaw';
-  return 'spring';
+  if (m === 3 || m === 4) return 'spring';
+  return 'summer';
 }
 
 /** How much snow lies on a given date, 0…1, before the day's own weather adds to it. */

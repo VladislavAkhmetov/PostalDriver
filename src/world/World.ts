@@ -123,6 +123,8 @@ export class World {
   private waterTex: THREE.Texture;
   /** Tree instances by kind and ground cell (one instanced mesh each, so far cells are culled). */
   private trees = new Map<string, { kind: TreeKind; m: THREE.Matrix4[]; c: THREE.Color[] }>();
+  private birchMat: THREE.MeshLambertMaterial | null = null;
+  private bushMat: THREE.MeshLambertMaterial | null = null;
   private exclusions: { x: number; z: number; r: number }[] = [];
   /** Stretches of road lined with private houses (villages, hamlets, town outskirts). */
   readonly hamlets: [number, number][] = [];
@@ -1615,6 +1617,8 @@ export class World {
         mtl = new THREE.MeshLambertMaterial({ map: texFor[t.kind], alphaTest: 0.5, side: THREE.DoubleSide });
         snowy(mtl, 'dust');
         mats.set(t.kind, mtl);
+        if (t.kind === 'birch') this.birchMat = mtl;
+        if (t.kind === 'bush') this.bushMat = mtl;
         if (t.kind === 'birch' || t.kind === 'bush') this.leafy.push(mtl);
       }
       const mesh = new THREE.InstancedMesh(geo, mtl, t.m.length);
@@ -2034,6 +2038,36 @@ export class World {
   private snowNow = 0;
   /** Birch and bush foliage: thinned to bare twigs as the winter comes. */
   private readonly leafy: THREE.MeshLambertMaterial[] = [];
+
+  /** A new day: adapt world materials to the season (summer green foliage, fresh grass). */
+  setDay(m: number, d: number): void {
+    const isSummer = m >= 4 && m <= 7;
+    if (this.birchMat) {
+      const want = isSummer ? this.T.birchSummer : this.T.birch;
+      if (this.birchMat.map !== want) {
+        this.birchMat.map = want;
+        this.birchMat.needsUpdate = true;
+      }
+    }
+    if (this.bushMat) {
+      const want = isSummer ? this.T.bushSummer : this.T.bush;
+      if (this.bushMat.map !== want) {
+        this.bushMat.map = want;
+        this.bushMat.needsUpdate = true;
+      }
+    }
+    const grassWant = isSummer ? this.T.grassSummer : this.T.grass;
+    const terrain = this.mats.terrain as THREE.MeshLambertMaterial | undefined;
+    if (terrain && terrain.map !== grassWant) {
+      terrain.map = grassWant;
+      terrain.needsUpdate = true;
+    }
+    const shoulder = this.mats.shoulder as THREE.MeshLambertMaterial | undefined;
+    if (shoulder && shoulder.map !== grassWant) {
+      shoulder.map = grassWant;
+      shoulder.needsUpdate = true;
+    }
+  }
 
   /** Muha's saloon at the shop or gone. */
   setMuhaCar(on: boolean): void {

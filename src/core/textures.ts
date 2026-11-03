@@ -198,6 +198,11 @@ export function createTextures() {
       dots(g, w, h, r, 240, ['rgba(110,120,80,0.6)', 'rgba(240,232,190,0.5)'], 1, 2);
     }, { seed: 11 }),
 
+    grassSummer: paint(64, 64, (g, w, h, r) => {
+      noiseFill(g, w, h, 11, [95, 142, 65], 26, 16, 0.9);
+      dots(g, w, h, r, 260, ['rgba(55,105,38,0.7)', 'rgba(130,185,75,0.6)', 'rgba(235,210,90,0.35)'], 1, 2);
+    }, { seed: 11 }),
+
     asphalt: paint(64, 128, (g, w, h, r) => {
       noiseFill(g, w, h, 21, [118, 118, 115], 15, 8, 1.1);
       for (let i = 0; i < 6; i++) {
@@ -386,6 +391,32 @@ export function createTextures() {
       }
     }, { seed: 104, repeat: false }),
 
+    birchSummer: paint(64, 128, (g, w, h, r) => {
+      g.clearRect(0, 0, w, h);
+      const cx = w / 2;
+      for (let y = Math.floor(h * 0.16); y < h; y++) {
+        const x = Math.round(cx + Math.sin(y * 0.06) * 1.2 - 1.5);
+        const wd = y > h * 0.86 ? 4 : 3;
+        g.fillStyle = '#ebe8dc'; g.fillRect(x, y, wd, 1);
+        if (r() < 0.35) { g.fillStyle = '#1e1e1e'; g.fillRect(x + Math.floor(r() * wd), y, 1 + Math.floor(r() * 2), 1); }
+      }
+      g.fillStyle = '#3a3026';
+      for (let i = 0; i < 10; i++) {
+        const y = h * 0.28 + r() * h * 0.36, dir = r() < 0.5 ? -1 : 1;
+        for (let k = 0; k < 11; k++) g.fillRect(Math.floor(cx + dir * k * 1.6), Math.floor(y - k * 1.1), 1, 1);
+      }
+      const cols = ['#264e1c', '#346624', '#478232', '#5ea342', '#76b84e', '#3f7028', '#528a36', '#6db345'];
+      for (let i = 0; i < 950; i++) {
+        const t = r();
+        const y = h * 0.04 + t * h * 0.64;
+        const spread = Math.sin(Math.min(1, t * 1.12) * Math.PI) * w * 0.45 + 3;
+        const x = cx + (r() - 0.5) * 2 * spread * Math.sqrt(r());
+        const ci = Math.min(cols.length - 1, Math.floor((i / 950) * 4 + r() * 4));
+        g.fillStyle = cols[ci];
+        g.fillRect(Math.floor(x), Math.floor(y), 1 + Math.floor(r() * 2), 1 + Math.floor(r() * 2));
+      }
+    }, { seed: 104, repeat: false }),
+
     spruce: paint(64, 128, (g, w, h, r) => {
       g.clearRect(0, 0, w, h);
       const top = 2, base = h * 0.9, cx = w / 2;
@@ -431,6 +462,18 @@ export function createTextures() {
         const x = w / 2 + Math.cos(a) * w * 0.46 * d * (r() < 0.5 ? -1 : 1);
         const y = h - Math.sin(a) * h * 0.85 * d;
         g.fillStyle = cols[Math.floor(r() * (r() < 0.05 ? 6 : 5))];
+        g.fillRect(Math.floor(x), Math.floor(y), 2, 1 + Math.floor(r() * 2));
+      }
+    }, { seed: 107, repeat: false }),
+
+    bushSummer: paint(64, 64, (g, w, h, r) => {
+      g.clearRect(0, 0, w, h);
+      const cols = ['#29521e', '#386928', '#4c8535', '#639e44', '#78b050', '#3e702a'];
+      for (let i = 0; i < 1000; i++) {
+        const a = r() * Math.PI, d = Math.sqrt(r());
+        const x = w / 2 + Math.cos(a) * w * 0.46 * d * (r() < 0.5 ? -1 : 1);
+        const y = h - Math.sin(a) * h * 0.85 * d;
+        g.fillStyle = cols[Math.floor(r() * cols.length)];
         g.fillRect(Math.floor(x), Math.floor(y), 2, 1 + Math.floor(r() * 2));
       }
     }, { seed: 107, repeat: false }),

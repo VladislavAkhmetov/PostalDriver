@@ -17,23 +17,23 @@ const url = process.env.URL || 'http://localhost:4180/';
 
 const defaultProfile = process.platform === 'win32' ? `${os.tmpdir()}/playtest/profile` : '/tmp/playtest/profile';
 const profile = process.env.PROFILE || defaultProfile;
+try { rmSync(profile, { recursive: true, force: true }); } catch {}
 mkdirSync(profile, { recursive: true });
-for (const f of ['SingletonLock', 'SingletonSocket', 'SingletonCookie']) rmSync(`${profile}/${f}`, { force: true });
 const port = 9300 + Math.floor(Math.random() * 500);
 
 const defaultChrome = process.platform === 'win32'
   ? ['C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe', 'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe'].find(existsSync)
   : '/usr/bin/chromium';
 
-const ch = spawn(process.env.CHROME || defaultChrome, ['--headless=new', '--no-sandbox', '--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--mute-audio',
-  '--autoplay-policy=no-user-gesture-required', `--remote-debugging-port=${port}`, '--window-size=480,300', `--user-data-dir=${profile}`, 'about:blank'], { stdio: 'ignore' });
+const ch = spawn(process.env.CHROME || defaultChrome, ['--headless=new', '--no-sandbox', '--disable-gpu', '--mute-audio',
+  '--autoplay-policy=no-user-gesture-required', `--remote-debugging-port=${port}`, '--window-size=480,300', `--user-data-dir=${profile}`, url], { stdio: 'ignore' });
 process.on('exit', () => { try { ch.kill(); } catch { /* gone */ } });
 process.on('SIGTERM', () => process.exit(1));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let list;
 for (let i = 0; i < 60; i++) { try { list = await (await fetch(`http://127.0.0.1:${port}/json`)).json(); if (list.find((t) => t.type === 'page')) break; } catch { /* starting */ } await sleep(250); }
-const page = list?.find((t) => t.type === 'page');
+const page = list?.find((t) => t.type === 'page' && (!t.url || t.url.includes('4180') || t.url === url)) || list?.find((t) => t.type === 'page');
 if (!page) { console.log('no browser page'); process.exit(3); }
 const ws = new WebSocket(page.webSocketDebuggerUrl);
 await new Promise((r) => ws.addEventListener('open', r));

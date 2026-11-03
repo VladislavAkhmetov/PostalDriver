@@ -1,6 +1,6 @@
 import type { StoryImage } from '../ui/storyArt';
 import { rub } from './Money';
-import { GOAL } from './Career';
+import { GOAL, SEASON_DAYS } from './Career';
 import type { Profile } from './Profile';
 
 /**
@@ -17,6 +17,11 @@ export interface SummerHooks {
 /** Whether this working day (by its date) is the one the summer's pages come before. */
 export function summerDue(p: Profile, y: number, m: number): boolean {
   return p.exams !== 'passed' && m >= 6 && m <= 7 && y >= (p.examYear ?? 1998);
+}
+
+/** Whether the grand season 1 finale is due (after completing day 29, before day 30). */
+export function seasonFinaleDue(p: Profile, day: number): boolean {
+  return day >= SEASON_DAYS && !p.seasonFinale;
 }
 
 export function playSummer(p: Profile, y: number, h: SummerHooks): void {
@@ -44,4 +49,70 @@ export function playSummer(p: Profile, y: number, h: SummerHooks): void {
       }),
     });
   }
+}
+
+/**
+ * The Grand Finale of Season 1 (after the 29th working day):
+ * 1. Evening talk with картатай on the bench in Urmanly.
+ * 2. Handing over the Bukhanka keys (to reformed Muha or back to Zinaida).
+ * 3. Season 1 summary statistics.
+ * 4. End credits and transition to endless summer service.
+ */
+export function playSeasonFinale(p: Profile, h: SummerHooks): void {
+  const ch = 'Финал 1-го сезона · Июль 1998';
+  const date = '’98 7 20';
+
+  // 1. Evening with grandfather
+  h.page(ch, 'Вечер на Лесной улице в Урманлы. Солнце садится за ельник, окрашивая синий борт буханки в багрянец. Картатай долго молчит на лавке, положив ладони на набалдашник палки.', {
+    title: 'Вечер у ворот', step: [1, 4], speaker: 'Картатай',
+    image: { id: 'kartatay', portrait: true, brief: 'Урал-картатай на лавке у ворот дома №14, теплый закат, палка между колен, мудрый добрый взгляд.', date },
+    options: ['Посидеть рядом', '«Службу закончил, картатай»'],
+    pick: () => {
+      // 2. Handing over the keys
+      const muhaReformed = p.muha?.ending === 'quit';
+      const keyLine = muhaReformed
+        ? 'У крыльца отделения связи стоит Женька Муха в синем рабочем халате грузчика. Принимает из рук Тимура связку ключей от УАЗа и смущенно крутит брелок с почтовым рожком: «Тимурка... Ты это... учись там в Уфе. За буханку не переживай — я её каждую субботу шприцевать буду. И Кузьмину — ни копейки, как дед велел. Счастливо, брат!»'
+        : 'У дверей почты Зинаида Павловна забирает связку ключей: «Спасибо тебе за деда и за нас, Тимур. Сменщика из райцентра пришлют к августу. Ступай, учись, людям помогай. И пиши нам — мы же почта, любое письмо дойдёт!»';
+
+      h.page(ch, keyLine, {
+        title: 'Смена', step: [2, 4],
+        speaker: muhaReformed ? 'Женька Муха' : 'Зинаида Павловна',
+        image: { id: muhaReformed ? 'muha' : 'zinaida', portrait: true, brief: muhaReformed ? 'Муха на крыльце почты с ключами от буханки.' : 'Зинаида Павловна на крыльце с ключами.', date },
+        options: ['Обнять на прощание', '«Машину берегите»'],
+        pick: () => {
+          // 3. Stats summary
+          const mityaiWon = p.cases?.['mityai-ram'] === 'done';
+          const letterDelivered = p.letters?.done?.includes('galiya');
+          const muhaStatus = p.muha?.ending === 'quit' ? 'завязал с бандитами и работает на почте' : p.muha?.ending === 'north' ? 'уехал на вахту в Сургут' : 'попал под суд';
+          const statsText = [
+            `Отработано смен: 29 рабочих дней (осень, первый снег, зима, распутица, весна, лето).`,
+            `В копилке: ${rub(p.money)} (${p.exams === 'passed' ? 'экзамены сданы, поступил в институт!' : 'поступление отложено на год'}).`,
+            `Доверие района: ${p.trust} %.`,
+            `Дед Митяй: ${mityaiWon ? 'выиграл барана Чемпиона на Сабантуе' : 'рыбачит на Кайынкуле'}.`,
+            `Друг Муха: ${muhaStatus}.`,
+            `Письмо 1979 года: ${letterDelivered ? 'донесено матери Галии спустя 19 лет' : 'осталось в шкафу'}.`,
+            `Пост ГАИ: встреч с Кузьминым — ${p.gai?.met ?? 0}, предупреждений — ${p.gai?.warned ?? 0}.`,
+          ].join('\n\n');
+
+          h.page(ch, statsText, {
+            title: 'Итоги года (1997–1998)', step: [3, 4],
+            image: { id: 'piggy', brief: 'Копилка, путевые листы и старый блокнот деда с пометками за весь прошедший год.', date },
+            options: ['Титры'],
+            pick: () => {
+              // 4. Credits & free play
+              h.page(ch, '«Сельская почта» (Uaz-Zarechye)\n\nСоздано с любовью к башкирской деревне, советскому автопрому и эпохе конца 90-х годов.\n\nСпасибо за бережное отношение к людям, письмам и старой доброй «Буханке»!', {
+                title: 'Конец первого сезона', step: [4, 4],
+                image: { id: 'farewell', brief: 'Утренний пейзаж Ключевского района, уходящая вдаль лента дороги.', date },
+                options: ['Продолжить службу (Свободное лето)'],
+                pick: () => {
+                  p.seasonFinale = true;
+                  h.done();
+                },
+              });
+            },
+          });
+        },
+      });
+    },
+  });
 }

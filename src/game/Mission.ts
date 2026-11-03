@@ -242,7 +242,9 @@ export class Mission {
     const mine = this.orders.filter((o) => o.dest === stop.id);
     const due = mine.filter((o) => o.due !== null).map((o) => o.due!);
     const fragile = mine.some((o) => o.fragile);
+    const day = parseInt(this.orders[0]?.id?.split('-')[0] ?? '1', 10);
     return storyFor(stop.id, {
+      day,
       cargo: fragile ? this.cargo : 100, left: due.length ? Math.min(...due) - this.time : 1e4, damage: this.lastDamage, fines: p.fines, arrests: p.arrests, escapes: p.escapes,
       rain: this.lastRain, dark: this.lastDark, stuck: this.stuckCount, visited: [...this.visited], kinds: mine.map((o) => o.kind),
     }, stop.line);

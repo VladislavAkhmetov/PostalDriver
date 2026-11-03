@@ -43,6 +43,8 @@ export interface Profile {
   examYear?: number;
   /** What Sergeant Kuzmin remembers of the post van: meetings, envelopes, warnings. */
   gai?: GaiMemory;
+  /** Whether the season 1 finale and credits have been played. */
+  seasonFinale?: boolean;
 }
 
 export interface Wear { steer: number; rad: number; pull: -1 | 1 }
@@ -63,7 +65,8 @@ export function loadProfile(): Profile {
       letters: p.letters && Array.isArray(p.letters.done) ? p.letters : undefined,
       cases: p.cases && typeof p.cases === 'object' && !Array.isArray(p.cases) ? p.cases : undefined,
       exams: p.exams, examYear: p.examYear,
-      gai: p.gai && ['met', 'bribes', 'refused', 'warned'].every((k) => typeof p.gai[k] === 'number') ? p.gai : undefined };
+      gai: p.gai && ['met', 'bribes', 'refused', 'warned'].every((k) => typeof p.gai[k] === 'number') ? p.gai : undefined,
+      seasonFinale: p.seasonFinale ?? false };
   } catch { /* private mode or bad data */ }
   return freshProfile();
 }

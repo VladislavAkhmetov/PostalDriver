@@ -1,5 +1,6 @@
 /** How the run went when the parcels were handed over; the addressee's words depend on it. */
 export interface Outcome {
+  day?: number;
   /** Parcels' condition, 0…100. */
   cargo: number;
   /** Seconds of schedule left (negative when late). */
@@ -97,6 +98,19 @@ const pick = <T>(l: T[]): T => l[Math.floor(Math.random() * l.length)];
  * the trip, the more she has to say about it — and a plain one when all went well.
  */
 export function storyFor(id: string, o: Outcome, plain: string): string {
+  if (o.day === 29) {
+    const farewell: Record<string, string> = {
+      sosnovka: 'Тимурка, сдал ведь, да?! Вот молодец, улым! В Уфе студенты голодные — вот тебе пирожков с вишней целый узелок. И деду поклон!',
+      zarechye: 'Тимур! Слышала — в институт поступил! Вот от сельпо ящик сгущёнки в дорогу бери. За район не бойся — мы за дедом приглядим!',
+      khutor: 'Молодец, Тимур! Деда не посрамил, и в люди выбился. Держи мёду от меня и сала. Буханку сберег — и себя сбереги.',
+      kolkhoz: 'Студент теперь! Спасибо за службу, Тимур, ведомости всегда в срок возил. Удачи тебе на сессиях!',
+      forestry: 'В город, значит... Ну, учись, Тимур. Лес без тебя не пропадёт. Спасибо за газеты.',
+      apiary: 'Улым! Поступил — я и не сомневался! Вот мёд липовый — перед экзаменами ложку съешь, память будет как у пчелы. Спасибо тебе!',
+      kainly: 'Тимур, улым! Поступил! Чак-чак свежий держи — в общежитии ребят угостишь. Звони нам из Уфы, не забывай Кайынлы!',
+      camp: 'Учись, парень. Из тебя хороший человек выйдет. Приезжай летом — костёр разведём.',
+    };
+    if (farewell[id]) return farewell[id];
+  }
   const v = (road: string) => o.visited.includes(road);
   const kinds = o.kinds ?? [];
   // the original lines are about a pension (Sosnovka) and jars for the shop (Zarechye); other cargo gets its own
