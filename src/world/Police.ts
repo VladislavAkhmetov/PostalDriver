@@ -2,7 +2,7 @@ import { rub } from '../game/Money';
 import * as THREE from 'three';
 import { clamp, damp, lerp } from '../core/math';
 import { crewFor, type PoliceKind } from './Cars';
-import type { Ground } from './Ground';
+import { newGround, type Ground } from './Ground';
 import { Officer } from './Officer';
 import type { Collider } from './Props';
 import { stopSpeed, type Actor, type Path, type Traffic } from './Traffic';
@@ -76,14 +76,18 @@ const LIMIT = 60;
 /** Walks up to the driver's window only from this close; farther away he talks from the post. */
 const WALK_UP = 32;
 /** Top speed and acceleration of the patrol car on asphalt, m/s and m/s². */
-const VMAX = 33, ACCEL = 3.2, BRAKE = 7;
+const VMAX = 36, ACCEL = 3.8, BRAKE = 7.5;
 /** The patrol 4×4 is slower on the asphalt but goes where the saloon can't. */
-const VMAX_SUV = 30, ACCEL_SUV = 2.7;
+const VMAX_SUV = 32, ACCEL_SUV = 3.2;
 /** Gap at which the van has got away, metres. */
-const ESCAPE = 320;
+const ESCAPE = 420;
+/** A chase lasts no longer than this, seconds. */
+const CHASE_MAX = 220;
+/** The trail the van leaves: a point every this many metres (the patrol follows it where the roads it knows don't go). */
+const TRAIL_STEP = 2;
 const _v = new THREE.Vector3();
 /** Grip the patrol driver dares to use in a bend, m/s² (less on snow): what slows him before the curves. */
-const LAT_G = 6.2;
+const LAT_G = 7.4;
 /** Below this closing speed a touch on the patrol is a scrape, not a ram, m/s. */
 const RAM = 2.5;
 /** What a documents check can turn up: the line, the fine, the protocol's words. */
@@ -104,8 +108,14 @@ const CALLS = [
   'Почта, прижмись к обочине! Кому сказано!',
   'Буханка, номер вижу! Остановитесь — хуже будет!',
   'Глуши мотор, гонщик! Всё равно догоним!',
+  'У меня бензин казённый, почта, — а у тебя?',
+  'Сейчас подрежу — пеняй на себя!',
+  'Номер записал! Деду твоему всё расскажу!',
+  'Тормози, кому говорят! В бампер упрусь!',
 ];
-const CALLS_DIRT = ['Ты куда в лес полез?! Стоять!', 'Почта! По грязи не уйдёшь — стой!'];
+const CALLS_DIRT = ['Ты куда в лес полез?! Стоять!', 'Почта! По грязи не уйдёшь — стой!', 'Думаешь, в лесу не найдём? След-то вот он!', 'Хоть в болото — я за тобой!'];
+/** When the van leaves the patrol's roads (a side road, a field, the road home): he follows its tracks. */
+const CALLS_TRAIL = ['По следу иду, почта! Не спрячешься!', 'Огородами решил? Я тоже умею!', 'Колею твою вижу — стоять!'];
 
 /**
  * GAI post behaviour: radar speed check and the odd documents check, the baton
@@ -165,6 +175,14 @@ export class Police {
   };
   private readonly f = { x: 0, z: 0, tx: 0, tz: 0 };
   private readonly f2 = { x: 0, z: 0, tx: 0, tz: 0 };
+  /**
+   * The van's trail through the chase (a point every TRAIL_STEP metres), and the patrol's distance
+   * along it when it follows it — off the roads the traffic knows: a side road, a field, the road home.
+   */
+  private readonly trail = { xs: [] as number[], zs: [] as number[], cum: [] as number[] };
+  private onTrail = false;
+  private trailD = 0;
+  private readonly gi = newGround();
   /** The police's own entries in the traffic's actor list (the patrol in a chase, the roadblock). */
   private readonly own: Actor[] = [];
   /** The crew: the driver talks after a chase, his partner covers the passenger side. */
@@ -186,6 +204,18 @@ export class Police {
   /** The 4×4 follows onto the forest track; the saloon can't. */
   private get suv(): boolean { return this.model.kind === 'militiaSuv'; }
   private get crew() { return crewFor(this.model.kind as PoliceKind); }
+
+  /** The duty car where it stands now (its model: +Z forward), for a scene filmed beside it. */
+  carPose(): { x: number; z: number; yaw: number; width: number; length: number } {
+    const g = this.model.group;
+    return { x: g.position.x, z: g.position.z, yaw: g.rotation.y, width: this.model.width, length: this.model.length };
+  }
+
+  /** The figures of the post (the inspector and the crew): a scene with its own stand-ins hides them meanwhile. */
+  crewGroups(): THREE.Object3D[] { return [this.p.inspector.group, this.drv.group, this.mate.group]; }
+
+  /** A line of the inspector's is being said: whoever is at the window talks (the Talking clip). */
+  speaking(seconds: number): void { (this.talker ?? this.p.inspector).say(seconds); }
 
   constructor(private ground: Ground, private traffic: Traffic, private p: GaiPatrol, private ev: PoliceEvents) {
     const h = (x: number, z: number) => ground.height(x, z);
@@ -241,6 +271,7 @@ export class Police {
 
   reset(): void {
     this.car.path = null;
+    this.onTrail = false;
     this.scraped = false;
     this.quiet = false;
     this.scripted = null;
@@ -394,6 +425,178 @@ export class Police {
     return { x: f.x - f.tz * c.lat, z: f.z + f.tx * c.lat, yaw: Math.atan2(c.dir * f.tx, c.dir * f.tz) };
   }
 
+  /** Where the car is: on its path, or (following the van's trail) just where it stands. */
+  private pose(): { x: number; z: number; yaw: number } {
+    return this.onTrail ? { x: this.car.x, z: this.car.z, yaw: this.car.yaw } : this.roadPose();
+  }
+
+  /** Drive on `ds` metres along the path, or along the van's trail, and put the car there. */
+  private moveOn(ds: number, steer = 0): void {
+    const c = this.car;
+    if (this.onTrail) {
+      const tr = this.trail, end = tr.cum.length ? tr.cum[tr.cum.length - 1] : 0;
+      this.trailD = clamp(this.trailD + ds, 0, end);
+      const f = this.trailAt(this.trailD, this.f);
+      // the trail is the van's own wobbles: a heading smoothed over the next few metres
+      const g = this.trailAt(this.trailD + 4, this.f2);
+      const want = Math.atan2(g.x - f.x || f.tx, g.z - f.z || f.tz);
+      let dy = want - c.yaw;
+      dy = Math.atan2(Math.sin(dy), Math.cos(dy));
+      this.place(f.x, f.z, c.yaw + dy * Math.min(1, 0.25 + Math.abs(ds) * 0.4));
+      return;
+    }
+    if (c.path) c.d = clamp(c.d + c.dir * ds, 2, c.path.length - 2);
+    const rp = this.roadPose();
+    this.place(rp.x, rp.z, rp.yaw + steer);
+  }
+
+  private trailPush(x: number, z: number): void {
+    const tr = this.trail, n = tr.xs.length;
+    const d = n ? Math.hypot(x - tr.xs[n - 1], z - tr.zs[n - 1]) : 0;
+    if (n && d < TRAIL_STEP) return;
+    tr.xs.push(x); tr.zs.push(z); tr.cum.push(n ? tr.cum[n - 1] + d : 0);
+    // a long chase: forget the oldest kilometre (the patrol is never that far behind on it)
+    if (tr.xs.length > 3000 && (!this.onTrail || this.trailD > tr.cum[600] + 50)) {
+      const cut = tr.cum[600];
+      tr.xs.splice(0, 600); tr.zs.splice(0, 600); tr.cum.splice(0, 600);
+      for (let i = 0; i < tr.cum.length; i++) tr.cum[i] -= cut;
+      if (this.onTrail) this.trailD -= cut;
+    }
+  }
+
+  private trailAt(d: number, out: { x: number; z: number; tx: number; tz: number }): typeof out {
+    const tr = this.trail, n = tr.cum.length;
+    if (n < 2) { out.x = tr.xs[0] ?? this.car.x; out.z = tr.zs[0] ?? this.car.z; out.tx = Math.sin(this.car.yaw); out.tz = Math.cos(this.car.yaw); return out; }
+    d = clamp(d, 0, tr.cum[n - 1]);
+    let lo = 0, hi = n - 1;
+    while (hi - lo > 1) { const m = (lo + hi) >> 1; if (tr.cum[m] <= d) lo = m; else hi = m; }
+    const seg = tr.cum[hi] - tr.cum[lo] || 1, k = (d - tr.cum[lo]) / seg;
+    const dx = tr.xs[hi] - tr.xs[lo], dz = tr.zs[hi] - tr.zs[lo], l = Math.hypot(dx, dz) || 1;
+    out.x = tr.xs[lo] + dx * k; out.z = tr.zs[lo] + dz * k; out.tx = dx / l; out.tz = dz / l;
+    return out;
+  }
+
+  /**
+   * Leave the roads the patrol knows and take up the van's trail from the point of it nearest the car
+   * (it drove that way itself moments ago); if the car is far from it (it was ahead), straight over to it.
+   */
+  private toTrail(): void {
+    const tr = this.trail, c = this.car;
+    const ahead = (c.x - this.van.x) * -Math.sin(this.van.yaw) + (c.z - this.van.z) * -Math.cos(this.van.yaw) > -3;
+    if (ahead) {
+      // it was in front, boxing the van in: round, and straight for where the van is now
+      const lx = tr.xs[tr.xs.length - 1], lz = tr.zs[tr.zs.length - 1];
+      tr.xs.length = tr.zs.length = tr.cum.length = 0;
+      this.trailPush(c.x, c.z);
+      tr.xs.push(lx); tr.zs.push(lz); tr.cum.push(Math.hypot(lx - c.x, lz - c.z));
+      this.trailD = 0;
+      c.v = Math.min(c.v, 6);
+      this.onTrail = true;
+      c.phase = 'tail'; c.close = 0;
+      this.ev.megaphone(CALLS_TRAIL[Math.floor(Math.random() * CALLS_TRAIL.length)]);
+      this.callT = 6;
+      return;
+    }
+    let best = 0, bd = Infinity;
+    for (let i = tr.xs.length - 1; i >= 0; i--) {
+      const d = (tr.xs[i] - c.x) ** 2 + (tr.zs[i] - c.z) ** 2;
+      if (d < bd) { bd = d; best = i; }
+    }
+    if (bd > 25 * 25) {
+      // a bridge from where the car is to that point
+      const keep = { xs: tr.xs.slice(best), zs: tr.zs.slice(best) };
+      tr.xs.length = tr.zs.length = tr.cum.length = 0;
+      this.trailPush(c.x, c.z);
+      tr.xs.push(...keep.xs); tr.zs.push(...keep.zs);
+      tr.cum.length = 0;
+      for (let i = 0; i < tr.xs.length; i++) tr.cum.push(i ? tr.cum[i - 1] + Math.hypot(tr.xs[i] - tr.xs[i - 1], tr.zs[i] - tr.zs[i - 1]) : 0);
+      this.trailD = 0;
+    } else this.trailD = tr.cum[best];
+    this.onTrail = true;
+    c.phase = 'tail'; c.close = 0;
+    this.ev.megaphone(CALLS_TRAIL[Math.floor(Math.random() * CALLS_TRAIL.length)]);
+    this.callT = 6;
+  }
+
+  /** Back onto a road of the traffic's once the van is on it again and the car with it. */
+  private fromTrail(pl: { path: Path; d: number }): boolean {
+    const me = this.traffic.locate(this.car.x, this.car.z);
+    if (!me || me.path !== pl.path || Math.abs(me.lat) > 5 || Math.abs(pl.d - me.d) > 200) return false;
+    const c = this.car;
+    c.path = pl.path;
+    c.d = me.d;
+    c.dir = pl.d >= me.d ? 1 : -1;
+    c.lat = me.lat * c.dir;
+    this.onTrail = false;
+    return true;
+  }
+
+  /** The surface under the patrol off its roads: how fast it can go there, and whether it bogs down. */
+  private groundCap(x: number, z: number, vtop: number): { cap: number; bog: number } {
+    const g = this.ground.query(x, z, this.gi);
+    const suv = this.suv;
+    switch (g.surface) {
+      case 'asphalt': case 'wood': return { cap: vtop, bog: 0 };
+      case 'gravel': return { cap: vtop * 0.8, bog: 0 };
+      case 'dirt': return { cap: suv ? 15 : 11, bog: g.puddle ? (suv ? 0 : 0.4) : 0 };
+      case 'mud': return { cap: suv ? 6 : 3.5, bog: suv ? 0.3 : 1 };
+      case 'water': return { cap: 2, bog: 1 };
+      default: return { cap: suv ? 13 : 9.5, bog: 0 };
+    }
+  }
+
+  /** The chase off the patrol's roads: down the van's own trail, as close as it dares, leaning on it. */
+  private chaseTrail(dt: number, px: number, pz: number, speed: number): void {
+    const c = this.car, tr = this.trail, end = tr.cum[tr.cum.length - 1] ?? 0;
+    const pl = this.traffic.locate(px, pz);
+    // the van is back on the road (and the car on it too): the ordinary chase again
+    if (pl && this.fromTrail(pl)) return;
+    const n = tr.xs.length;
+    const gapT = end - this.trailD + Math.hypot(px - tr.xs[n - 1], pz - tr.zs[n - 1]);
+    this.gap = Math.max(0, Math.hypot(c.x - px, c.z - pz) - 4);
+    const ice = 1 - this.ground.snow * 0.25;
+    const vtop = (this.suv ? VMAX_SUV : VMAX) * ice;
+    const gc = this.groundCap(c.x, c.z, vtop);
+    let vmax = gc.cap * ice;
+    // the bends of the trail ahead
+    const a = this.trailAt(this.trailD, this.f);
+    let ax = a.tx, az = a.tz;
+    for (let k = 1; k <= 3; k++) {
+      const b = this.trailAt(this.trailD + k * 10, this.f2);
+      const turn = Math.abs(Math.atan2(ax * b.tz - az * b.tx, ax * b.tx + az * b.tz));
+      if (turn > 0.03) vmax = Math.min(vmax, Math.sqrt(Math.sqrt(LAT_G * ice * (10 / turn)) ** 2 + 2 * BRAKE * 0.6 * ice * (k - 1) * 10));
+      ax = b.tx; az = b.tz;
+    }
+    const target = gapT > 35 ? vmax : gapT > 12 ? Math.min(vmax, speed + 4 + (gapT - 12) * 0.3) : Math.min(vmax, Math.max(0, speed + (gapT - 6.5) * 0.9));
+    const braking = target < c.v - 0.3;
+    c.v = braking ? Math.max(target, c.v - BRAKE * (0.45 + 0.55 * ice) * dt) : Math.min(target, c.v + (this.suv ? ACCEL_SUV : ACCEL) * (c.v < 14 ? 1.5 : 1) * ice * dt);
+    this.dive = damp(this.dive, braking ? -0.05 : c.v < target - 0.5 ? 0.03 : 0, 5, dt);
+    this.lean = damp(this.lean, 0, 5, dt);
+    this.patrol.v = c.v; this.patrol.braking = braking;
+    this.moveOn(c.v * dt);
+    rollWheels(this.model, c.v * dt);
+    setBrake(this.model, braking);
+    // right on its tail: a shove on the flank
+    this.nudgeT -= dt;
+    if (gapT > 1.5 && gapT < 8 && speed > 8 && this.nudgeT < 0) {
+      this.nudgeT = 2.5 + Math.random() * 2.5;
+      this.ev.nudge?.(Math.random() < 0.5 ? -1 : 1, 0.5 + Math.random() * 0.4);
+    }
+    this.callT -= dt;
+    if (this.callT < 0) this.call(true);
+    // mud and water: the saloon is on its belly at once, the 4×4 in the deep of it
+    c.sink = gc.bog > 0.5 ? c.sink + dt * gc.bog * (this.suv ? 0.5 : 1.3) : Math.max(0, c.sink - dt);
+    if (c.sink > 1.6) { this.bog(); return; }
+    if (speed < 1 && Math.hypot(c.x - px, c.z - pz) < 22 && c.v < 2) { this.arrest(); return; }
+    if (gapT > ESCAPE || c.chaseT > CHASE_MAX) {
+      this.state = 'away';
+      this.timer = 0;
+      this.ev.megaphone('Ушёл, зараза…');
+      this.ev.toast('Оторвались от погони!', 2.8);
+      this.ev.record({ kind: 'escape', fine: 0, note: 'ушёл от погони' });
+    }
+  }
+
   private place(x: number, z: number, yaw: number, sink = 0): void {
     const { col } = this.p, model = this.model;
     const hx = Math.sin(yaw), hz = Math.cos(yaw), L = 1.5;
@@ -523,7 +726,7 @@ export class Police {
       if (this.reason === 'speed') this.kmh = Math.max(this.kmh, dIns < RADAR ? kmh : 0);
       const away = (px - ip.x) * pvx + (pz - ip.z) * pvz > 0;
       if (speed < 1 && (dIns < 50 || (dIns < 130 && this.timer > 3))) this.talk();
-      else if (dIns > 60 && away && this.timer > 1.5) this.pursue(px, pz);
+      else if (dIns > 40 && away && this.timer > 0.8) this.pursue(px, pz);
       else if (dIns > 200) this.state = 'idle';
     } else if (this.state === 'talk') {
       const o = this.talker;
@@ -576,7 +779,7 @@ export class Police {
       // wheels spinning in the slurry, then the driver climbs out to look
       c.sink = Math.min(0.16, c.sink + dt * 0.05);
       if (this.timer < 5) rollWheels(this.model, dt * 9 * (1 - this.timer / 5));
-      const rp = this.roadPose();
+      const rp = this.pose();
       this.place(rp.x, rp.z, rp.yaw, c.sink + Math.sin(t * 31) * 0.006 * Math.max(0, 1 - this.timer / 5));
       if (this.timer > 3 && this.inCar.has(this.drv)) {
         this.unseat(this.drv);
@@ -589,9 +792,7 @@ export class Police {
     } else if (this.state === 'away') {
       if (c.path && this.crewIn) {
         c.v = damp(c.v, 0, 2, dt);
-        c.d += c.dir * c.v * dt;
-        const rp = this.roadPose();
-        this.place(rp.x, rp.z, rp.yaw);
+        this.moveOn(c.v * dt);
         rollWheels(this.model, c.v * dt);
         c.flash = this.timer < 4;
       }
@@ -624,7 +825,7 @@ export class Police {
     const push = (a: Actor) => { acts.push(a); this.own.push(a); };
     if (this.state === 'pursuit' && this.car.path) {
       const cc = this.car;
-      push({ x: cc.x, z: cc.z, vx: Math.sin(cc.yaw) * cc.v, vz: Math.cos(cc.yaw) * cc.v, yaw: cc.yaw, hw: this.model.width / 2, hl: this.model.length / 2, siren: true, path: cc.path ?? undefined, d: cc.d, dir: cc.dir });
+      push({ x: cc.x, z: cc.z, vx: Math.sin(cc.yaw) * cc.v, vz: Math.cos(cc.yaw) * cc.v, yaw: cc.yaw, hw: this.model.width / 2, hl: this.model.length / 2, siren: true, path: this.onTrail ? undefined : cc.path ?? undefined, d: cc.d, dir: cc.dir });
     }
     if (this.roadblock.on) {
       if (this.state !== 'pursuit') this.clearBlock();
@@ -640,6 +841,7 @@ export class Police {
   private goHome(): void {
     for (const o of [this.drv, this.mate]) { if (!this.inCar.has(o)) this.seat(o); o.speed = 1.45; }
     this.car.path = null;
+    this.onTrail = false;
     this.talker = null;
     this.home();
     this.state = 'cool';
@@ -781,6 +983,10 @@ export class Police {
     this.reason = 'flee';
     this.state = 'pursuit';
     this.timer = 0;
+    this.onTrail = false;
+    const tr = this.trail;
+    tr.xs.length = tr.zs.length = tr.cum.length = 0;
+    this.trailPush(this.van.x, this.van.z);
     c.phase = 'tail'; c.phaseT = 0; c.close = 0; c.boxed = false;
     this.callT = 2.5;
   }
@@ -788,7 +994,7 @@ export class Police {
   private call(dirt: boolean): void {
     const list = dirt ? CALLS_DIRT : CALLS;
     this.ev.megaphone(list[this.callI++ % list.length]);
-    this.callT = 7 + Math.random() * 3;
+    this.callT = 5 + Math.random() * 2.5;
   }
 
   /** The speed for the sharpest bend in the next ~60 m of road, from the heading change over 20 m stretches. */
@@ -828,26 +1034,26 @@ export class Police {
     const pl = this.traffic.locate(px, pz);
     c.chaseT += dt;
     c.phaseT += dt;
-    // the van turned off onto the forest track: the 4×4 follows it at the
-    // junction; the saloon would leave its sump on the first rut and gives up
-    if (c.path === paths[0] && pl && pl.path === paths[1] && c.d > this.junction - 25 && c.dir > 0) {
-      if (!this.suv) {
-        this.state = 'away';
-        this.timer = 0;
-        this.ev.megaphone('Ушёл в лес, зараза… На легковой туда не сунешься!');
-        this.ev.toast('Легковой патруль на грунтовку не полез — ушли от погони!', 3.2);
-        this.ev.record({ kind: 'escape', fine: 0, note: 'ушёл в лес' });
-        return;
-      }
+    this.trailPush(px, pz);
+    if (this.onTrail) { this.chaseTrail(dt, px, pz, speed); return; }
+    // the van turned off onto the forest track: both cars go after it — the 4×4 at home in the ruts,
+    // the saloon bouncing along slower until its sump finds the first deep hole
+    if (c.path === paths[0] && pl && pl.path === paths[1] && pl.d > 10 && c.d > this.junction - 25 && c.d < this.junction + 30 && c.dir > 0) {
       c.path = paths[1];
       c.d = Math.max(0, c.d - this.junction);
       c.phase = 'tail';
-      this.ev.megaphone('В лес?! Думаешь, по лесу не догоним? Стоять, почта!');
+      this.ev.megaphone(this.suv ? 'В лес?! Думаешь, по лесу не догоним? Стоять, почта!' : 'В лес полез?! Ничего, и на легковой пролезем!');
       this.callT = 6;
     }
     const path = c.path!;
     const on = pl && pl.path === path;
     c.lost = on ? 0 : c.lost + dt;
+    // off the roads the patrol knows (a side road, a field, the road home): after it, down its own tracks
+    if (!on && c.lost > 0.6 && c.merge >= 1 && this.inCar.has(this.drv) && this.trail.xs.length > 1) {
+      this.toTrail();
+      this.chaseTrail(dt, px, pz, speed);
+      return;
+    }
     const gap = on ? c.dir * (pl!.d - c.d) : 60;
     this.gap = Math.max(0, Math.hypot(c.x - px, c.z - pz) - 4);
     const sDirt = this.dirtS();
@@ -855,7 +1061,7 @@ export class Police {
     // on snow the patrol driver is as careful as anyone: less speed, softer throttle and brakes
     const ice = 1 - this.ground.snow * (dirt ? 0.15 : 0.3);
     const vtop = (this.suv ? VMAX_SUV : VMAX) * ice;
-    let vmax = dirt ? this.dirtCap(sDirt) : vtop;
+    let vmax = dirt ? this.dirtCap(sDirt) * (this.suv ? 1 : 0.75) : vtop;
     // and he lifts for the bends: the heading change over the road ahead, the speed the grip allows through it
     vmax = Math.min(vmax, this.bendCap(path, c.d, c.dir, ice));
     const lane = this.traffic.laneAt(path, c.d, c.dir);
@@ -865,40 +1071,42 @@ export class Police {
     let target: number;
     let latT = lane;
     if (c.phase === 'tail') {
-      c.close = on && gap < 18 && speed > 7 ? c.close + dt : Math.max(0, c.close - dt);
+      // he sits right on the van's bumper, and pulls out to pass as soon as he can
+      c.close = on && gap < 20 && speed > 6 ? c.close + dt : Math.max(0, c.close - dt);
       if (gap > 40) target = vmax;
-      else if (gap > 16) target = Math.min(vmax, speed + 3 + (gap - 16) * 0.25);
-      else target = Math.min(vmax, Math.max(0, speed + (gap - 11) * 0.8));
-      if (!dirt && c.close > 2 && c.merge >= 1) { c.phase = 'overtake'; c.phaseT = 0; this.ev.megaphone('Прижимаю! Тормози, почта!'); this.callT = 6; }
+      else if (gap > 14) target = Math.min(vmax, speed + 4 + (gap - 14) * 0.3);
+      else target = Math.min(vmax, Math.max(0, speed + (gap - 6.5) * 0.9));
+      if (!dirt && c.close > 1.2 && c.merge >= 1) { c.phase = 'overtake'; c.phaseT = 0; this.ev.megaphone('Прижимаю! Тормози, почта!'); this.callT = 6; }
     } else if (c.phase === 'overtake') {
       latT = -lane;
-      target = Math.min(vtop + 3, vmax + 3, speed + 6);
-      if (gap < -8) { c.phase = 'block'; c.phaseT = 0; }
-      else if (gap > 34 || c.phaseT > 14 || dirt) { c.phase = 'tail'; c.close = 0; }
+      target = Math.min(vtop + 4, vmax + 4, speed + 8);
+      if (gap < -7) { c.phase = 'block'; c.phaseT = 0; }
+      else if (gap > 34 || c.phaseT > 16 || dirt) { c.phase = 'tail'; c.close = 0; }
     } else {
       // ahead of the van: swing into its lane and brake, staying just in front
       // of its bumper so it has to stop too
       latT = lane * 0.6;
       const ahead = -gap;
-      target = ahead > 10 ? Math.max(0, speed - 3 - (ahead - 10) * 0.5) : ahead < 6 ? speed + 0.5 : Math.max(0, speed - 2.5);
+      // and stands on the brakes in front of it
+      target = ahead > 9 ? Math.max(0, speed - 4 - (ahead - 9) * 0.6) : ahead < 5 ? speed + 0.5 : Math.max(0, speed - 4);
       c.boxed = true;
       if (gap > 2 || dirt) { c.phase = 'tail'; c.close = -2; c.phaseT = 0; }
     }
-    if (c.merge < 1) target = Math.min(target, 6);
+    if (c.merge < 1) target = Math.min(target, 10);
     // never drive through other people's cars: brake for whatever is in the patrol's lane, and
     // give up an overtake when something is coming the other way
     const lead = this.traffic.lead(path, c.d, c.dir, c.lat, 110);
     if (lead) {
-      if (c.phase === 'overtake' && lead.oncoming && lead.gap < 120) { c.phase = 'tail'; c.close = -3; c.phaseT = 0; }
+      if (c.phase === 'overtake' && lead.oncoming && lead.gap < 70) { c.phase = 'tail'; c.close = -2; c.phaseT = 0; }
       target = Math.min(target, stopSpeed(lead.gap - lead.len / 2 - 2.3 - 3.5, lead.v));
       if (lead.gap < 25 && !lead.oncoming && c.v > lead.v + 1) this.nudgeT = Math.max(this.nudgeT, 3);
     }
     // a long chase on the asphalt and the van will not stop: radio ahead, a second car across the road
-    if (!dirt && !this.roadblock.on && !this.roadblock.used && c.chaseT > 30 && on && speed > 8 && c.merge >= 1) this.throwBlock(pl!, dirt);
+    if (!dirt && !this.roadblock.on && !this.roadblock.used && c.chaseT > 18 && on && speed > 8 && c.merge >= 1) this.throwBlock(pl!, dirt);
     // the driver is still walking back to the car
     if (!this.inCar.has(this.drv)) target = 0;
     const braking = target < c.v - 0.3;
-    c.v = braking ? Math.max(target, c.v - BRAKE * (0.45 + 0.55 * ice) * dt) : Math.min(target, c.v + (this.suv ? ACCEL_SUV : ACCEL) * ice * dt);
+    c.v = braking ? Math.max(target, c.v - BRAKE * (0.45 + 0.55 * ice) * dt) : Math.min(target, c.v + (this.suv ? ACCEL_SUV : ACCEL) * (c.v < 14 ? 1.5 : 1) * ice * dt);
     const lastLat = c.lat;
     c.lat = damp(c.lat, latT, c.phase === 'tail' ? 2 : 1.4, dt);
     // the body dives under braking, squats under power and rolls into the lane change
@@ -907,9 +1115,15 @@ export class Police {
     this.patrol.v = c.v; this.patrol.braking = braking;
     // close on the tail, the patrol leans on the van: a bump on the flank to scare it into stopping
     this.nudgeT -= dt;
-    if (c.phase === 'tail' && on && gap > 2 && gap < 7 && speed > 12 && c.merge >= 1 && this.nudgeT < 0) {
-      this.nudgeT = 5 + Math.random() * 5;
-      this.ev.nudge?.(Math.random() < 0.5 ? -1 : 1, 0.4 + Math.random() * 0.4);
+    if (c.phase === 'overtake' && on && Math.abs(gap) < 3 && speed > 8 && this.nudgeT < 0) {
+      // alongside: he leans on the van towards the verge
+      this.nudgeT = 2 + Math.random() * 2;
+      this.ev.nudge?.(1, 0.45 + Math.random() * 0.3);
+      if (Math.random() < 0.5) { this.ev.megaphone('К обочине! К обочине, сказал!'); this.callT = 5; }
+    }
+    if (c.phase === 'tail' && on && gap > 1.5 && gap < 9 && speed > 8 && c.merge >= 1 && this.nudgeT < 0) {
+      this.nudgeT = 2.5 + Math.random() * 3;
+      this.ev.nudge?.(Math.random() < 0.5 ? -1 : 1, 0.5 + Math.random() * 0.45);
     }
     c.d = clamp(c.d + c.dir * c.v * dt, 2, path.length - 2);
     rollWheels(this.model, c.v * dt);
@@ -919,7 +1133,7 @@ export class Police {
     const steer = c.v > 1 ? Math.atan2((c.lat - lastLat) / dt, c.v) * -c.dir : 0;
     if (c.merge < 1) {
       // roll out of the lay-by onto the road over a couple of seconds
-      c.merge = Math.min(1, c.merge + dt / 2.4);
+      c.merge = Math.min(1, c.merge + dt / 1.6);
       const k = c.merge * c.merge * (3 - 2 * c.merge);
       const pk = this.p.park;
       let dy = rp.yaw - pk.yaw;
@@ -931,9 +1145,11 @@ export class Police {
     if (this.callT < 0 && c.merge >= 1) this.call(dirt);
 
     // the deepest waterlogged hollows are too much even for the 4×4 on road tyres
+    // (the saloon sits on its belly much sooner: the first deep hole or the lowland's mud)
     if (dirt) {
       const bog = this.ground.main.bogAt(sDirt);
-      c.sink = bog > 0.86 ? c.sink + dt * bog : Math.max(0, c.sink - dt);
+      const deep = this.suv ? bog > 0.86 : bog > 0.5 || this.ground.main.zoneAt(sDirt).surface === 'mud';
+      c.sink = deep ? c.sink + dt * Math.max(bog, 0.6) * (this.suv ? 1 : 1.4) : Math.max(0, c.sink - dt);
       if (c.sink > 1.6) { this.bog(); return; }
     }
     // the van stopped with the patrol on it
@@ -942,7 +1158,7 @@ export class Police {
       if (c.chaseT < 14 && !c.boxed) this.talk(); else this.arrest();
       return;
     }
-    if (c.lost > 8 || (on && gap > ESCAPE) || c.chaseT > 160) {
+    if (c.lost > 20 || (on && gap > ESCAPE) || c.chaseT > CHASE_MAX) {
       this.state = 'away';
       this.timer = 0;
       this.ev.megaphone('Ушёл, зараза…');
@@ -956,8 +1172,10 @@ export class Police {
     const path = pl.path;
     if (dirt || path !== this.traffic.paths[0] || !this.p.block) return;
     const c = this.car;
-    const dRB = pl.d + c.dir * 300;
-    if (dRB < 60 || dRB > this.junction - 60 || dRB > path.length - 40) return;
+    // 300 m ahead if the road allows, nearer if not; never in the fork itself
+    const ok = (d: number) => d >= 60 && d <= path.length - 40 && Math.abs(d - this.junction) > 60;
+    const dRB = [300, 230, 170].map((k) => pl.d + c.dir * k).find(ok);
+    if (dRB === undefined) return;
     const f = path.frame(dRB, this.f);
     const side = c.dir * 1.9;
     const x = f.x - f.tz * side, z = f.z + f.tx * side;
@@ -987,8 +1205,8 @@ export class Police {
     c.v = 0;
     c.sink = 0.02;
     setBrake(this.model, false);
-    this.ev.megaphone('Сели… Ну, почта, попадёшься ты мне ещё!');
-    this.ev.toast('Внедорожник ГАИ засел в болоте по самые пороги — ушли от погони!', 3.4);
+    this.ev.megaphone(this.suv ? 'Сели… Ну, почта, попадёшься ты мне ещё!' : 'На брюхо сели… Ну, почта, ты у меня дождёшься!');
+    this.ev.toast(this.suv ? 'Внедорожник ГАИ засел в болоте по самые пороги — ушли от погони!' : 'Легковая ГАИ села на брюхо в грязи — ушли от погони!', 3.4);
     this.ev.record({ kind: 'escape', fine: 0, note: 'патруль засел в болоте' });
   }
 
@@ -1022,11 +1240,9 @@ export class Police {
       const room = Math.hypot(this.van.x - c.x, this.van.z - c.z) - 4.5;
       const want = behind && this.step === -2 ? Math.sqrt(2 * 4 * Math.max(0, room - 3)) : 0;
       c.v = want < c.v ? Math.max(want, c.v - 8 * dt) : Math.min(want, c.v + 2 * dt);
-      c.d = clamp(c.d + c.dir * c.v * dt, 2, c.path.length - 2);
+      this.moveOn(c.v * dt);
       rollWheels(this.model, c.v * dt);
       setBrake(this.model, true);
-      const rp = this.roadPose();
-      this.place(rp.x, rp.z, rp.yaw);
     }
     if (this.step === -2 && c.v < 0.3 && this.timer > 1) {
       // both doors open: the driver to the window, his partner round the passenger side

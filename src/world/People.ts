@@ -5,10 +5,12 @@ import { clamp, damp } from '../core/math';
 import manUrl from '../assets/people/man.glb?url';
 import womanUrl from '../assets/people/woman.glb?url';
 import dressUrl from '../assets/people/woman-dress.glb?url';
-import gaiUrl from '../assets/people/militsioner.glb?url';
 import timurUrl from '../assets/people/timur.glb?url';
-import muhaUrl from '../assets/people/muha.glb?url';
-import kartatayUrl from '../assets/people/kartatay.glb?url';
+import gaiUrl from '../assets/people/gai-mx.glb?url';
+import heroUrl from '../assets/people/hero-mx.glb?url';
+import muhaUrl from '../assets/people/muha-mx.glb?url';
+import kartatayUrl from '../assets/people/kartatay-mx.glb?url';
+import mixamoClipsUrl from '../assets/people/mixamo-clips.glb?url';
 
 /**
  * Skinned, animated people built on Quaternius' CC0 "BaseHuman" figures (see
@@ -21,15 +23,32 @@ import kartatayUrl from '../assets/people/kartatay.glb?url';
  * Local forward is +Z, feet at the origin, sizes in metres.
  */
 /**
- * Textured, modelled characters on the same skeleton and clips as `man`: `gai` the traffic-police
- * officer, `timur` the hero (the driver's own arms and legs), `muha` his friend from before the army,
+ * Textured, modelled characters. `timur` the hero as the driver sees himself (arms and legs, on the
+ * BaseHuman skeleton with its finger bones, which close round the wheel). On Mixamo's skeleton with
+ * the Mixamo clips (scripts/models/mixamo-people.mjs): `hero` — Timur seen from outside, in a cap and
+ * a tracksuit jacket; `gai` sergeant Kuzmin of the GAI post; `muha` his friend from before the army;
  * `kartatay` the grandfather (cap, moustache, an old jacket over a patterned sweater, boots).
  */
-export type Body = 'man' | 'woman' | 'dress' | 'gai' | 'timur' | 'muha' | 'kartatay';
+export type Body = 'man' | 'woman' | 'dress' | 'gai' | 'timur' | 'hero' | 'muha' | 'kartatay';
 
-const URLS: Record<Body, string> = { man: manUrl, woman: womanUrl, dress: dressUrl, gai: gaiUrl, timur: timurUrl, muha: muhaUrl, kartatay: kartatayUrl };
+const URLS: Record<Body, string> = { man: manUrl, woman: womanUrl, dress: dressUrl, gai: gaiUrl, timur: timurUrl, hero: heroUrl, muha: muhaUrl, kartatay: kartatayUrl };
 // the officer, Timur and the grandfather are measured to the top of their caps (he is 72 and stoops a little)
-const HEIGHT: Record<Body, number> = { man: 1.78, woman: 1.64, dress: 1.6, gai: 1.86, timur: 1.8, muha: 1.76, kartatay: 1.72 };
+const HEIGHT: Record<Body, number> = { man: 1.78, woman: 1.64, dress: 1.6, gai: 1.86, timur: 1.8, hero: 1.8, muha: 1.76, kartatay: 1.72 };
+/** The bodies on Mixamo's skeleton: they share one set of clips (mixamo-clips.glb). */
+const MIXAMO: ReadonlySet<Body> = new Set<Body>(['gai', 'hero', 'muha', 'kartatay']);
+/**
+ * BaseHuman's bone names (which the procedural layer, the props and the scenes use) on Mixamo's
+ * skeleton. It has no finger bones: the fingers' place is made up from the hand (see Human).
+ */
+const ALIAS: Record<string, string> = {
+  Hips: 'Hips', Abdomen: 'Spine', Torso: 'Spine2', Neck: 'Neck', Head: 'Head',
+  ShoulderL: 'LeftShoulder', UpperArmL: 'LeftArm', LowerArmL: 'LeftForeArm', PalmL: 'LeftHand',
+  ShoulderR: 'RightShoulder', UpperArmR: 'RightArm', LowerArmR: 'RightForeArm', PalmR: 'RightHand',
+  UpperLegL: 'LeftUpLeg', LowerLegL: 'LeftLeg', FootL: 'LeftFoot', UpperLegR: 'RightUpLeg', LowerLegR: 'RightLeg', FootR: 'RightFoot',
+};
+const FROM_MIXAMO = new Map(Object.entries(ALIAS).map(([k, v]) => [`mixamorig${v}`, k]));
+/** Clips a body plays under another clip's name: the grandfather walks as an old man does. */
+const CLIP_AS: Partial<Record<Body, Record<string, string>>> = { kartatay: { Walk: 'OldWalk' } };
 
 interface MeshInfo { raw: Float32Array; joint: string[]; index: ArrayLike<number> | null }
 interface Template {
@@ -42,14 +61,38 @@ interface Template {
 const templates: Partial<Record<Body, Template>> = {};
 let loading: Promise<void> | null = null;
 
+/**
+ * The shared Mixamo clips fitted to one body: the hips' motion (the only translation in the clips)
+ * scaled from the clip's own character to this one by the height of the hips at rest.
+ */
+function fitClips(pool: THREE.AnimationClip[], srcHips: Record<string, number>, body: Body, hipsRest: number): Record<string, THREE.AnimationClip> {
+  const out: Record<string, THREE.AnimationClip> = {};
+  for (const c of pool) {
+    const k = hipsRest / (srcHips[c.name] || hipsRest);
+    const clip = c.clone();
+    for (const t of clip.tracks) if (t.name === 'mixamorigHips.position') for (let i = 0; i < t.values.length; i++) t.values[i] *= k;
+    out[c.name] = clip;
+  }
+  for (const [as, name] of Object.entries(CLIP_AS[body] ?? {})) if (out[name]) out[as] = out[name];
+  return out;
+}
+
 /** Fetch and prepare the character models; must resolve before any Human is built. */
 export function loadPeople(): Promise<void> {
   return (loading ??= (async () => {
     const loader = new GLTFLoader();
+    const shared = loader.loadAsync(mixamoClipsUrl);
     await Promise.all((Object.keys(URLS) as Body[]).map(async (b) => {
       const g = await loader.loadAsync(URLS[b]);
-      const clips: Record<string, THREE.AnimationClip> = {};
+      const mx = MIXAMO.has(b);
+      let clips: Record<string, THREE.AnimationClip> = {};
       for (const c of g.animations) clips[c.name.split('|').pop()!.replace(/^(Man|Female)_/, '')] = c;
+      if (mx) {
+        const sc = await shared;
+        let srcHips: Record<string, number> = {};
+        sc.scene.traverse((o) => { if (o.userData.clipHips) srcHips = o.userData.clipHips; });
+        clips = fitClips(sc.animations, srcHips, b, g.scene.getObjectByName('mixamorigHips')!.position.y);
+      }
       g.scene.updateMatrixWorld(true);
       const meshes: MeshInfo[] = [];
       let top = 0;
@@ -65,7 +108,9 @@ export function loadPeople(): Promise<void> {
           top = Math.max(top, v.y);
           let best = 0;
           for (let k = 1; k < 4; k++) if (sw.getComponent(i, k) > sw.getComponent(i, best)) best = k;
-          joint.push(m.skeleton.bones[si.getComponent(i, best)]?.name ?? '');
+          const name = m.skeleton.bones[si.getComponent(i, best)]?.name ?? '';
+          // measured in BaseHuman's names, whatever the skeleton
+          joint.push(mx ? FROM_MIXAMO.get(name) ?? name : name);
         }
         meshes.push({ raw, joint, index: m.geometry.index ? m.geometry.index.array : null });
       });
@@ -107,6 +152,8 @@ const _q = new THREE.Quaternion(), _qp = new THREE.Quaternion(), _qd = new THREE
 const UP = new THREE.Vector3(0, 1, 0);
 const ARM = /Arm|Palm|Hand|Finger|Thumb/;
 const DRIVEN = ['Torso', 'Neck', 'Head', 'UpperArmL', 'LowerArmL', 'UpperArmR', 'LowerArmR'];
+/** BaseHuman's Sitting clip, last frame: the hips against the feet, file units (down and back). */
+const BH_SIT_Y = 1.1, BH_SIT_Z = -0.6;
 
 export class Human {
   /** Positioned in the world; feet at the origin, facing +Z. */
@@ -162,6 +209,12 @@ export class Human {
       // skinned bounds are computed in the bind pose; seated figures would be culled
       m.frustumCulled = false;
     });
+    this.mixamo = MIXAMO.has(body);
+    // Mixamo's bones answer to BaseHuman's names too (the fingers: the hand)
+    if (this.mixamo) {
+      for (const [k, v] of Object.entries(ALIAS)) if (this.bones[`mixamorig${v}`]) this.bones[k] = this.bones[`mixamorig${v}`];
+      for (const s of ['L', 'R']) this.bones[`Fingers${s}`] = this.bones[`Palm${s}`];
+    }
     this.mixer = new THREE.AnimationMixer(this.model);
     for (const n of DRIVEN) if (this.bones[n]) this.driven.push([this.bones[n], this.bones[n].quaternion.clone()]);
     this.group.updateMatrixWorld(true);
@@ -176,6 +229,48 @@ export class Human {
         this.bind[b.name] ??= meshG.clone().multiply(m.skeleton.boneInverses[i].clone().invert());
       });
     });
+    if (this.mixamo) {
+      for (const [k, v] of Object.entries(ALIAS)) if (this.bind[`mixamorig${v}`]) this.bind[k] = this.bind[`mixamorig${v}`];
+      // where the fingers would be: on along the forearm's line, past the wrist
+      for (const s of ['L', 'R']) {
+        const palm = this.bind[`Palm${s}`], lo = this.bind[`LowerArm${s}`];
+        if (!palm || !lo) continue;
+        const p = new THREE.Vector3().setFromMatrixPosition(palm), d = p.clone().sub(new THREE.Vector3().setFromMatrixPosition(lo)).normalize();
+        this.bind[`Fingers${s}`] = palm.clone().setPosition(p.addScaledVector(d, 0.085 * (HEIGHT[body] / 1.8)));
+      }
+    }
+  }
+
+  /** On Mixamo's skeleton (its own clips: Idle, Talking, Talking2, Walk, Driving, Sitting, Waving, Handshake, Texting, OldWalk). */
+  readonly mixamo: boolean;
+
+  /** True if the figure has a clip by this name. */
+  has(clip: string): boolean { return !!this.tpl.clips[clip]; }
+
+  private readonly seatAt = new Map<string, { y: number; z: number }>();
+  /**
+   * Sit with the hips `hipsY` metres over the feet's origin (a seat there): BaseHuman's Sitting clip
+   * held on its last frame, or Mixamo's seated loop (`clip`: Sitting, or Driving at a wheel), the
+   * model moved so the hips land on the seat whatever the clip does with them.
+   */
+  seat(hipsY: number, clip = 'Sitting'): void {
+    if (!this.mixamo) {
+      this.play('Sitting', { fade: 0, once: true, at: 1 });
+      this.model.position.set(0, hipsY - BH_SIT_Y * this.s, -BH_SIT_Z * this.s);
+      return;
+    }
+    if (this.clip !== clip) this.play(clip, { fade: 0 });
+    let o = this.seatAt.get(clip);
+    if (!o) {
+      // measured once on the clip's first frame
+      this.model.position.set(0, 0, 0);
+      this.mixer.update(0);
+      this.group.updateMatrixWorld(true);
+      const hp = this.at('Hips');
+      o = { y: hp.y, z: hp.z };
+      this.seatAt.set(clip, o);
+    }
+    this.model.position.set(0, hipsY - o.y, -o.z);
   }
 
   /** Flat model colours from the outfit, or per-vertex paint where it asks for it. */
@@ -309,6 +404,8 @@ export class Human {
   }
 
   play(name: string, opts: { fade?: number; speed?: number; once?: boolean; at?: number } = {}): void {
+    // Mixamo's seated clips are loops of sitting, not BaseHuman's sitting-down to hold on its last frame
+    if (this.mixamo && (name === 'Sitting' || name === 'Driving')) opts = { ...opts, once: false, at: undefined };
     if (name === this.clip) {
       if (this.action && opts.speed !== undefined) this.action.timeScale = opts.speed;
       return;
@@ -487,18 +584,56 @@ export class Person {
   get group(): THREE.Group { return this.human.group; }
   /** Seconds of waving left; set by the mission on delivery. */
   wave = 0;
+  /** Wave with the whole of the Waving clip (both arms, a young man hailing) rather than a hand raised. */
+  waveClip = false;
   private w = 0;
   private readonly target = new THREE.Vector3();
+  /** Seconds of talking left (the Talking clip, on bodies that have it). */
+  private talkT = 0;
+  private talkClip = 'Talking';
+  /** A clip played for a while over whatever the figure was doing, and what to go back to. */
+  private acting: string | null = null;
+  private rest = 'Idle';
 
   constructor(body: Body, outfit: Outfit) {
     this.human = new Human(body, outfit);
     this.human.play('Idle', { fade: 0, at: Math.random(), speed: 0.85 + Math.random() * 0.3 });
   }
 
+  /** Playing a clip over its own just now (a handshake, the wave, talking). */
+  get busy(): boolean { return this.acting !== null; }
+
+  /** Say something: the talking clip for a while (standing figures on Mixamo's skeleton; others just stand). */
+  talk(seconds: number): void {
+    const h = this.human;
+    if (!h.has('Talking') || h.clip === 'Sitting' || h.clip === 'Walk') return;
+    if (this.talkT <= 0) this.talkClip = h.has('Talking2') && Math.random() < 0.5 ? 'Talking2' : 'Talking';
+    this.talkT = Math.max(this.talkT, seconds);
+  }
+
+  /** Play a clip for a while (a handshake), then go back to what the figure was doing. */
+  act(clip: string, seconds: number): void {
+    if (!this.human.has(clip)) return;
+    this.actClip = clip;
+    this.actT = seconds;
+  }
+  private actClip = '';
+  private actT = 0;
+
   update(dt: number, t: number): void {
     const h = this.human;
     this.wave = Math.max(0, this.wave - dt);
-    this.w = damp(this.w, this.wave > 0 ? 1 : 0, 7, dt);
+    this.talkT = Math.max(0, this.talkT - dt);
+    this.actT = Math.max(0, this.actT - dt);
+    // the clip of the moment over the figure's own: a handshake, the wave, talking; back when it is over
+    const clipWave = this.waveClip && h.has('Waving');
+    const want = this.actT > 0 ? this.actClip : clipWave && this.wave > 0 ? 'Waving' : this.talkT > 0 ? this.talkClip : null;
+    if (want !== this.acting) {
+      if (want) { if (!this.acting) this.rest = h.clip || 'Idle'; h.play(want, { fade: 0.35 }); }
+      else h.play(this.rest, { fade: 0.4 });
+      this.acting = want;
+    }
+    this.w = damp(this.w, this.wave > 0 && !clipWave ? 1 : 0, 7, dt);
     h.tick(dt);
     if (this.w > 0.01) {
       // right hand up above the shoulder, swinging side to side

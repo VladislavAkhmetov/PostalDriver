@@ -238,6 +238,12 @@ const ROUTE: [number, number][] = [
 
 export interface Poi { id: string; name: string; kind: 'khutor' | 'forestry' | 'apiary' | 'kolkhoz' | 'cemetery'; road: Road; s: number; mainS: number }
 
+/** How far the coarse road-distance field reaches, metres: past the foot of the hills round the map. */
+const FIELD_R = 480;
+/** The single-track railway: half the length of the modelled line, metres, and its angle off square across the highway. */
+export const RAIL_HALF = 900;
+const RAIL_ANGLE = 0.32;
+
 /**
  * The branch road straight on from the fork (the old asphalt stub, run on into gravel): distances
  * along it. Past the asphalt, open steppe with the shikhan standing over it; a pine wood on sand with
@@ -306,6 +312,8 @@ export class Ground {
   /** The spring thaw (распутица): the lowland's mud deeper, the dirt roads soft. */
   thaw = false;
   churchPos = new THREE.Vector2();
+  /** The railway line across the asphalt a little past the GAI post: the crossing (main-road distance and point) and its direction. */
+  railLine = { s: 0, cx: 0, cz: 0, dx: 0, dz: 0 };
   private bumps: { x: number; z: number; r: number; h: number }[] = [];
   // terrain grid
   minX = 0; minZ = 0; step = 10; nx = 0; nz = 0;
@@ -328,6 +336,14 @@ export class Ground {
       potholesFrom: 430 * k, potholesTo: 1250 * k, church: 4080 * k, farm: 3600 * k, tower: 3790 * k, sawmill: 2810 * k, home: 260 * k + 410,
     };
     const m = this.marks;
+    {
+      const s = m.town + 520, f = this.main.frame(s);
+      this.railLine = {
+        s, cx: f.x, cz: f.z,
+        dx: f.rx * Math.cos(RAIL_ANGLE) + f.tx * Math.sin(RAIL_ANGLE),
+        dz: f.rz * Math.cos(RAIL_ANGLE) + f.tz * Math.sin(RAIL_ANGLE),
+      };
+    }
     // ~30 % asphalt to the junction, then ~70 % unmade: washed-out forest track,
     // Sosnovka's dirt street, the river-lowland mud, and the meadow track to Zarechye
     this.main.zones = [
@@ -377,8 +393,10 @@ export class Ground {
     this.lake.y = this.hills(this.lake.x, this.lake.z) - 1.2;
 
     this.assignHeights();
-    this.buildGrid();
+    // the road field first: the foothills rise with distance from every road
+    this.sizeGrid();
     this.buildField();
+    this.buildGrid();
   }
 
   /**
@@ -455,7 +473,7 @@ export class Ground {
     // Back roads never start inside a village: its houses line the road 13-16 m off.
     // (The ranges are World's village list; each spur is kept 40 m clear of them.)
     // the farmstead lane, between the railway and the hamlet before the fork
-    spur('khutor-road', 'хутор Берёзки', 'fields', 4.6, J - 400, 380, 'gravel', 'khutor');
+    spur('khutor-road', 'Берёзовка', 'fields', 4.6, J - 400, 380, 'gravel', 'khutor');
     // through the woods between Sosnovka and the mud: the forestry's service ring
     loop('forestry-ring', 'лесничество', 'forest', 3.8, m.sosEnd + 90, m.mud - 130, 320, 'dirt', 'forestry', -1);
     // dead ends: the cemetery in the wood before Sosnovka, bee-keeper's by the river, the old kolkhoz farm
@@ -787,8 +805,7 @@ export class Ground {
     return !this.roads.some((r) => r !== road && r.samples.some((q) => (q.x - p.x) ** 2 + (q.z - p.z) ** 2 < 64));
   }
 
-  private buildGrid(): void {
-    const dead = new Set(this.roads.filter((r) => this.deadEnd(r)));
+  private sizeGrid(): void {
     let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
     for (const r of this.roads) for (const p of r.samples) {
       minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x); minZ = Math.min(minZ, p.z); maxZ = Math.max(maxZ, p.z);
@@ -799,11 +816,58 @@ export class Ground {
     this.nx = Math.ceil((maxX + M - this.minX) / this.step) + 1;
     this.nz = Math.ceil((maxZ + M - this.minZ) / this.step) + 1;
     this.heights = new Float32Array(this.nx * this.nz);
+  }
+
+  /**
+   * Distance to the nearest road, smoothly interpolated over the coarse field (the foothills'
+   * slopes are built on it, so it must not step from cell to cell). Capped at FIELD_R.
+   */
+  roadDist(x: number, z: number): number {
+    const c = this.fCell;
+    const fx = clamp((x - this.minX) / c - 0.5, 0, this.fNx - 1.001), fz = clamp((z - this.minZ) / c - 0.5, 0, this.fNz - 1.001);
+    const ix = Math.floor(fx), iz = Math.floor(fz), tx = fx - ix, tz = fz - iz;
+    const k = iz * this.fNx + ix;
+    const d = (i: number) => Math.min(this.fDist[i], FIELD_R);
+    return lerp(lerp(d(k), d(k + 1), tx), lerp(d(k + this.fNx), d(k + this.fNx + 1), tx), tz);
+  }
+
+  /**
+   * 0 by the roads … 1 out in the foothills of the Urals round the whole map: the land rises into
+   * low wooded ridges once it is well clear of every road. The valleys stay low: the river's
+   * meadows and the lake's shore.
+   */
+  foothill(x: number, z: number, dr = this.riverDist(x, z)): number {
+    let k = smoothstep(100, 330, this.roadDist(x, z));
+    if (k <= 0) return 0;
+    k *= smoothstep(70, 255, dr);
+    const L = this.lake;
+    k *= smoothstep(L.r + 40, L.r + 170, Math.hypot(x - L.x, z - L.z));
+    // the shikhan stands alone over its open steppe: the hills keep their distance
+    const sh = this.shikhan;
+    k *= smoothstep(sh.r * 1.3, sh.r * 2.8, Math.hypot(x - sh.x, z - sh.z));
+    // the railway keeps to a valley of its own between the hills
+    const R = this.railLine, ox = x - R.cx, oz = z - R.cz;
+    if (Math.abs(ox * R.dx + oz * R.dz) < RAIL_HALF + 150) k *= smoothstep(45, 170, Math.abs(-ox * R.dz + oz * R.dx));
+    return k;
+  }
+
+  /** The foothills' height over the plain at full strength: long, rounded ridges running roughly north–south, as the Urals do. */
+  private footRise(x: number, z: number): number {
+    const ridge = 1 - Math.abs(2 * fbm(x * 0.0024 + 7.3, z * 0.0009 - 2.1, 3, 61) - 1);
+    const swell = fbm(x * 0.0011 - 4.2, z * 0.0011 + 1.7, 2, 67);
+    const bumps = fbm(x * 0.007, z * 0.007, 3, 71) - 0.5;
+    return 18 + 42 * ridge * ridge + 26 * swell + 8 * bumps;
+  }
+
+  private buildGrid(): void {
+    const dead = new Set(this.roads.filter((r) => this.deadEnd(r)));
     for (let iz = 0; iz < this.nz; iz++) {
       for (let ix = 0; ix < this.nx; ix++) {
         const x = this.minX + ix * this.step, z = this.minZ + iz * this.step;
         const dr = this.riverDist(x, z);
         let h = this.base(x, z, dr);
+        const fh = this.foothill(x, z, dr);
+        if (fh > 0) h += fh * fh * (3 - 2 * fh) * this.footRise(x, z);
         if (dr < 18) h = Math.min(h, lerp(this.waterY - 1.3, this.waterY + 0.9, smoothstep(4, 18, dr)));
         const hit = this.nearestRoad(x, z, 30);
         if (hit) {
@@ -844,7 +908,7 @@ export class Ground {
     this.fDist = new Float32Array(n).fill(1e9);
     this.fS = new Float32Array(n);
     this.fRoad = new Uint8Array(n);
-    const R = 300, rc = Math.ceil(R / c);
+    const R = FIELD_R, rc = Math.ceil(R / c);
     this.roads.forEach((road, ri) => {
       for (let i = 0; i < road.samples.length; i += 3) {
         const p = road.samples[i];

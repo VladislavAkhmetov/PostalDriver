@@ -2,8 +2,8 @@ import * as THREE from 'three';
 import { clamp, damp } from '../core/math';
 import { Human } from '../world/People';
 
-/** The Sitting clip's pelvis against the figure's feet (file units), as for the driver and the patrol crews. */
-const SEAT_HIPS_Y = 0.465, SIT_RAW_Y = 1.1, SIT_RAW_Z = -0.6;
+/** The pelvis over the seat's floor, as for the driver and the patrol crews. */
+const SEAT_HIPS_Y = 0.465;
 /** Stooping forward onto the stick, radians (~26°): an old man on the front of the seat, his cap clear of the low cab roof, his face where the driver's glance to the right finds it. */
 const LEAN = 0.45;
 const X = new THREE.Vector3(1, 0, 0);
@@ -29,8 +29,7 @@ export class Passenger {
   /** `hips`: where his pelvis sits in the seat, cabin space. */
   constructor(parent: THREE.Object3D, hips: THREE.Vector3) {
     const h = this.human = new Human('kartatay');
-    h.play('Sitting', { fade: 0, once: true, at: 1 });
-    h.model.position.set(0, SEAT_HIPS_Y - SIT_RAW_Y * h.s, -SIT_RAW_Z * h.s);
+    h.seat(SEAT_HIPS_Y);
     h.tick(0.01);
     // the top of his cap in the seated, leaning pose, against his pelvis
     h.spin('Torso', X, LEAN);

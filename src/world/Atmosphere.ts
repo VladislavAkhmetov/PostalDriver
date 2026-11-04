@@ -22,13 +22,13 @@ export interface WeatherKey {
  * clouds over further on, with the downpour by the river as the forecast says.
  */
 export const SUNNY_START = 'Солнечное утро';
-/** Where on the timeline that day starts (a little past «Золотое утро», toward «Ясно»). */
+/** Where on the timeline that day starts (a little past «Тихое утро», toward «Ясно»). */
 const SUNNY_FROM = 1250;
 
 /** Morning-to-dusk progression of the run, pinned to route distance. */
 export const TIMELINE: WeatherKey[] = [
   { name: 'Туман, рассвет', at: 0, sunElev: 4, sunAz: 115, sunColor: '#ffc89a', sunInt: 1.1, zenith: '#8fa0aa', horizon: '#e8d2b4', fog: '#cfc6b4', fogNear: 4, fogFar: 120, hemiSky: '#c8ccd0', hemiGround: '#5a5040', hemiInt: 1.4, cloud: 0.3, rain: 0, snow: 0, wind: 0.1, dark: 0.35, storm: 0, tint: '#fff1de', sat: 0.82, contrast: 1.02, exposure: 1.02 },
-  { name: 'Золотое утро', at: 900, sunElev: 12, sunAz: 120, sunColor: '#ffd8a0', sunInt: 2.2, zenith: '#6d95b8', horizon: '#f0dcb8', fog: '#d8cdb4', fogNear: 30, fogFar: 380, hemiSky: '#b8cce0', hemiGround: '#6a5a3c', hemiInt: 1.3, cloud: 0.35, rain: 0, snow: 0, wind: 0.2, dark: 0, storm: 0, tint: '#fff2dc', sat: 1.0, contrast: 1.05, exposure: 1.04 },
+  { name: 'Тихое утро', at: 900, sunElev: 12, sunAz: 120, sunColor: '#ffd8a0', sunInt: 2.2, zenith: '#6d95b8', horizon: '#f0dcb8', fog: '#d8cdb4', fogNear: 30, fogFar: 380, hemiSky: '#b8cce0', hemiGround: '#6a5a3c', hemiInt: 1.3, cloud: 0.35, rain: 0, snow: 0, wind: 0.2, dark: 0, storm: 0, tint: '#fff2dc', sat: 1.0, contrast: 1.05, exposure: 1.04 },
   { name: 'Ясно', at: 1700, sunElev: 22, sunAz: 140, sunColor: '#fff0d8', sunInt: 2.5, zenith: '#5a86b4', horizon: '#c8d4dc', fog: '#bcc8cc', fogNear: 60, fogFar: 520, hemiSky: '#b0c8e0', hemiGround: '#5a5a3a', hemiInt: 1.3, cloud: 0.42, rain: 0, snow: 0, wind: 0.25, dark: 0, storm: 0, tint: '#ffffff', sat: 1.0, contrast: 1.05, exposure: 1.0 },
   { name: 'Пасмурно', at: 2500, sunElev: 26, sunAz: 160, sunColor: '#e0e0dc', sunInt: 0.9, zenith: '#7a8288', horizon: '#a8aca8', fog: '#9aa09a', fogNear: 30, fogFar: 330, hemiSky: '#a8b0b4', hemiGround: '#4a4a38', hemiInt: 1.6, cloud: 0.78, rain: 0, snow: 0, wind: 0.4, dark: 0.1, storm: 0, tint: '#eef2ee', sat: 0.82, contrast: 1.02, exposure: 0.98 },
   { name: 'Дождь', at: 3150, sunElev: 18, sunAz: 190, sunColor: '#c8ccd0', sunInt: 0.4, zenith: '#555c62', horizon: '#80868a', fog: '#767c7e', fogNear: 15, fogFar: 210, hemiSky: '#8a9296', hemiGround: '#3a3a30', hemiInt: 1.4, cloud: 0.95, rain: 0.7, snow: 0, wind: 0.6, dark: 0.35, storm: 0.3, tint: '#e2eaee', sat: 0.72, contrast: 1.0, exposure: 0.95 },
@@ -45,8 +45,18 @@ export const WINTER: WeatherKey[] = [
   { name: 'Метель', at: 0, sunElev: 12, sunAz: 170, sunColor: '#cfd3d8', sunInt: 0.3, zenith: '#6a7078', horizon: '#9ca2a8', fog: '#a6acb2', fogNear: 4, fogFar: 95, hemiSky: '#a8b0b8', hemiGround: '#5e6066', hemiInt: 1.5, cloud: 1, rain: 0, snow: 1, wind: 0.95, dark: 0.3, storm: 0, tint: '#e6ecf4', sat: 0.6, contrast: 0.98, exposure: 0.98 },
   { name: 'Оттепель', at: 0, sunElev: 16, sunAz: 165, sunColor: '#dcdcd8', sunInt: 0.8, zenith: '#7a8288', horizon: '#a8aca8', fog: '#9ea29e', fogNear: 25, fogFar: 300, hemiSky: '#a8b0b4', hemiGround: '#4a4a40', hemiInt: 1.6, cloud: 0.8, rain: 0.15, snow: 0, wind: 0.3, dark: 0.12, storm: 0, tint: '#eef0ee', sat: 0.78, contrast: 1.0, exposure: 0.98 },
 ];
-/** Every weather a day can be set to, autumn's and winter's. */
-const PRESETS: WeatherKey[] = [...TIMELINE, ...WINTER];
+/**
+ * The rainy May and June's own weathers (docs/season-1998.md): a grey drizzle that soaks the dirt
+ * roads, an afternoon thunderstorm (lightning, thunder, a downpour), and the «blind» rain falling
+ * through sunshine. Picked for the day by the season like the winter ones.
+ */
+export const SUMMER: WeatherKey[] = [
+  { name: 'Морось', at: 0, sunElev: 24, sunAz: 170, sunColor: '#d6d8d6', sunInt: 0.6, zenith: '#6c747a', horizon: '#979c9c', fog: '#8c9290', fogNear: 18, fogFar: 240, hemiSky: '#9aa2a6', hemiGround: '#40402f', hemiInt: 1.5, cloud: 0.9, rain: 0.32, snow: 0, wind: 0.35, dark: 0.2, storm: 0, tint: '#e8eeec', sat: 0.76, contrast: 1.0, exposure: 0.97 },
+  { name: 'Гроза', at: 0, sunElev: 22, sunAz: 200, sunColor: '#b8bcc4', sunInt: 0.3, zenith: '#3a414c', horizon: '#6a6e72', fog: '#5c6266', fogNear: 10, fogFar: 170, hemiSky: '#727c86', hemiGround: '#2e2e26', hemiInt: 1.25, cloud: 1, rain: 1, snow: 0, wind: 0.85, dark: 0.55, storm: 1, tint: '#dce4ee', sat: 0.7, contrast: 1.02, exposure: 0.96 },
+  { name: 'Слепой дождь', at: 0, sunElev: 30, sunAz: 150, sunColor: '#fff2d8', sunInt: 2.0, zenith: '#6688aa', horizon: '#c4ccd0', fog: '#b0b8ba', fogNear: 40, fogFar: 420, hemiSky: '#b0c4d4', hemiGround: '#5a5a3a', hemiInt: 1.35, cloud: 0.62, rain: 0.45, snow: 0, wind: 0.3, dark: 0, storm: 0, tint: '#fffaee', sat: 1.0, contrast: 1.04, exposure: 1.02 },
+];
+/** Every weather a day can be set to: the route's, the rainy summer's and winter's. */
+const PRESETS: WeatherKey[] = [...TIMELINE, ...SUMMER, ...WINTER];
 
 const SKY_VS = /* glsl */ `
 varying vec3 vDir;

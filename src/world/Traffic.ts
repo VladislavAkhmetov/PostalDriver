@@ -184,9 +184,13 @@ export class Traffic {
     const hit = this.ground.nearestRoad(px, pz, 14);
     if (!hit) return null;
     const road = hit.sample.road;
-    if (road === this.ground.main) {
-      if (hit.s < this.junction) return { path: this.paths[0], d: hit.s, lat: hit.lat };
-      return { path: this.paths[1], d: hit.s - this.junction, lat: hit.lat };
+    if (road === this.ground.main) return this.onMain(hit.s, hit.lat);
+    if (road !== this.ground.stub) {
+      // another road (the road home, a village street) where it meets the highway: still on the
+      // highway if on its carriageway; off it, nowhere on the traffic's network
+      const main = this.ground.main, s = main.nearestS(px, pz), f = main.frame(s);
+      const dx = px - f.x, dz = pz - f.z, lat = dx * f.rx + dz * f.rz;
+      return Math.abs(lat) < 6 && Math.abs(dx * f.tx + dz * f.tz) < 3 ? this.onMain(s, lat) : null;
     }
     // on the stub: find the path distance by matching the nearest polyline vertex
     const p = this.paths[0];
@@ -196,6 +200,10 @@ export class Traffic {
       if (dd < bd) { bd = dd; best = i; }
     }
     return { path: p, d: p.cum[best], lat: hit.lat };
+  }
+
+  private onMain(s: number, lat: number): { path: Path; d: number; lat: number } {
+    return s < this.junction ? { path: this.paths[0], d: s, lat } : { path: this.paths[1], d: s - this.junction, lat };
   }
 
   /** Asphalt path distance → branch-road distance, past the fork (the asphalt path runs on along the branch). */

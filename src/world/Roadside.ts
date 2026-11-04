@@ -303,20 +303,20 @@ export function billboard(b: Bucket, p: Place, key: string, w = 6, h = 3, height
 export function vendorStall(b: Bucket, p: Place, sign: SignFn): void {
   const card = sign(tex(64, 32, (g, w, h) => {
     g.fillStyle = '#c4a878'; g.fillRect(0, 0, w, h);
-    txt(g, 'КАРТОШКА', w / 2, 11, `bold 11px ${NARROW}`, '#2a2a2a');
-    txt(g, 'ГРИБЫ', w / 2, 24, `bold 11px ${NARROW}`, '#7a2a20');
+    txt(g, 'РАССАДА', w / 2, 11, `bold 11px ${NARROW}`, '#2a2a2a');
+    txt(g, 'ЗЕЛЕНЬ', w / 2, 24, `bold 11px ${NARROW}`, '#2a6a20');
   }));
-  // stool, buckets of potatoes, a basket of mushrooms, three-litre jars
+  // May–June: stool, buckets of seed potatoes, radishes and spring onions, a basket of greens, three-litre jars
   b.add('planks', boxGeo(0.4, 0.04, 0.4), T(p, -0.6, 0.45, -0.3), '#a89878');
   for (const sx of [-0.15, 0.15]) for (const sz of [-0.15, 0.15]) b.add('flat', boxGeo(0.03, 0.45, 0.03), T(p, -0.6 + sx, 0.22, -0.3 + sz), '#5c5040');
   const r = [0.2, 0.7, 0.45, 0.9];
   for (let i = 0; i < 3; i++) {
     const x = 0.2 + i * 0.45;
     b.add('flat', new THREE.CylinderGeometry(0.17, 0.13, 0.3, 9, 1, true), T(p, x, 0.15, 0.1), i === 1 ? '#5a7aa0' : '#8a8a86');
-    for (let k = 0; k < 6; k++) b.add('flat', new THREE.SphereGeometry(0.06, 5, 3), T(p, x + Math.cos(k + r[i]) * 0.08, 0.3, 0.1 + Math.sin(k * 1.7) * 0.08), '#b8945a');
+    for (let k = 0; k < 6; k++) b.add('flat', new THREE.SphereGeometry(0.06, 5, 3), T(p, x + Math.cos(k + r[i]) * 0.08, 0.3, 0.1 + Math.sin(k * 1.7) * 0.08), ['#b8945a', '#c43a48', '#5a9a3a'][i]);
   }
   b.add('flat', new THREE.CylinderGeometry(0.22, 0.17, 0.2, 9, 1, true), T(p, 1.6, 0.1, 0.0), '#8a6a3a');
-  for (let k = 0; k < 7; k++) b.add('flat', new THREE.SphereGeometry(0.05, 5, 3, 0, Math.PI * 2, 0, Math.PI / 2), T(p, 1.6 + Math.cos(k) * 0.1, 0.2, Math.sin(k) * 0.1), '#7a4a22');
+  for (let k = 0; k < 7; k++) b.add('flat', new THREE.SphereGeometry(0.05, 5, 3, 0, Math.PI * 2, 0, Math.PI / 2), T(p, 1.6 + Math.cos(k) * 0.1, 0.2, Math.sin(k) * 0.1), k % 3 ? '#4f8a34' : '#6aa040');
   for (let k = 0; k < 2; k++) b.add('flat', new THREE.CylinderGeometry(0.08, 0.08, 0.25, 8), T(p, -0.1 + k * 0.2, 0.13, 0.45), k ? '#c83a2a' : '#5a7a3a');
   // cardboard sign propped on a stick
   b.add('flat', boxGeo(0.03, 1.1, 0.03), T(p, 0.6, 0.55, 0.45), '#4a3a2a');

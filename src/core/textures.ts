@@ -123,6 +123,186 @@ function izbaWindow(frame: string, seed: number): THREE.CanvasTexture {
   }, { seed, repeat: false });
 }
 
+/**
+ * A band of hills for the horizon ring: a profile summed from sines whose periods divide the width
+ * (so it tiles round the ring), white below it, and with `crowns` a ragged edge of tree tops.
+ */
+function hillSilhouette(w: number, h: number, o: { top: number; low: number; periods: [number, number, number][]; crowns: boolean }, seed: number): THREE.CanvasTexture {
+  return paint(w, h, (g, cw, ch, r) => {
+    g.clearRect(0, 0, cw, ch);
+    let norm = 0;
+    for (const [, a] of o.periods) norm += a;
+    const yAt = (x: number) => {
+      let v = 0;
+      for (const [p, a, ph] of o.periods) v += a * Math.sin((x / cw) * Math.PI * 2 * p + ph);
+      const k = (v / norm + 1) / 2;
+      return o.low - k * (o.low - o.top);
+    };
+    g.fillStyle = '#ffffff';
+    g.beginPath(); g.moveTo(0, ch);
+    for (let x = 0; x <= cw; x += 2) g.lineTo(x, yAt(x));
+    g.lineTo(cw, ch); g.closePath(); g.fill();
+    // tree tops along the crest: round crowns, the odd spruce spire (drawn again a width over, so the seam tiles)
+    const crown = (x: number, y: number) => {
+      const spire = r() < 0.22, hw = 1.5 + r() * 1.5, ht = 4 + r() * 5, rad = 1.4 + r() * 2.2;
+      for (const dx of [0, -cw, cw]) {
+        g.beginPath();
+        if (spire) { g.moveTo(x + dx - hw, y + 2); g.lineTo(x + dx, y - ht); g.lineTo(x + dx + hw, y + 2); } else g.arc(x + dx, y, rad, 0, 7);
+        g.fill();
+      }
+    };
+    if (o.crowns) for (let x = 0; x < cw; x += 1.5 + r() * 2.5) crown(x, yAt(x) - r() * 1.5);
+    // the far ridges: only a fine fur of forest on the skyline
+    else for (let x = 0; x < cw; x += 1 + r() * 2) g.fillRect(Math.floor(x), Math.floor(yAt(x) - 1 - r() * 2), 1, 3);
+  }, { seed, mip: false });
+}
+
+/** Paint scheme of a Bashkir house or gate: the field colour, the white or cream carving, an accent. */
+export interface FolkScheme { base: string; trim: string; accent: string }
+
+export const FOLK_SCHEMES: FolkScheme[] = [
+  { base: '#3f7a4a', trim: '#f0ece0', accent: '#e0b83a' },
+  { base: '#2f5f9e', trim: '#f2efe6', accent: '#e6c84a' },
+  { base: '#3a8a86', trim: '#f2efe6', accent: '#c8463a' },
+  { base: '#8a5a34', trim: '#f0e2b0', accent: '#3a6aa0' },
+  { base: '#5f8fc4', trim: '#ffffff', accent: '#24467a' },
+];
+
+/** A rising sun: a half disc with rays, sitting on (cx, cy). */
+function halfSun(g: Ctx, cx: number, cy: number, rad: number, rays: number, fill: string, ray: string): void {
+  g.strokeStyle = ray; g.lineWidth = 2;
+  for (let i = 1; i < rays; i++) {
+    const a = Math.PI + (i / rays) * Math.PI;
+    g.beginPath(); g.moveTo(cx + Math.cos(a) * rad * 1.15, cy + Math.sin(a) * rad * 1.15); g.lineTo(cx + Math.cos(a) * rad * 1.9, cy + Math.sin(a) * rad * 1.9); g.stroke();
+  }
+  g.fillStyle = fill;
+  g.beginPath(); g.arc(cx, cy, rad, Math.PI, 0); g.closePath(); g.fill();
+}
+
+function rhomb(g: Ctx, cx: number, cy: number, rw: number, rh: number, fill: string): void {
+  g.fillStyle = fill;
+  g.beginPath(); g.moveTo(cx, cy - rh); g.lineTo(cx + rw, cy); g.lineTo(cx, cy + rh); g.lineTo(cx - rw, cy); g.closePath(); g.fill();
+}
+
+/**
+ * Street face of Bashkir yard gates (капка), 4.6 × 2.1 m: a wicket on the left, two broad leaves
+ * painted in the field colour, framed in white, a rising sun across the top of the leaves and
+ * rhombs on them — the pattern a village carpenter would cut and a family repaint every spring.
+ */
+export function folkGateTex(s: FolkScheme, seed: number): THREE.CanvasTexture {
+  return paint(256, 128, (g, w, h, r) => {
+    g.fillStyle = s.base; g.fillRect(0, 0, w, h);
+    // the boards, a little weathered
+    g.fillStyle = 'rgba(0,0,0,0.16)';
+    for (let x = 0; x < w; x += 7) g.fillRect(x, 0, 1, h);
+    g.fillStyle = 'rgba(255,255,255,0.06)';
+    for (let i = 0; i < 120; i++) g.fillRect(Math.floor(r() * w), Math.floor(r() * h), 1, 2 + Math.floor(r() * 5));
+    const wk = 56, mid = wk + (w - wk) / 2;
+    // frames: the wicket and each leaf
+    g.strokeStyle = s.trim; g.lineWidth = 4;
+    g.strokeRect(3, 3, wk - 6, h - 6);
+    g.strokeRect(wk + 3, 3, (w - wk) / 2 - 5, h - 6);
+    g.strokeRect(mid + 2, 3, (w - wk) / 2 - 5, h - 6);
+    g.fillStyle = 'rgba(0,0,0,0.35)'; g.fillRect(wk - 1, 0, 2, h); g.fillRect(mid - 1, 0, 2, h);
+    // the wicket: a chain of rhombs
+    for (let y = 22; y < h - 12; y += 22) { rhomb(g, wk / 2, y, 10, 9, s.trim); rhomb(g, wk / 2, y, 5, 4.5, s.accent); }
+    // the leaves: a sun rising over the join, rays across both; a rhomb in a rhomb on each
+    halfSun(g, mid, 44, 18, 13, s.accent, s.trim);
+    g.fillStyle = s.trim; g.fillRect(mid - 26, 44, 52, 3);
+    for (const cx of [wk + (w - wk) / 4, wk + (3 * (w - wk)) / 4]) {
+      rhomb(g, cx, 88, 22, 20, s.trim);
+      rhomb(g, cx, 88, 16, 14, s.base);
+      rhomb(g, cx, 88, 8, 7, s.accent);
+      g.fillStyle = s.trim;
+      for (const dx of [-30, 30]) { g.beginPath(); g.arc(cx + dx, 88, 3, 0, 7); g.fill(); }
+    }
+    // a band of scallops along the bottom
+    g.fillStyle = s.trim;
+    for (let x = wk + 6; x < w - 4; x += 10) { g.beginPath(); g.arc(x + 5, h - 6, 4, Math.PI, 0); g.fill(); }
+  }, { seed, repeat: false });
+}
+
+/**
+ * A window of a Bashkir log house as the street sees it: open shutters painted with a rhomb, the
+ * carved surround with a crowned top and a sun in it, a lace curtain behind the glass, the frame
+ * in the old T shape, geraniums on the sill. Transparent round the carving.
+ */
+export function folkWindowTex(s: FolkScheme, seed: number): THREE.CanvasTexture {
+  return paint(96, 96, (g, w) => {
+    g.clearRect(0, 0, w, w);
+    const L = 20, R = w - 20;
+    // shutters, open
+    for (const x0 of [2, R + 2]) {
+      g.fillStyle = s.base; g.fillRect(x0, 26, 16, 58);
+      g.strokeStyle = s.trim; g.lineWidth = 2; g.strokeRect(x0 + 1, 27, 14, 56);
+      rhomb(g, x0 + 8, 55, 6, 12, s.trim); rhomb(g, x0 + 8, 55, 3, 6, s.accent);
+    }
+    // glass, curtain, frame, the flowers on the sill
+    g.fillStyle = '#273039'; g.fillRect(L + 4, 26, R - L - 8, 54);
+    g.fillStyle = 'rgba(236,234,226,0.85)';
+    g.fillRect(L + 4, 26, R - L - 8, 12);
+    for (let x = L + 6; x < R - 4; x += 6) { g.beginPath(); g.arc(x, 38, 3, 0, Math.PI); g.fill(); }
+    g.fillRect(L + 4, 38, 7, 32); g.fillRect(R - 11, 38, 7, 32);
+    g.fillStyle = '#efece2';
+    g.fillRect(w / 2 - 1, 42, 2, 38); g.fillRect(L + 4, 41, R - L - 8, 2);
+    g.fillRect(L + 4, 26, 2, 54); g.fillRect(R - 6, 26, 2, 54);
+    for (const fx of [L + 12, w / 2 + 8]) {
+      g.fillStyle = '#9a4a2a'; g.fillRect(fx, 74, 6, 5);
+      g.fillStyle = '#3d6a2e'; g.fillRect(fx - 2, 70, 10, 4);
+      g.fillStyle = '#d8342c'; g.fillRect(fx, 67, 3, 3); g.fillRect(fx + 4, 68, 3, 3);
+    }
+    // the surround: side boards, the crown with its sun, the sill and its drops
+    g.fillStyle = s.trim;
+    g.fillRect(L, 24, 4, 60); g.fillRect(R - 4, 24, 4, 60);
+    g.beginPath(); g.moveTo(L - 3, 25); g.lineTo(w / 2, 3); g.lineTo(R + 3, 25); g.closePath(); g.fill();
+    g.fillStyle = s.base;
+    g.beginPath(); g.moveTo(L + 4, 22); g.lineTo(w / 2, 8); g.lineTo(R - 4, 22); g.closePath(); g.fill();
+    halfSun(g, w / 2, 22, 6, 9, s.accent, s.trim);
+    g.fillStyle = s.trim;
+    for (let x = L; x < R; x += 6) { g.beginPath(); g.arc(x + 3, 25, 3, 0, Math.PI); g.fill(); }
+    g.fillRect(L - 4, 80, R - L + 8, 5);
+    for (let x = L - 2; x < R + 2; x += 7) { g.beginPath(); g.moveTo(x, 85); g.lineTo(x + 3.5, 92); g.lineTo(x + 7, 85); g.fill(); }
+  }, { seed, repeat: false });
+}
+
+/** Glow mask for folkWindowTex: the glass only, warm behind the curtain. */
+export function folkWindowGlow(): THREE.CanvasTexture {
+  return paint(96, 96, (g, w, h) => {
+    g.fillStyle = '#000'; g.fillRect(0, 0, w, h);
+    g.fillStyle = '#ffd08a'; g.fillRect(31, 44, w - 62, 34);
+    g.fillStyle = '#a8784a'; g.fillRect(24, 38, 7, 32); g.fillRect(w - 31, 38, 7, 32);
+  }, { repeat: false });
+}
+
+/**
+ * The boarded gable of a Bashkir house: boards fanning out from a sun under the attic window, in
+ * the field colour with the rays picked out. Drawn on a triangle (uv (0,0) (1,0) (0.5,1)).
+ */
+export function folkGableTex(s: FolkScheme, seed: number): THREE.CanvasTexture {
+  return paint(128, 64, (g, w, h) => {
+    g.clearRect(0, 0, w, h);
+    g.save();
+    g.beginPath(); g.moveTo(0, h); g.lineTo(w / 2, 0); g.lineTo(w, h); g.closePath(); g.clip();
+    g.fillStyle = s.base; g.fillRect(0, 0, w, h);
+    const cx = w / 2, cy = h - 3;
+    for (let i = 0; i < 18; i++) {
+      const a0 = Math.PI + (i / 18) * Math.PI, a1 = Math.PI + ((i + 1) / 18) * Math.PI;
+      g.fillStyle = i % 2 ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.12)';
+      g.beginPath(); g.moveTo(cx, cy); g.lineTo(cx + Math.cos(a0) * 140, cy + Math.sin(a0) * 140); g.lineTo(cx + Math.cos(a1) * 140, cy + Math.sin(a1) * 140); g.closePath(); g.fill();
+    }
+    halfSun(g, cx, cy, 12, 15, s.trim, s.trim);
+    g.fillStyle = s.accent; g.beginPath(); g.arc(cx, cy, 7, Math.PI, 0); g.fill();
+    // the attic window above the sun
+    g.fillStyle = s.trim; g.fillRect(cx - 7, 20, 14, 17);
+    g.fillStyle = '#273039'; g.fillRect(cx - 5, 22, 10, 13);
+    g.fillStyle = s.trim; g.fillRect(cx - 1, 22, 2, 13); g.fillRect(cx - 5, 28, 10, 2);
+    g.restore();
+    // the carved eaves boards
+    g.strokeStyle = s.trim; g.lineWidth = 3;
+    g.beginPath(); g.moveTo(1, h - 1); g.lineTo(w / 2, 1); g.lineTo(w - 1, h - 1); g.stroke();
+  }, { seed, repeat: false });
+}
+
 export function settlementSign(name: string, exit: boolean): THREE.CanvasTexture {
   return paint(128, 48, (g, w, h) => {
     g.fillStyle = '#f2f1ea'; g.fillRect(0, 0, w, h);
@@ -488,24 +668,10 @@ export function createTextures() {
       }
     }, { seed: 108, repeat: false }),
 
-    farForest: paint(512, 64, (g, w, h, r) => {
-      g.clearRect(0, 0, w, h);
-      g.fillStyle = '#ffffff';
-      let x = 0;
-      while (x < w + 10) {
-        const ht = 18 + r() * 30;
-        if (r() < 0.55) {
-          const hw = 3 + r() * 4;
-          g.beginPath(); g.moveTo(x - hw, h); g.lineTo(x, h - ht); g.lineTo(x + hw, h); g.fill();
-        } else {
-          const rr = 5 + r() * 7;
-          g.beginPath(); g.arc(x, h - ht + rr, rr, 0, 7); g.fill();
-          g.fillRect(x - rr, h - ht + rr, rr * 2, ht);
-        }
-        x += 3 + r() * 6;
-      }
-      g.fillRect(0, h - 10, w, 10);
-    }, { seed: 109, mip: false }),
+    // the horizon round the map: the Ural foothills, low wooded ridges one behind another.
+    // White silhouettes tinted by their material; both tile seamlessly round the ring.
+    farHills: hillSilhouette(1024, 128, { top: 6, low: 27, periods: [[1, 0.5, 0.3], [3, 0.3, 1.9], [5, 0.2, 4.1], [11, 0.08, 0.7]], crowns: true }, 111),
+    farRidge: hillSilhouette(1024, 128, { top: 10, low: 46, periods: [[1, 0.45, 2.2], [2, 0.35, 0.4], [4, 0.2, 3.3], [9, 0.06, 1.2]], crowns: false }, 112),
 
     clouds: paint(128, 128, (g, w, h) => {
       const img = g.createImageData(w, h);

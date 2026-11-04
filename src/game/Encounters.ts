@@ -171,8 +171,9 @@ const FAVORS: Favor[] = [
     accepted: 'Спасибо! Тетради в клетку, двенадцать листов. Мел — белый. Цветной кончился в восемьдесят девятом.',
     refused: 'Ну что ж. Напишут пока на газетах. Им полезно — хоть газеты прочитают.',
     title: 'Тетради и мел', note: 'пачка тетрадей, коробка мела', fragile: false, pay: 12000,
-    // only the villages with a school (and a woman at the door to take them there)
+    // only the villages with a school (and a woman at the door to take them there), and in the school year
     not: ['camp', 'khutor', 'kolkhoz', 'forestry', 'apiary'],
+    when: (m, d) => m >= 8 || m <= 3 || (m === 4 && d <= 25),
   },
   {
     name: 'Шофёр лесовоза', make: () => makeMan('#4a3a2a', '#2a2a2a', '#5a4a3a'),

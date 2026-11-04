@@ -191,15 +191,19 @@ export function busStop(b: Bucket, p: Place, cols: Collider[]): void {
   cols.push(boxCollider(p, 0, -0.5, 4.4, 1.2));
 }
 
-export function garages(b: Bucket, p: Place, n: number, r: RNG, cols: Collider[]): void {
+/** A row of n brick garages along local x, doors to +z; returns each one's wall height (its roof sits on it). */
+export function garages(b: Bucket, p: Place, n: number, r: RNG, cols: Collider[]): number[] {
+  const hs: number[] = [];
   for (let i = 0; i < n; i++) {
     const x = (i - (n - 1) / 2) * 3.4;
     const h = 2.5 + r() * 0.3;
+    hs.push(h);
     b.add(r() < 0.5 ? 'brickRed' : 'brickWhite', boxGeo(3.3, h, 6, 2), T(p, x, h / 2 - 0.1, 0));
     b.add('garage', planeGeo(2.6, 2.1), T(p, x, 1.0, 3.02), pick(r, ['#ffffff', '#c8d0e0', '#e0c8b8', '#b8d0b0']));
     b.add('rust', boxGeo(3.4, 0.1, 6.4), T(p, x, h - 0.05, 0, 0.05, 0, 0));
   }
   cols.push(boxCollider(p, 0, 0, n * 3.4, 6));
+  return hs;
 }
 
 export function waterTower(b: Bucket, p: Place, cols: Collider[]): void {

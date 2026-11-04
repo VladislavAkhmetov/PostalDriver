@@ -14,6 +14,8 @@ export interface RoadsideHooks {
   hint(id: string, text: string, keys?: string): void;
   toast(text: string): void;
   blackout(title: string, text: string, seconds: number, mid: () => void, done: () => void, stamp: string): void;
+  /** A short scene outside the cab instead of the fade (Cutscene.ts): Timur at the front wheel or at the radiator hatch. False if it can't play. */
+  scene?(kind: 'wheel' | 'hood', title: string, text: string, seconds: number, mid: () => void, done: () => void): boolean;
 }
 
 /** Below this the pull is not worth a stop. */
@@ -51,9 +53,15 @@ export class RoadsideFix {
     this.hooks.choice('Под сиденьем', `${what} Ключи, монтировка и канистра с водой — под сиденьем.`, opts.map((o) => o.label), (i) => opts[i].go());
   }
 
+  /** The work shown: a scene at the van if it can play, the fade to black otherwise. */
+  private show(kind: 'wheel' | 'hood', title: string, text: string, seconds: number, mid: () => void, done: () => void, stamp: string): void {
+    if (this.hooks.scene?.(kind, title, text, seconds + 1.8, mid, done)) return;
+    this.hooks.blackout(title, text, seconds, mid, done, stamp);
+  }
+
   private tighten(v: Vehicle): void {
     this.working = true;
-    this.hooks.blackout('Подтягиваю тягу', 'Монтировку под колесо, ключ на двадцать два… Подтянул на глаз, как дед учил. Тянет меньше, но до гаража — аккуратно.', 2.6, () => {
+    this.show('wheel', 'Подтягиваю тягу', 'Монтировку под колесо, ключ на двадцать два… Подтянул на глаз, как дед учил. Тянет меньше, но до гаража — аккуратно.', 2.6, () => {
       v.steerWear *= 0.4;
       this.tightenedAt = v.steerWear;
       this.mission.addTime(600);
@@ -62,7 +70,7 @@ export class RoadsideFix {
 
   private topUp(v: Vehicle): void {
     this.working = true;
-    this.hooks.blackout('Доливаю воду', 'Дал постоять, тряпкой открутил пробку — пар в лицо. Долил из канистры. Течёт, зараза, но до вечера доедем.', 2.4, () => {
+    this.show('hood', 'Доливаю воду', 'Дал постоять, тряпкой открутил пробку — пар в лицо. Долил из канистры. Течёт, зараза, но до вечера доедем.', 2.4, () => {
       v.coolant = 1;
       v.heat = Math.min(v.heat, 0.45);
       this.mission.addTime(300);

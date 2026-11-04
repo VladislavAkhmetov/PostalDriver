@@ -8,6 +8,24 @@ import { needsRepair, repairCost, type Profile, type RepairKind } from '../game/
 import { storyArt, type StoryImage } from './storyArt';
 import { faceFor } from './portraits';
 import { rub } from '../game/Money';
+import { LOGO_DRAW_S, logoSvg } from './logo';
+
+/** The UI theme's colours and label font as ui.css defines them (`--ui-*`), for what is drawn on canvas. */
+function uiTheme() {
+  const cs = getComputedStyle(document.documentElement);
+  // color-mix() values resolve only on an element: paint each into a probe and read it back
+  const probe = document.createElement('i');
+  probe.style.display = 'none';
+  document.body.appendChild(probe);
+  const col = (v: string) => { probe.style.color = `var(${v})`; return getComputedStyle(probe).color; };
+  const t = {
+    fg: col('--ui-fg'), fg2: col('--ui-fg-2'), fg3: col('--ui-fg-3'), fg4: col('--ui-fg-4'), line3: col('--ui-line-3'),
+    accent: col('--ui-accent'), water: col('--ui-water'), forest: col('--ui-forest'),
+    label: cs.getPropertyValue('--f-narrow').trim() || 'sans-serif',
+  };
+  probe.remove();
+  return t;
+}
 
 const ICON = {
   map: '<svg viewBox="0 0 24 24"><path d="M3 6l6-2 6 2 6-2v14l-6 2-6-2-6 2z"/><path d="M9 4v14M15 6v14"/></svg>',
@@ -121,11 +139,11 @@ export class UI {
   private volSlider!: HTMLInputElement;
   private volVal!: HTMLElement;
   private volDrag = false;
-  private hintEl = el('div', 'hint paper out');
+  private hintEl = el('div', 'hint surface out');
   private hintText = el('span');
   private hintKeys = el('span', 'keys');
-  private ritualEl = el('div', 'ritual paper out');
-  private dialogueEl = el('div', 'dialogue paper out');
+  private ritualEl = el('div', 'ritual surface out');
+  private dialogueEl = el('div', 'dialogue surface out');
   private toastEl = el('div', 'toast out');
   private fuelEl = el('div', 'fuelbox out');
   private tipEl = el('div', 'tip');
@@ -198,21 +216,24 @@ export class UI {
   setResume(label: string | null): void { this.resume = label; }
 
   private buildTitle(): void {
-    // a quiet opening: the live scene, film grain, the name (a hand over signboard capitals),
+    // a quiet opening: the live scene, film grain, the logo painted on with a brush,
     // a short menu and the post office's postmark with today's date. Nothing else.
     const t = el('div', 'title');
     t.innerHTML = `
       <div class="tt-fade"></div>
       <div class="tt-grain"></div>
       <section class="tt-main">
-        <h1 class="wordmark" aria-label="Сельская почта"><span class="wm-hand">Сельская</span><span class="wm-big">почта</span></h1>
-        <p class="tt-sub">осень 1997 · Ключевский район</p>
+        <h1 class="wordmark">${logoSvg()}</h1>
         <nav class="tt-menu" aria-label="Меню"></nav>
+        <div class="tt-keys" aria-hidden="true"><span class="tt-key">↑</span><span class="tt-key">↓</span><span class="tt-kl">выбор</span><span class="tt-key wide">Enter</span><span class="tt-kl">ок</span></div>
       </section>
       <div class="postmark" aria-hidden="true"></div>
       <div class="tt-sound" title="Звук — по первому нажатию">${ICON.sound}</div>`;
     this.titleEl = t;
     this.root.appendChild(t);
+    // the opening plays from the first frame actually on screen, not from when the page was built
+    // (the world and its shaders take a few seconds to make before that, and the timeline runs on)
+    requestAnimationFrame(() => requestAnimationFrame(() => { t.classList.add('go'); this.paintLogo(1.2); }));
     // the menu fades away when nobody is touching anything, and comes back on any input
     const wake = () => { this.ttLast = performance.now(); t.classList.remove('idle'); };
     for (const ev of ['pointermove', 'pointerdown', 'keydown', 'wheel', 'touchstart'] as const) window.addEventListener(ev, wake, { passive: true, capture: true });
@@ -224,9 +245,12 @@ export class UI {
     }, true);
   }
 
-  private ttSelect(i: number): void {
+  private ttSelect(i: number, tick = true): void {
     const n = this.ttItems.length;
+    const was = this.ttSel;
     this.ttSel = ((i % n) + n) % n;
+    // a click of the menu under the thumb, as a game's does
+    if (tick && was !== this.ttSel) this.onType?.();
     if (this.ttConfirm && this.ttItems[this.ttSel]?.el !== this.ttConfirm.el) this.unconfirm();
     this.ttItems.forEach((it, k) => it.el.classList.toggle('sel', k === this.ttSel));
   }
@@ -282,7 +306,7 @@ export class UI {
     }
     item('Песочница', '', () => this.onStartSandbox?.());
     item('Управление', '', () => this.toggleHelp(true));
-    this.ttSelect(0);
+    this.ttSelect(0, false);
     this.titleEl.querySelector('.postmark')!.innerHTML = postmark(cal.short);
   }
 
@@ -301,7 +325,23 @@ export class UI {
     this.titleEl.classList.add('out');
     this.hud.classList.remove('hidden');
   }
-  showTitle(): void { this.titleEl.classList.remove('out'); this.hud.classList.add('hidden'); }
+  showTitle(): void { this.titleEl.classList.remove('out'); this.hud.classList.add('hidden'); this.paintLogo(0.5); }
+
+  private logoT = 0;
+  /**
+   * The logo brushed on afresh, `start` seconds from now; once painted its brush masks come off
+   * (`drawn`), so the finished logo costs nothing to draw and keeps no ragged gaps at its edges.
+   */
+  private paintLogo(start: number): void {
+    const logo = this.titleEl.querySelector('.logo') as SVGSVGElement | null;
+    if (!logo) return;
+    logo.classList.remove('draw', 'drawn');
+    logo.style.setProperty('--lg-start', `${start}s`);
+    void logo.getBoundingClientRect();
+    logo.classList.add('draw');
+    clearTimeout(this.logoT);
+    this.logoT = window.setTimeout(() => logo.classList.add('drawn'), (start + LOGO_DRAW_S + 0.2) * 1000);
+  }
 
   // ------------------------------------------------------------- HUD
   private buildHud(): void {
@@ -522,7 +562,7 @@ export class UI {
   }
 
   // ------------------------------------------------------------- talk with a choice
-  private choiceEl = el('div', 'dialogue choice paper out');
+  private choiceEl = el('div', 'dialogue choice surface out');
   private choiceKeys: ((e: KeyboardEvent) => void) | null = null;
   get choiceOpen(): boolean { return !this.choiceEl.classList.contains('out'); }
 
@@ -617,7 +657,7 @@ export class UI {
 
   // ------------------------------------------------------------- overlays
   private buildOverlays(): void {
-    const sheet = el('div', 'map-sheet paper');
+    const sheet = el('div', 'map-sheet surface');
     sheet.innerHTML = `<header><div><span class="eyebrow">Путевой лист · схема маршрута</span><h2>Ключевск — Заречье</h2></div><span class="kbd">M</span></header>`;
     this.mapCanvas.width = 640; this.mapCanvas.height = 400;
     sheet.appendChild(this.mapCanvas);
@@ -625,7 +665,7 @@ export class UI {
     this.mapEl.appendChild(sheet);
     this.mapEl.addEventListener('click', () => this.onAction?.('map'));
 
-    const menu = el('div', 'menu paper');
+    const menu = el('div', 'menu surface');
     menu.innerHTML = '<span class="eyebrow">Остановка</span><h2>Пауза</h2>';
     const btn = (label: string, fn: () => void) => { const b = el('button', 'btn-line', label); b.addEventListener('click', fn); menu.appendChild(b); return b; };
     btn('Продолжить рейс', () => this.onAction?.('pause'));
@@ -673,7 +713,7 @@ export class UI {
     menu.appendChild(set);
     this.pauseEl.appendChild(menu);
 
-    const help = el('div', 'help-sheet paper');
+    const help = el('div', 'help-sheet surface');
     help.innerHTML = '<header><div><span class="eyebrow">Памятка водителю</span><h2>Управление</h2></div><span class="kbd">F1</span></header>';
     const cols = el('div', 'help-cols');
     const col = (title: string, rows: [string, string][], kbd: boolean) => {
@@ -760,26 +800,28 @@ export class UI {
     const c = document.createElement('canvas');
     c.width = W; c.height = H;
     const g = c.getContext('2d')!;
-    g.fillStyle = '#efe6cf'; g.fillRect(0, 0, W, H);
-    g.strokeStyle = 'rgba(29,78,166,0.10)'; g.lineWidth = 1;
+    // drawn in the UI theme's colours (ui.css): light lines on the sheet's dark
+    const th = uiTheme();
+    g.strokeStyle = th.line3; g.lineWidth = 1;
     for (let x = 0; x < W; x += 20) { g.beginPath(); g.moveTo(x + 0.5, 0); g.lineTo(x + 0.5, H); g.stroke(); }
     for (let y = 0; y < H; y += 20) { g.beginPath(); g.moveTo(0, y + 0.5); g.lineTo(W, y + 0.5); g.stroke(); }
     // forest hatch
     const m = ground.marks;
-    g.strokeStyle = 'rgba(47,107,58,0.35)';
+    g.strokeStyle = th.forest; g.globalAlpha = 0.3;
     for (const p of pts) if (p.s > m.forest && p.s < m.mud && Math.floor(p.s / 2) % 9 === 0) {
       const [x, y] = P(p.x, p.z);
       for (const o of [-22, -14, 14, 22]) { g.beginPath(); g.arc(x, y + o, 3, 0, Math.PI * 2); g.stroke(); }
     }
+    g.globalAlpha = 1;
     // river
-    g.strokeStyle = '#5d7fb8'; g.lineWidth = 3;
+    g.strokeStyle = th.water; g.lineWidth = 2.5;
     g.beginPath();
     ground.riverPts.forEach((r, i) => { const [x, y] = P(r.x, r.z); if (i) g.lineTo(x, y); else g.moveTo(x, y); });
     g.stroke();
     // road by surface
     const style = (s: number) => {
       const z = ground.main.zoneAt(s).surface;
-      return z === 'asphalt' ? { c: '#2a2620', w: 3, d: [] as number[] } : z === 'wood' ? { c: '#7a4a22', w: 4, d: [] } : z === 'mud' ? { c: '#6a4a2a', w: 2.5, d: [2, 3] } : { c: '#2a2620', w: 2, d: [6, 4] };
+      return z === 'asphalt' ? { c: th.fg, w: 2.5, d: [] as number[] } : z === 'wood' ? { c: th.fg2, w: 4, d: [] } : z === 'mud' ? { c: th.fg3, w: 2.5, d: [2, 3] } : { c: th.fg2, w: 1.8, d: [6, 4] };
     };
     for (let i = 1; i < pts.length; i++) {
       const st = style(pts[i].s);
@@ -792,22 +834,22 @@ export class UI {
     {
       const L = ground.lake;
       const [lx, ly] = P(L.x, L.z);
-      g.fillStyle = 'rgba(93,127,184,0.55)'; g.strokeStyle = '#5d7fb8'; g.lineWidth = 1.5;
-      g.beginPath(); g.arc(lx, ly, L.r * k, 0, Math.PI * 2); g.fill(); g.stroke();
+      g.fillStyle = th.water; g.strokeStyle = th.water; g.lineWidth = 1.5;
+      g.beginPath(); g.arc(lx, ly, L.r * k, 0, Math.PI * 2); g.globalAlpha = 0.35; g.fill(); g.globalAlpha = 1; g.stroke();
       const [hx, hy] = P(ground.shikhan.x, ground.shikhan.z);
-      g.strokeStyle = 'rgba(110,90,60,0.6)'; g.lineWidth = 1;
+      g.strokeStyle = th.fg4; g.lineWidth = 1;
       for (const rr of [1, 0.66, 0.33]) { g.beginPath(); g.arc(hx, hy, ground.shikhan.r * k * rr, 0, Math.PI * 2); g.stroke(); }
     }
     // the branch road straight on from the fork: asphalt, then gravel and the lakeside dirt
     for (let i = 1; i < ground.stub.samples.length; i++) {
       const a = ground.stub.samples[i - 1], b = ground.stub.samples[i];
       const surf = ground.stub.zoneAt(b.s).surface;
-      g.strokeStyle = '#2a2620'; g.lineWidth = surf === 'asphalt' ? 3 : 2; g.setLineDash(surf === 'asphalt' ? [] : [6, 4]);
+      g.strokeStyle = surf === 'asphalt' ? th.fg : th.fg2; g.lineWidth = surf === 'asphalt' ? 2.5 : 1.8; g.setLineDash(surf === 'asphalt' ? [] : [6, 4]);
       const [x0, y0] = P(a.x, a.z), [x1, y1] = P(b.x, b.z);
       g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
     }
     // back roads: thin dotted tracks
-    g.strokeStyle = 'rgba(42,38,32,0.55)'; g.lineWidth = 1.4; g.setLineDash([3, 4]);
+    g.strokeStyle = th.fg3; g.lineWidth = 1.2; g.setLineDash([3, 4]);
     for (const road of [...ground.sideRoads, ...ground.branchSpurs, ground.homeRoad]) {
       g.beginPath();
       road.samples.forEach((p, i) => { const [x, y] = P(p.x, p.z); if (i) g.lineTo(x, y); else g.moveTo(x, y); });
@@ -815,8 +857,8 @@ export class UI {
     }
     g.setLineDash([]);
     // labels
-    g.font = '600 15px "PT Sans Narrow", sans-serif';
-    g.fillStyle = '#2a2620';
+    g.font = `600 15px ${th.label}`;
+    g.fillStyle = th.fg;
     const label = (s: number, text: string, dy: number) => {
       const f = ground.main.frame(s);
       const [x, y] = P(f.x, f.z);
@@ -826,14 +868,14 @@ export class UI {
     label(40, 'Ключевск', -16);
     label(m.junction, 'развилка', 22);
     label(m.bridge, 'мост', -14);
-    g.font = 'italic 13px "PT Serif", serif'; g.fillStyle = '#3d5f98';
+    g.font = `13px ${th.label}`; g.fillStyle = th.water;
     const r0 = ground.riverPts[Math.floor(ground.riverPts.length * 0.2)];
     if (r0) { const [x, y] = P(r0.x, r0.z); g.fillText('р. Серебрянка', x, y - 8); }
     {
       const L = ground.lake;
       const [x, y] = P(L.x, L.z);
       g.fillText('оз. Кайынкуль', x, y + L.r * k + 14);
-      g.fillStyle = '#5a4a32';
+      g.fillStyle = th.fg3;
       const [hx, hy] = P(ground.shikhan.x, ground.shikhan.z);
       g.fillText('шихан', hx, hy - ground.shikhan.r * k - 4);
       const q = ground.branchSpurs.find((r) => r.id === 'quarry');
@@ -841,20 +883,20 @@ export class UI {
       // home: the village at the end of the forest road
       const hr = ground.homeRoad.samples, he = hr[hr.length - 1];
       const [ux, uy] = P(he.x, he.z);
-      g.fillStyle = '#2a2620'; g.font = '600 13px "PT Sans Narrow", sans-serif';
+      g.fillStyle = th.fg2; g.font = `600 13px ${th.label}`;
       g.fillText('Урманлы · дом', ux, uy + 16);
     }
     this.mapBase = c;
     this.drawStops = (gg) => {
-      gg.font = '700 16px "PT Sans Narrow", sans-serif';
+      gg.font = `700 16px ${th.label}`;
       for (const s of stops) {
         const [x, y] = P(s.pos.x, s.pos.z);
-        gg.fillStyle = s.done ? '#8e2a4e' : '#1d4ea6';
+        gg.fillStyle = s.done ? th.fg3 : th.fg;
         gg.beginPath(); gg.arc(x, y, 6, 0, Math.PI * 2); gg.fill();
         gg.textAlign = 'center';
         gg.fillText(s.name, x, y - 13);
         if (s.done) {
-          gg.strokeStyle = '#8e2a4e'; gg.lineWidth = 2.5;
+          gg.strokeStyle = th.fg3; gg.lineWidth = 1.5;
           const w = gg.measureText(s.name).width / 2 + 4;
           gg.beginPath(); gg.moveTo(x - w, y - 12); gg.lineTo(x + w, y - 22); gg.stroke();
         }
@@ -870,6 +912,7 @@ export class UI {
     this.mapEl.classList.toggle('out', !open);
     if (!open || !this.mapBase || !this.P) return;
     const g = this.mapCanvas.getContext('2d')!;
+    g.clearRect(0, 0, this.mapCanvas.width, this.mapCanvas.height);
     g.drawImage(this.mapBase, 0, 0);
     this.drawStops?.(g);
     if (car) {
@@ -878,7 +921,7 @@ export class UI {
       g.translate(x, y);
       // forward is −Z (map right); yaw rotates forward towards +X (map down)
       g.rotate(-car.yaw);
-      g.fillStyle = '#8e2a4e';
+      g.fillStyle = uiTheme().accent;
       g.beginPath(); g.moveTo(10, 0); g.lineTo(-6, 6); g.lineTo(-3, 0); g.lineTo(-6, -6); g.closePath(); g.fill();
       g.restore();
     }
@@ -887,6 +930,20 @@ export class UI {
   }
 
   hideEnd(): void { this.endEl.classList.add('out'); }
+
+  private cineEl = el('div', 'cine out');
+  /**
+   * A cutscene outside the cab (Cutscene.ts): letterbox bars and a caption in the corner; the
+   * dashboard, the route strip, the touch controls and any open sheet (the evening journal, the
+   * board) step aside, the subtitles stay.
+   */
+  cinema(on: boolean, title = '', text = ''): void {
+    const c = this.cineEl;
+    if (!c.isConnected) this.root.appendChild(c);
+    if (on) c.innerHTML = `<i class="bar top"></i><i class="bar bottom"></i><div class="cine-cap">${title ? `<span class="eyebrow">${title}</span>` : ''}${text ? `<p>${text}</p>` : ''}</div>`;
+    c.classList.toggle('out', !on);
+    this.root.classList.toggle('cinema', on);
+  }
 
   // ------------------------------------------------------------- the working day
   private boardEl = el('div', 'overlay out');
@@ -897,7 +954,7 @@ export class UI {
   showBoard(info: DayInfo, p: Profile, extra: { newPlace: string | null; note?: string | null; onRepair: (kind: RepairKind) => void; onGo: (ids: string[]) => void }): void {
     if (!this.boardEl.isConnected) this.root.appendChild(this.boardEl);
     const picked = new Set<string>();
-    const card = el('div', 'end board paper');
+    const card = el('div', 'end board surface');
     const due = (s: number) => `срочно · ${Math.round(s / 60)} мин`;
     // the waybill: grouped by stop, in the order of the route
     const stops: string[] = [];
@@ -961,7 +1018,7 @@ export class UI {
     const words: Record<number, string> = { 5: 'Отлично', 4: 'Хорошо', 3: 'Удовл.', 2: 'Неуд.' };
     const mm = Math.floor(st.time / 60), ss = Math.floor(st.time % 60).toString().padStart(2, '0');
     this.endEl.innerHTML = '';
-    const card = el('div', 'end paper');
+    const card = el('div', 'end surface');
     const money = (v: number) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${rub(Math.abs(v))}`;
     const row = ([l, v, note]: [string, number, string?]) => `<dt>${l}${note ? `<small>${note}</small>` : ''}</dt><dd class="${v < 0 ? 'minus' : ''}">${money(v)}</dd>`;
     const journal = [...rec.journal, ...extra.pay.notes].map(([l, n]) => `<dt>${l}</dt><dd>${n}</dd>`).join('');

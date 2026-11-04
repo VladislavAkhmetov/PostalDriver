@@ -18,8 +18,6 @@ const UNIFORM = '#6c7686', UNIFORM_D = '#505a68', TROUSER = '#3e4652', RED = '#b
 let batonMat: THREE.MeshLambertMaterial | null = null;
 /** Seated hip point the patrol car seats were laid out for. */
 const SEAT_HIPS_Y = 0.465;
-/** Hips in the last frame of the Sitting clip, file units: down and back. */
-const SIT_RAW_Y = 1.1, SIT_RAW_Z = -0.6;
 
 const _v = new THREE.Vector3(), _w = new THREE.Vector3(), _tR = new THREE.Vector3(), _tL = new THREE.Vector3(), _o = new THREE.Vector3();
 const POLE: Record<string, THREE.Vector3> = {};
@@ -210,6 +208,10 @@ export class Officer {
     h.play('Idle', { fade: 0, at: Math.random() });
   }
 
+  private sayT = 0;
+  /** Say a line: the talking clip for a while (an officer on Mixamo's skeleton), the folder kept in hand. */
+  say(seconds: number): void { if (this.h.has('Talking2') && this.mode !== 'sit' && this.mode !== 'walk') this.sayT = Math.max(this.sayT, seconds); }
+
   setMode(m: OfficerMode): void {
     if (m === this.mode) return;
     this.mode = m;
@@ -244,8 +246,10 @@ export class Officer {
     const tR = _tR.set(0, 0, 0), tL = _tL.set(0, 0, 0);
     let walking = false;
     const seated = this.mode === 'sit';
-    const fade = seated || h.clip === 'Sitting' ? 0 : 0.3;
-    h.model.position.set(0, seated ? SEAT_HIPS_Y - SIT_RAW_Y * h.s : 0, seated ? -SIT_RAW_Z * h.s : 0);
+    const fade = seated || h.clip === 'Sitting' || h.clip === 'Driving' ? 0 : 0.3;
+    if (!seated) h.model.position.set(0, 0, 0);
+    // a word said (Kuzmin's Talking clip) for a while, standing
+    this.sayT = Math.max(0, this.sayT - dt);
 
     if (this.mode === 'walk' && this.path.length) {
       walking = true;
@@ -269,7 +273,8 @@ export class Officer {
         }
       }
     } else if (seated) {
-      h.play('Sitting', { fade: 0, once: true, at: 1 });
+      // at the wheel of the patrol car: Mixamo's Driving clip, or BaseHuman sat down
+      h.seat(SEAT_HIPS_Y, h.has('Driving') ? 'Driving' : 'Sitting');
       // hands on the wheel, a little play
       const play = Math.sin(t * 0.9) * 0.02;
       wR = wL = 1;
@@ -278,8 +283,10 @@ export class Officer {
       R.pole.copy(pole('wR', -1, -1, -0.2)); L.pole.copy(pole('wL', 1, -1, -0.2));
       pitch = 0.05;
     } else {
-      h.play('Idle', { fade });
-      if (this.mode === 'signal') {
+      // writing out the receipt at the window (Kuzmin's own Texting clip: the folder in his hands), or talking
+      const writing = this.mode === 'talk' && h.has('Texting');
+      h.play(this.sayT > 0 && h.has('Talking') ? 'Talking2' : writing ? 'Texting' : 'Idle', { fade });
+      if (writing || this.sayT > 0) { /* the clip has the arms */ } else if (this.mode === 'signal') {
         // point the baton at the driver, hold, then sweep it down to the kerb
         const cyc = (this.modeT % 1.9) / 1.9;
         const s = cyc < 0.45 ? 0 : cyc < 0.75 ? (cyc - 0.45) / 0.3 : 1 - (cyc - 0.75) / 0.25;

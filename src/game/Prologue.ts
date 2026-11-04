@@ -1,8 +1,9 @@
 import type { StoryImage } from '../ui/storyArt';
 
 /**
- * The beginning (docs/design.md, «Пролог»): for now one page — September 1997, Timur back from the
- * army, the grandfather due in hospital in Ufa today, the money for the institute. Then the first
+ * The beginning (docs/design.md, «Пролог»; docs/season-1998.md): for now one page — May 1998, Timur
+ * two days back from the army, the grandfather due in hospital in Ufa today, the money for the trip
+ * to the city, the entrance exams and the first months there. Then the first
  * morning in the yard in Urmanly (FirstMorning.ts): Timur drives the grandfather to Klyuchevsk, to
  * the Ufa bus, and the grandfather shows him the way and the van on it. The bus goes from the post
  * office: there they say goodbye (`farewellPages`), and Zinaida Pavlovna gives Timur the keys and
@@ -17,11 +18,11 @@ type Page = PrologueHooks['page'];
 
 const KARTATAY = 'Картатай';
 /** The film camera's date on the prints: the first working morning. */
-const FIRST_DAY = '’97 9 17';
+const FIRST_DAY = '’98 5 6';
 /** The pictures (src/assets/story/README.md lists them for whoever draws them). */
 const ART: Record<string, StoryImage> = {
-  urmanly: { id: 'urmanly', brief: 'Двор в Урманлы солнечным утром: синяя с жёлтым почтовая буханка у ворот, солнце над ельником. Картатай с палкой и авоськой яблок, өләсәй на крыльце в платке, Тимур в армейском бушлате у кабины.', date: FIRST_DAY },
-  farewell: { id: 'farewell', brief: 'Крыльцо почты в Ключевске, утро: картатай в кепке и сером пиджаке, палка, авоська с яблоками; рядом буханка, у двери — Зинаида Павловна в синем халате.', date: FIRST_DAY },
+  urmanly: { id: 'urmanly', brief: 'Двор в Урманлы майским утром, после дождя: синяя с жёлтым почтовая буханка у ворот, черёмуха в цвету у палисадника, солнце над ельником. Картатай с палкой и авоськой (банка мёда, пирожки), өләсәй на крыльце в платке, Тимур в армейской «афганке» без погон у кабины.', date: FIRST_DAY },
+  farewell: { id: 'farewell', brief: 'Крыльцо почты в Ключевске, майское утро, мокрый асфальт: картатай в кепке и сером пиджаке, палка, авоська с банкой мёда; рядом буханка, у двери — Зинаида Павловна в синем халате.', date: FIRST_DAY },
   notebook: { id: 'notebook', brief: 'Потёртый блокнот на резинке в загорелой ладони: адреса карандашом, пометки «злая собака», «пенсию — в руки»; рядом очки деда.', date: FIRST_DAY },
   zinaida: { id: 'zinaida', portrait: true, brief: 'Зинаида Павловна, 55 лет: химическая завивка, очки, синий форменный халат; на стойке — связка ключей.', date: FIRST_DAY },
 };
@@ -63,7 +64,7 @@ export class Prologue {
   /** The one page, then the morning. */
   start(): void {
     const h = this.hooks;
-    h.page('Сентябрь 1997 · Башкортостан', 'Тимуру двадцать, вчера вернулся из армии. Картатай тридцать лет возит почту по району, а сегодня ложится в больницу в Уфе. Почте нужен водитель, Тимуру — деньги: три миллиона к июлю, на институт. Утром — отвезти деда в Ключевск, к автобусу. Там же и почта.', {
+    h.page('Май 1998 · Башкортостан', 'Тимуру двадцать, позавчера вернулся из армии. Картатай тридцать лет возит почту по району, а сегодня ложится в больницу в Уфе. Почте на лето нужен водитель, Тимуру — деньги: в июле в Уфу, на вступительные. Дорога, экзамены, комната и еда на первые месяцы — полтора миллиона к отъезду. Утром — отвезти деда в Ключевск, к автобусу. Там же и почта.', {
       title: 'Сельская почта', image: ART.urmanly,
       options: ['Утро. Во двор'],
       pick: () => h.finish(),

@@ -45,17 +45,23 @@ export interface Profile {
   gai?: GaiMemory;
   /** Whether the season 1 finale and credits have been played. */
   seasonFinale?: boolean;
+  /** Which first season the career was played on: 1998 is May–June 1998 (docs/season-1998.md). */
+  season?: number;
 }
 
 export interface Wear { steer: number; rad: number; pull: -1 | 1 }
 
 const KEY = 'uaz-zarechye-profile';
-export const freshProfile = (): Profile => ({ money: 0, runs: 0, damage: 0, fuel: 0.8, day: 1, trust: 20, talons: 25, pay: newPayBook(), rub: 1997, wear: { steer: 0, rad: 0, pull: 1 }, garage: 0, prologue: false });
+/** The first season's calendar (May–June 1998); careers saved on the old autumn one start over. */
+export const SEASON_VERSION = 1998;
+export const freshProfile = (): Profile => ({ money: 0, runs: 0, damage: 0, fuel: 0.8, day: 1, trust: 20, talons: 25, pay: newPayBook(), rub: 1997, wear: { steer: 0, rad: 0, pull: 1 }, garage: 0, prologue: false, season: SEASON_VERSION });
 
 export function loadProfile(): Profile {
   try {
     const p = JSON.parse(localStorage.getItem(KEY) ?? 'null');
-    if (p && typeof p.money === 'number') return { rub: 1997, money: Math.max(0, p.rub === 1997 ? p.money : Math.round((p.money * OLD_TO_1997) / 1000) * 1000), runs: p.runs ?? 0, damage: Math.min(1, Math.max(0, p.damage ?? 0)), fuel: Math.min(1, Math.max(0, p.fuel ?? 0.8)), day: Math.max(1, Math.floor(p.day ?? (p.runs ?? 0) + 1)), trust: Math.min(100, Math.max(0, p.trust ?? 20)), talons: Math.max(0, p.talons ?? 25), pay: p.pay && Array.isArray(p.pay.paid) ? p.pay : newPayBook(), muha: p.muha && typeof p.muha.step === 'string' ? p.muha : undefined,
+    // a career from the old autumn–winter calendar: its days, stories and paydays mean nothing on the new one
+    if (p && typeof p.money === 'number' && p.season !== SEASON_VERSION) return freshProfile();
+    if (p && typeof p.money === 'number') return { season: SEASON_VERSION, rub: 1997, money: Math.max(0, p.rub === 1997 ? p.money : Math.round((p.money * OLD_TO_1997) / 1000) * 1000), runs: p.runs ?? 0, damage: Math.min(1, Math.max(0, p.damage ?? 0)), fuel: Math.min(1, Math.max(0, p.fuel ?? 0.8)), day: Math.max(1, Math.floor(p.day ?? (p.runs ?? 0) + 1)), trust: Math.min(100, Math.max(0, p.trust ?? 20)), talons: Math.max(0, p.talons ?? 25), pay: p.pay && Array.isArray(p.pay.paid) ? p.pay : newPayBook(), muha: p.muha && typeof p.muha.step === 'string' ? p.muha : undefined,
       // saves from before the parts were told apart: the old one-number damage split between them
       wear: p.wear && typeof p.wear.steer === 'number' ? p.wear : { steer: Math.min(1, (p.damage ?? 0) * 0.6), rad: Math.min(1, (p.damage ?? 0) * 0.4), pull: 1 },
       garage: p.garage ?? 0,

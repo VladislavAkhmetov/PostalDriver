@@ -6,7 +6,7 @@ import { Input, Action } from './core/Input';
 import { Ground } from './world/Ground';
 import { World } from './world/World';
 import { Atmosphere, WINTER } from './world/Atmosphere';
-import { Vehicle } from './vehicle/Vehicle';
+import { H0, Vehicle } from './vehicle/Vehicle';
 import { Cabin, EYE, EYE_PITCH, HotspotId } from './vehicle/Cabin';
 import { AudioEngine } from './audio/AudioEngine';
 import { Voice } from './audio/Voice';
@@ -20,6 +20,7 @@ import { BeeCloud } from './vehicle/Bees';
 import { Countryside } from './world/Countryside';
 import { MuhaStory } from './game/MuhaStory';
 import { RoadsideFix } from './game/Roadside';
+import { Cutscene, type CutKind, type CarPose, type VanPose } from './game/Cutscene';
 import { farewellPages, keysPage, Prologue } from './game/Prologue';
 import { FIRST_SHEET } from './audio/stations';
 import { FirstMorning, KARTATAY, VISIT } from './game/FirstMorning';
@@ -27,7 +28,7 @@ import { Passenger } from './vehicle/Passenger';
 import { RoadStop } from './game/RoadStop';
 import { GRANDPA_LETTER, Letters, letterForBoard } from './game/Letters';
 import { RadioNews } from './game/RadioNews';
-import { playSeasonFinale, playSummer, seasonFinaleDue, summerDue } from './game/Summer';
+import { DEPARTURE, playDeparture, playFinaleEvening, playSummer, seasonFinaleDue, summerDue } from './game/Summer';
 import { dateParts } from './game/Career';
 import { rub } from './game/Money';
 import { UI, Settings } from './ui/UI';
@@ -135,16 +136,39 @@ async function boot(): Promise<void> {
     const part = share < 0.99 ? ' Денег хватило не на всё — остальное в другой раз.' : '';
     // (the day just played: in the evening the profile has already moved on to tomorrow)
     const home = (mission?.finished ? profile.day - 1 : profile.day) >= GRANDPA_HOME;
-    if (kind === 'grandpa') ui.blackout('Гараж картатая, вечер', home
+    if (kind === 'grandpa') {
+      // first a few seconds in the yard, the van before the garage and Timur at it; then the evening's card
+      const card = () => ui.blackout('Гараж картатая, вечер', home
       ? `Лампочка над ямой, радио «Маяк». Картатай на табуретке у ямы — подаёт ключи и не молчит:<br><br>«${grandpaLine(profile)}»${part}`
       : `Лампочка над ямой, радио «Маяк», дедовы ключи на табуретке — сам. Потом — межгород из Уфы, картатай из больницы:<br><br>«${grandpaLine(profile, false)}»${part}`, 5, () => {}, () => {}, 'Починили');
+      const gf = world.garageFront;
+      if (!film(Math.random() < 0.5 ? 'wheel' : 'hood', 'Гараж картатая, вечер', '', 4.6, () => {}, card, { van: { x: gf.x, y: ground.height(gf.x, gf.z) + H0, z: gf.z, yaw: gf.yaw } })) card();
+    }
     else ui.toast(`Колька, мастерская МТС: «Сделано. Деньги вперёд — как договаривались».${part}`, 3.4);
   };
   const audio = new AudioEngine();
   // recorded voices, when there are files for them (docs/voice/README.md): every line on screen asks for its own
   const voice = new Voice(() => audio.ctx, () => audio.voiceBus);
   voice.onDuck = (on) => audio.tape?.duck(on);
-  ui.onLine = (who, text, kind) => voice.say(who, text, kind);
+  // a line on screen: the voice, and the speaker (if he stands about in the world) talks with his hands
+  ui.onLine = (who, text, kind) => {
+    const sec = clamp(1.4 + text.length * 0.05, 1.8, 7);
+    if (/Муха/.test(who)) world.muha?.talk(sec);
+    else if (/Картатай|Урал-агай/.test(who)) { world.home.grandpa?.talk(sec); world.postGrandpa.talk(sec); }
+    else if (/Кузьмин/.test(who)) police.speaking(sec);
+    return voice.say(who, text, kind);
+  };
+
+  // short scenes outside the cab (Cutscene.ts): the camera is lent and comes back to the driver's head
+  const cut = new Cutscene(scene, ground, camera, world.colliders, () => { head.add(camera); camera.position.set(0, 0, 0); camera.rotation.set(0, 0, 0); });
+  /** Film a scene at the van (or where `opts.van` puts it): false if one can't play now (it falls back to a fade). */
+  const film = (kind: CutKind, title: string, text: string, seconds: number, mid: () => void, done: () => void, opts: { van?: VanPose; car?: CarPose; bribe?: boolean } = {}): boolean => {
+    if (!started || cut.active || ui.storyOpen) return false;
+    const van = opts.van ?? { x: vehicle.x, y: vehicle.y, z: vehicle.z, yaw: vehicle.yaw, pitch: vehicle.pitch, roll: vehicle.roll };
+    const hide: THREE.Object3D[] = [cabin.group, ...(kind === 'fine' ? police.crewGroups() : [])];
+    ui.cinema(true, title, text);
+    return cut.play({ kind, van, car: opts.car, bribe: opts.bribe, seconds, mid, done: () => { ui.cinema(false); done(); } }, hide);
+  };
   ui.buildMap(ground, world.stops);
 
   // an arrest holds the van on the handbrake, hands off the pedals: the brake
@@ -159,7 +183,13 @@ async function boot(): Promise<void> {
     hold: (on) => { held = on; vehicle.handbrake = on; },
     blackout: (title, text, sec, mid, done) => ui.blackout(title, text, sec, mid, done),
     // «без квитанции» comes out of Timur's pocket and goes on no protocol: no fine on the run's record
-    record: (r) => { if (r.kind === 'bribe') mission.extra('ГАИ · «без квитанции»', -r.fine, 0); else mission.record(r.kind, r.fine); trackEvent('police_stop'); },
+    record: (r) => {
+      // (the sandbox's fines go on no run: there is none)
+      if (sandbox) { /* nothing to record */ } else if (r.kind === 'bribe') mission.extra('ГАИ · «без квитанции»', -r.fine, 0); else mission.record(r.kind, r.fine);
+      trackEvent('police_stop');
+      // a fine settled: a few seconds by the patrol car, Kuzmin writing it out (or the money slipped over)
+      if (r.kind === 'fine' || r.kind === 'bribe') film('fine', r.kind === 'bribe' ? 'ГАИ · без квитанции' : 'ГАИ · штраф', `${rub(r.fine)} · ${r.note}`, 4.6, () => {}, () => {}, { car: police.carPose(), bribe: r.kind === 'bribe' });
+    },
     choice: (who, line, opts, pick) => { audio.paper(); ui.choice(who, line, opts, pick); },
     closeChoice: () => ui.closeChoice(),
     inspect: (reason, done) => story?.inspect(reason, done) ?? false,
@@ -279,7 +309,7 @@ async function boot(): Promise<void> {
     vehicle.place(p.x, p.z, p.yaw, ground);
   };
   reset();
-  if (import.meta.env.DEV) Object.assign(window, { __uaz: { input, vehicle, ground, world, cabin, atmo, camera, scene, renderer, police, rain, ui, audio, get mission() { return mission; }, get encounters() { return encounters; }, get story() { return story; }, get roadStop() { return roadStop; }, get title() { return title; }, fx, grandpaSeat, get first() { return first; }, country, get cases() { return cases; }, get profile() { return profile; }, voice, get morning() { return morning; }, get birth() { return birth; }, get today() { return today; } } });
+  if (import.meta.env.DEV) Object.assign(window, { __uaz: { input, vehicle, ground, world, cabin, atmo, camera, scene, renderer, police, rain, ui, audio, get mission() { return mission; }, get encounters() { return encounters; }, get story() { return story; }, get roadStop() { return roadStop; }, get title() { return title; }, fx, grandpaSeat, get first() { return first; }, country, get cases() { return cases; }, get profile() { return profile; }, voice, get morning() { return morning; }, get birth() { return birth; }, get today() { return today; }, cut, film } });
 
   // ---- vehicle feedback
   let shake = 0;
@@ -288,7 +318,7 @@ async function boot(): Promise<void> {
     audio.impact(v);
     shake = Math.min(1.4, shake + v * 0.6);
     mission.crash(v);
-    if (!sandbox) police.impact(v, vehicle.x, vehicle.z);
+    police.impact(v, vehicle.x, vehicle.z);
     if (hit) {
       const y = vehicle.y + 0.2;
       fx.crash(hit.x, y, hit.z, hit.nx, hit.nz, v, !hit.soft && v > 4);
@@ -439,6 +469,7 @@ async function boot(): Promise<void> {
       hint: (id, text, keys) => ui.hint(id, text, keys),
       toast: (text) => ui.toast(text, 3),
       blackout: (title, text, sec, mid, done, stamp) => ui.blackout(title, text, sec, mid, done, stamp),
+      scene: (kind, title, text, sec, mid, done) => film(kind, title, text, sec, mid, done),
     }, () => vehicle.flat || (police.state !== 'idle' && police.state !== 'cool') || mission.stops.some((s) => !s.done && Math.hypot(s.pos.x - vehicle.x, s.pos.z - vehicle.z) < 40));
     cases?.dispose();
     cases = new Cases(world, ground, mission, {
@@ -521,10 +552,11 @@ async function boot(): Promise<void> {
    * but out in the village before the fork, where sixty is the limit too.
    */
   const policeDay = () => {
-    police.memory = { ...(profile.gai ?? freshGai()) };
+    // the sandbox: the ordinary post with a clean slate (and nothing of it goes back into the profile)
+    police.memory = sandbox ? freshGai() : { ...(profile.gai ?? freshGai()) };
     const d = profile.day;
-    police.strict = d >= 3 && d % 7 === 5;
-    police.setPost(d >= 4 && d % 5 === 4 ? ground.marks.junction - 180 : null);
+    police.strict = !sandbox && d >= 3 && d % 7 === 5;
+    police.setPost(!sandbox && d >= 4 && d % 5 === 4 ? ground.marks.junction - 180 : null);
     police.reset();
   };
 
@@ -566,27 +598,37 @@ async function boot(): Promise<void> {
     'Чай попил, улым? Беги, Зинаида ждать не любит.',
     'Перемячи в дорогу, в газетке. Одну Зинаиде Павловне дай — она любит.',
     'Картатай из Уфы звонил, на почту, Зинаиде: кормят, говорит, как в санатории. Велел тебе не гнать.',
-    'Шапку надень! …Ну, хоть шарф. Зинаида, поди, уже мешки разложила.',
+    'Куртку возьми! Черёмуха цветёт — значит, холода. Зинаида, поди, уже мешки разложила.',
     'Әсәй с ночной пришла, спит. Тихонько со двора, не газуй под окнами.',
   ];
   /**
-   * …and once he is home, his or hers, by turns — those that fit the day: the hat in the cold months,
-   * a bow to Нина Петровна when the route goes through Sosnovka, Степаныч's when it goes to the hamlet.
+   * …and once he is home, his or hers, by turns — those that fit the day: the jacket in a cold spell,
+   * the raincoat when the radio promised rain or a storm, the hay in late June, a bow to Нина Петровна
+   * when the route goes through Sosnovka, Степаныч's when it goes to the hamlet.
    */
-  type MorningDay = { stops: Set<string>; cold: boolean };
+  type MorningDay = { stops: Set<string>; cold: boolean; wet: boolean; hay: boolean };
   const MORNING_HOME: [string, string, ((t: MorningDay) => boolean)?][] = [
     ['Картатай', 'Масло проверил? Проверь. Я в твои годы не проверял — потом мост менял.'],
     ['Өләсәй', 'Перемячи в дорогу, в газетке. Одну Зинаиде Павловне дай — она любит.'],
     ['Картатай', 'Нине Петровне — поклон. Скажи, Урал ещё живой, на лавке сидит, всех пересидит.', (t) => t.stops.has('sosnovka')],
-    ['Өләсәй', 'Шапку надень! …Ну, хоть шарф. Картатай вон без шапки — и что? Кашляет.', (t) => t.cold],
-    ['Картатай', 'На хутор поедешь — Степанычу привет. Скажи, в субботу — на рыбалку, на зорьке. Я сказал.', (t) => t.stops.has('khutor')],
+    ['Өләсәй', 'Куртку возьми! Черёмуховые холода — это тебе не армия, тут простудишься. Картатай вон без куртки — и что? Кашляет.', (t) => t.cold],
+    ['Картатай', 'В Берёзовку поедешь — Степанычу привет. Скажи, в субботу — на рыбалку, на зорьке. Я сказал.', (t) => t.stops.has('khutor')],
+    ['Өләсәй', 'Дождевик под сиденье положила. По радио гроза — в низине не стой, проскакивай.', (t) => t.wet],
     ['Өләсәй', 'Әсәй с ночной пришла, спит. Тихонько со двора, не газуй под окнами.'],
+    ['Картатай', 'Сенокос, улым. Вернёшься пораньше — пройдёмся с косой за огородами. Ну, ты пройдёшься. Я — посмотрю.', (t) => t.hay],
     ['Картатай', 'Митяй опять с утра у ворот — что-то затевает. Ты, улым, не вмешивайся. Ну, разве что чуть-чуть.'],
   ];
   /** The day's word: one that fits it, in turn after the one said the played day before (worked out the same way). */
   const morningHome = (day: number): [string, string] => {
     const b = day === profile.day ? today : boardFor(day, profile.trust);
-    const t: MorningDay = { stops: new Set(b.orders.map((o) => o.dest)), cold: b.season !== 'spring' && b.season !== 'autumn' || /октябр/.test(b.date) };
+    const dp = dateParts(day);
+    const t: MorningDay = {
+      stops: new Set(b.orders.map((o) => o.dest)),
+      // the cold: the winter's months, or the bird cherry's cold spell in May
+      cold: ['first-snow', 'winter', 'thaw'].includes(b.season) || (dp.m === 4 && /холода/.test(b.forecast)),
+      wet: /гроз|дожд|ливень/.test(b.forecast),
+      hay: dp.m === 5 && dp.d >= 20,
+    };
     const n = MORNING_HOME.length;
     const said = day - 1 > GRANDPA_HOME ? morningHome(day - 1)[1] : null;
     const prev = said !== null ? MORNING_HOME.findIndex(([, l]) => l === said) : (day - 2 + n) % n;
@@ -599,7 +641,7 @@ async function boot(): Promise<void> {
   /** The fade before a morning: how long since the last played day. */
   const weekTitle = (day: number): string => {
     const n = daysBetween(day - 1);
-    return n <= 3 ? 'Через пару дней' : n <= 9 ? 'Неделя спустя' : n <= 17 ? 'Две недели спустя' : n <= 24 ? 'Три недели спустя' : 'Месяц спустя';
+    return n <= 1 ? 'На следующий день' : n <= 3 ? 'Через пару дней' : n <= 5 ? 'Через несколько дней' : n <= 9 ? 'Неделя спустя' : n <= 17 ? 'Две недели спустя' : n <= 24 ? 'Три недели спустя' : 'Месяц спустя';
   };
   const ZINAIDA = [
     'Явился. Путевой лист на стойке, мешки — сам знаешь где.',
@@ -628,6 +670,11 @@ async function boot(): Promise<void> {
   /** The first working morning's drive with the grandfather (FirstMorning.ts); null on any other. */
   let first: FirstMorning | null = null;
   /**
+   * The season's last morning (Summer.ts): Timur drives to the Ufa bus at the post office with the
+   * grandfather in the passenger seat — his next word in `i`, seconds of driving to it in `t`.
+   */
+  let departure: { i: number; t: number } | null = null;
+  /**
    * In the yard by the house: өләсәй's word at the porch, then the drive into town (or straight to
    * the counter). The first working morning the grandfather rides along and shows the way.
    */
@@ -640,6 +687,32 @@ async function boot(): Promise<void> {
     showPorch(false);
     birth = null;
     morningExtra = null;
+    if (departure) {
+      // the last morning: өләсәй's word in the yard, the grandfather already in the passenger seat
+      first = null;
+      seatGrandpa(true);
+      police.quiet = true;
+      atmo.setDayWeather('Тихое утро');
+      setTimeout(() => {
+        if (!morning || !departure) return;
+        audio.paper();
+        ui.dialogue('Өләсәй', DEPARTURE.send, null);
+        setTimeout(() => {
+          if (!morning || !departure) return;
+          audio.paper();
+          grandpaSeat.speak(4);
+          ui.choice(KARTATAY, DEPARTURE.ask, ['Поехали, картатай', 'Сразу к почте'], (i) => {
+            if (!morning || !departure) return;
+            if (i === 1) { reset(); vehicle.handbrake = true; atPostDoor(); return; }
+            departure.t = 8;
+            // the song of the first route, for the last one
+            audio.cue(FIRST_SHEET);
+            ui.hint('departure', DEPARTURE.hint, 'Пробел');
+          });
+        }, 3600);
+      }, 900);
+      return;
+    }
     // a neighbour at the gate before dawn: the morning starts dark
     const sky = !firstDay ? morningCase(profile.day, profile.cases)?.sky : undefined;
     if (sky) atmo.setDayWeather(sky);
@@ -742,6 +815,17 @@ async function boot(): Promise<void> {
     ui.clearHint('morning');
     ui.closeChoice();
     audio.paper();
+    if (departure) {
+      // the last drive is over: in the cab at the door, the keys go back to the grandfather
+      departure = null;
+      ui.clearHint('departure');
+      input.enabled = false;
+      vehicle.handbrake = true;
+      vehicle.engine = 'off';
+      grandpaSeat.speak(3);
+      setTimeout(() => playDeparture(profile, finaleHooks), 1800);
+      return;
+    }
     if (first) {
       const f = first;
       first = null;
@@ -767,23 +851,33 @@ async function boot(): Promise<void> {
   const toMorning = () => {
     ui.hideEnd();
     if (seasonFinaleDue(profile, profile.day)) {
+      // the season's end: the evening at the gate, then (the box full) the last drive to the Ufa bus
       input.enabled = false;
-      playSeasonFinale(profile, {
-        page: (eyebrow, text, opts) => { audio.paper(); ui.storyPage(eyebrow, text, opts); },
-        done: () => {
-          saveProfile(profile);
-          ui.setGarage(profile);
-          ui.hideStory();
-          today = boardFor(profile.day, profile.trust);
-          if (!started) void begin(false, [], { home: true });
-          else startDay([], 'home');
-        },
+      playFinaleEvening(profile, finaleHooks, () => {
+        ui.hideStory();
+        departure = { i: 0, t: 8 };
+        today = boardFor(profile.day, profile.trust);
+        if (!started) void begin(false, [], { home: true });
+        else startDay([], 'home');
       });
       return;
     }
     today = boardFor(profile.day, profile.trust);
     if (!started) void begin(false, [], { home: true });
     else startDay([], 'home');
+  };
+  /** The season's pages over: the service goes on, from the next morning at home. */
+  const finaleHooks = {
+    page: (eyebrow: string, text: string, opts?: Parameters<typeof ui.storyPage>[2]) => { audio.paper(); ui.storyPage(eyebrow, text, opts); },
+    done: () => {
+      departure = null;
+      saveProfile(profile);
+      ui.setGarage(profile);
+      ui.hideStory();
+      today = boardFor(profile.day, profile.trust);
+      if (!started) void begin(false, [], { home: true });
+      else startDay([], 'home');
+    },
   };
   /** Back into a day saved part-way. */
   const resumeDay = (s: DaySave) => {
@@ -827,8 +921,8 @@ async function boot(): Promise<void> {
       },
     });
   };
-  /** Spring after he quit Lysyi: Muha loads the van in the mornings (a head start on the schedule). */
-  const muhaHelps = () => profile.muha?.ending === 'quit' && today.season === 'spring';
+  /** Once he has quit Lysyi (his story over), Muha is the post's loader: the van is loaded before Timur comes (a head start). In winter he stokes the boiler-house instead. */
+  const muhaHelps = () => profile.muha?.ending === 'quit' && profile.muha.step === 'end' && !['first-snow', 'winter'].includes(today.season);
 
   /** What the day holds, for the first hint in the cab. */
   const dayIntro = (orders: Order[]) => {
@@ -848,7 +942,8 @@ async function boot(): Promise<void> {
     if (!free) { mission = newMission(orders); atmo.setDayWeather(today.weather); dayWorld(); snowNow = today.snow; if (!quiet) newEncounters(at.resume); else if (at.home) endDaySystems(); if (!quiet && muhaHelps()) mission.addTime(-90); }
     else { atmo.setDayWeather(null); story?.dispose(); story = null; }
     if (at.resume) mission.restore(at.resume);
-    if (!free) { policeDay(); seatGrandpa(false); }
+    policeDay();
+    if (!free) seatGrandpa(false);
     // a run starts with the van as the last one left it; the sandbox is always a fresh one
     applyWear(free);
     // a run starts with what is in the tank, but never less than a canister's worth
@@ -972,6 +1067,8 @@ async function boot(): Promise<void> {
    */
   const startDay = (orders: Order[], at: 'post' | 'here' | 'home' = 'post') => {
     const home = at === 'home';
+    // a scene still playing ends now (the camera back in the cab)
+    cut.finish();
     atmo.setDayWeather(today.weather); dayWorld();
     snowNow = today.snow;
     vehicle.engine = 'off';
@@ -1066,7 +1163,7 @@ async function boot(): Promise<void> {
 
     input.update(dt, Math.abs(vehicle.vx));
     if (held) vehicle.handbrake = true;
-    const controls = held ? { steer: 0, gas: 0, brake: 0 }
+    const controls = held || cut.active ? { steer: 0, gas: 0, brake: 0 }
       : started && input.enabled && !ui.mapOpen ? { steer: input.steer, gas: input.gas, brake: input.brake } : { steer: 0, gas: 0, brake: 0 };
     // the first morning, while the grandfather asks to pull in at the post: the van eases off by itself
     // bees loose in the cab twitch the wheel
@@ -1126,6 +1223,8 @@ async function boot(): Promise<void> {
       head.rotation.set(input.lookPitch + EYE_PITCH + jy * 0.4, damp(head.rotation.y, input.lookYaw + back, 10, dt) + sway.x * 0.5, -vehicle.roll * 0.3 + jx * 0.6);
     }
 
+    // a scene outside the cab has the camera
+    cut.update(dt);
     camera.getWorldPosition(camWorld);
     if (sandbox && frame % 15 === 0) sandboxS = ground.main.nearestS(vehicle.x, vehicle.z);
     atmo.update(dt, started ? (sandbox ? sandboxS : mission.routeS) : titleS, camWorld);
@@ -1145,7 +1244,7 @@ async function boot(): Promise<void> {
       cam: camWorld, groundY: ground.height(camWorld.x, camWorld.z),
       vx: pvx, vz: pvz, px: vehicle.x, pz: vehicle.z, yaw: vehicle.yaw, tint: rainTint,
     });
-    // nothing past the fog is visible; keep the far-forest ring (r = 560) inside
+    // nothing past the fog is visible; keep the horizon rings (r = 560, 605) inside
     const far = Math.max(620, atmo.fog.far + 80);
     if (Math.abs(camera.far - far) > 20) { camera.far = far; camera.updateProjectionMatrix(); }
     renderer.setGrade(atmo.grade);
@@ -1204,9 +1303,21 @@ async function boot(): Promise<void> {
         reception: Math.max(clamp(1 - s / 2600, 0.32, 1) - forestAmb * 0.1 - near(m.mud, m.bridge, 60) * 0.15, 1 - Math.abs(s - m.tower) / 260, near(m.zarStart, m.zarEnd, 200) * 0.62),
       });
       audio.life(dt, life);
-      if (!sandbox) police.update(dt, t, vehicle.x, vehicle.z, pvx, pvz, vehicle.yaw);
+      // (the sandbox too: its radar and chases are the real thing, its fines on no record)
+      police.update(dt, t, vehicle.x, vehicle.z, pvx, pvz, vehicle.yaw);
       // the morning: stopped on the handbrake at the post office door, the route sheet
       if (morning && first) first.update(dt, vehicle);
+      // the last drive: the grandfather's words on the way, while the van is moving
+      if (morning && departure && !ui.choiceOpen && Math.abs(vehicle.speedKmh) > 5) {
+        departure.t -= dt;
+        if (departure.t <= 0 && departure.i < DEPARTURE.lines.length) {
+          const line = DEPARTURE.lines[departure.i++];
+          ui.dialogue(KARTATAY, line, null);
+          audio.paper();
+          grandpaSeat.speak(3 + line.length * 0.03);
+          departure.t = 22;
+        }
+      }
       if (birth) birthUpdate(dt);
       bees.update(dt, beeLevel);
       if (morning && !birth && !ui.boardOpen && (!first || first.atDoor) && vehicle.handbrake && Math.abs(vehicle.speedKmh) < 1 && Math.hypot(world.postDoor.x - vehicle.x, world.postDoor.z - vehicle.z) < (first ? 22 : 16)) atPostDoor();
@@ -1214,7 +1325,7 @@ async function boot(): Promise<void> {
       saveT -= dt;
       if (saveT < 0) { saveT = 20; checkpoint(); }
       if (police.state === 'pursuit' && policeWas !== 'pursuit') {
-        ui.hint('chase', 'Погоня! Остановишься — штраф. Нет — на асфальте догонят и подрежут. Уходи в лес на грунтовку: легковая ГАИ туда не полезет, а внедорожник рано или поздно сядет в болоте — почтовой машине с передним мостом оно нипочём.', 'Z');
+        ui.hint('chase', 'Погоня! Остановишься — штраф. Нет — догонят, будут толкать в бок, обгонять и тормозить перед носом, а там и заслон поставят. С дороги не спрячешься — пойдут по колее след в след. Шанс один — грязь: легковая ГАИ сядет на брюхо в первой же луже, внедорожник — в болоте, а почтовой машине с передним мостом оно нипочём.', 'Z');
       }
       policeWas = police.state;
       audio.siren(police.siren, t);
@@ -1231,7 +1342,7 @@ async function boot(): Promise<void> {
         const len = ground.main.length;
         const sv = ground.main.nearestS(vehicle.x, vehicle.z);
         ui.setRoute({
-          next: morning ? 'почты, за путевым листом' : next?.name ?? null, dist: morning ? Math.max(0, mission.routeS - 40) : next ? next.s - mission.routeS : 0, progress: mission.routeS / len,
+          next: morning ? (departure ? 'почты, к автобусу на Уфу' : 'почты, за путевым листом') : next?.name ?? null, dist: morning ? Math.max(0, mission.routeS - 40) : next ? next.s - mission.routeS : 0, progress: mission.routeS / len,
           stops: mission.stops.map((st) => ({ at: st.s / len, done: st.done })),
           left: mission.dueLeft, urgent: mission.urgentLabel, cargo: mission.fragileAboard ? mission.cargo : null,
           kmh: vehicle.speedKmh, limit: (sv > m.town + 170 && sv < m.town + 490) || world.hamlets.some(([a, b]) => sv > a - 20 && sv < b + 20) ? 60 : null,
@@ -1263,7 +1374,7 @@ async function boot(): Promise<void> {
     ui.update(dt);
 
     cabin.group.updateMatrixWorld();
-    cabin.renderMirrors(renderer, scene, frame);
+    if (!cut.active) cabin.renderMirrors(renderer, scene, frame);
     renderer.render(scene, camera);
   };
   tick();

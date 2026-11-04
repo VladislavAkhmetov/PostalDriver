@@ -2,11 +2,13 @@ import * as THREE from 'three';
 import { Bucket, boxGeo, mat } from '../core/geom';
 import { clamp, lerp, smoothstep } from '../core/math';
 import { paint } from '../core/textures';
-import type { Ground } from './Ground';
+import { RAIL_HALF, type Ground, type Road } from './Ground';
 import { Collider } from './Props';
 
-const U = 900;          // half-length of the modelled line
+const U = RAIL_HALF;    // half-length of the modelled line
 const STEP = 5;         // profile spacing
+/** Metres along the line over which the rails climb from a side road's level crossing back onto the embankment. */
+const CROSS_RAMP = 45;
 const TRAIN_V = 16;     // ~58 km/h freight
 /** Average approach speed that just beats the booms, m/s (65 km/h). */
 const RACE_V = 18;
@@ -43,14 +45,18 @@ export class Railway {
   private hornQ = 0;
   private lampMat: THREE.MeshLambertMaterial;
   private raw: Float32Array;
+  /**
+   * Unguarded level crossings where the side roads (the forest road home) cross the line: where
+   * along it (u), half the length of the deck along the rails, and the road and point it crosses at.
+   */
+  private crossings: { u: number; hz: number; road: Road; s: number; y: number }[] = [];
 
-  constructor(private ground: Ground, sCross: number) {
-    this.sCross = sCross;
-    const f = ground.main.frame(sCross);
-    this.cx = f.x; this.cz = f.z;
-    const ang = 0.32;
-    this.dx = f.rx * Math.cos(ang) + f.tx * Math.sin(ang);
-    this.dz = f.rz * Math.cos(ang) + f.tz * Math.sin(ang);
+  /** The line where Ground laid it (its valley is kept through the foothills). */
+  constructor(private ground: Ground) {
+    const line = ground.railLine;
+    this.sCross = line.s;
+    this.cx = line.cx; this.cz = line.cz;
+    this.dx = line.dx; this.dz = line.dz;
     // embankment profile: rolling max of the terrain, smoothed, meeting the road at the crossing
     const n = Math.round((2 * U) / STEP) + 1;
     const raw = new Float32Array(n);
@@ -70,7 +76,55 @@ export class Railway {
     for (let i = 2; i < n - 2; i++) if (Math.abs(-U + i * STEP) > 12) sm[i] = (this.h[i - 2] + this.h[i - 1] + this.h[i] * 2 + this.h[i + 1] + this.h[i + 2]) / 6;
     this.h = sm;
     this.raw = raw;
+    this.levelCrossings();
     this.lampMat = new THREE.MeshLambertMaterial({ vertexColors: true, emissive: '#fff0c0', emissiveIntensity: 0 });
+  }
+
+  /**
+   * Find where the side roads cross the line and bring the rails down to them: flush with the road
+   * across it, climbing back onto the embankment over CROSS_RAMP metres either side — the
+   * embankment would otherwise stand across the track like a wall.
+   */
+  private levelCrossings(): void {
+    const g = this.ground;
+    for (const road of g.roads) {
+      if (road === g.main) continue;
+      let prev: { d: number; along: number; y: number; s: number; cos: number } | null = null;
+      for (const p of road.samples) {
+        const ox = p.x - this.cx, oz = p.z - this.cz;
+        const along = ox * this.dx + oz * this.dz, d = -ox * this.dz + oz * this.dx;
+        const cos = p.tx * this.dx + p.tz * this.dz;
+        if (prev && Math.sign(d) !== Math.sign(prev.d) && Math.abs(along) < U - 60) {
+          const t = prev.d / (prev.d - d);
+          const sin = Math.sqrt(Math.max(0, 1 - cos * cos));
+          const half = road.zoneAt(p.s).width / 2;
+          this.crossings.push({
+            u: lerp(prev.along, along, t), s: lerp(prev.s, p.s, t), y: lerp(prev.y, p.y, t), road,
+            // the road and its shoulders, measured along the rails (a shallow crossing is a long one)
+            hz: (half + 2.6) / Math.max(0.3, sin),
+          });
+        }
+        prev = { d, along, y: p.y, s: p.s, cos };
+      }
+    }
+    for (const c of this.crossings) {
+      for (let i = 0; i < this.h.length; i++) {
+        const u = -U + i * STEP, du = Math.abs(u - c.u);
+        if (du > c.hz + CROSS_RAMP) continue;
+        // on the road the rails sit at its centreline height where they cross it; past it, the crossing's own
+        const [x, z] = this.at(u);
+        const q = g.nearestRoad(x, z, 12);
+        const onIt = q && q.sample.road === c.road && Math.abs(q.lat) < c.road.zoneAt(q.s).width / 2 + 2.6;
+        const flush = (onIt && q ? c.road.frame(q.s).y : c.y) + 0.06;
+        this.h[i] = lerp(flush, this.h[i], smoothstep(c.hz, c.hz + CROSS_RAMP, du));
+      }
+    }
+  }
+
+  /** On a crossing's deck (the main road's or a side road's), metres along the line. */
+  private onDeck(u: number, mainHalfU: number): 'main' | 'side' | null {
+    if (Math.abs(u) < mainHalfU) return 'main';
+    return this.crossings.some((c) => Math.abs(u - c.u) < c.hz) ? 'side' : null;
   }
 
   at(u: number): [number, number] { return [this.cx + this.dx * u, this.cz + this.dz * u]; }
@@ -103,15 +157,20 @@ export class Railway {
       const [x, z] = this.at(um);
       const hm = (h0 + h1) / 2;
       const pitch = -Math.atan2(h1 - h0, STEP);
-      const onRoad = Math.abs(um) < roadHalfU;
+      const deck = this.onDeck(um, roadHalfU);
+      const onRoad = deck !== null;
       if (!onRoad) {
         const bottom = Math.min(this.raw[i], this.raw[i + 1]) - 0.8;
         const top = hm - 0.3;
-        if (top - bottom > 0.1) b.add('gravel', boxGeo(5.4, top - bottom, STEP + 0.4, 2), mat(x, (top + bottom) / 2, z, 0, yaw, 0), '#9a8e7e');
+        // the embankment with sloping sides, its crest following the rails from one end of the step to the other
+        if (top - bottom > 0.1) b.add('gravel', embankment(STEP, h0 - 0.3, h1 - 0.3, bottom), mat(x, 0, z, 0, yaw, 0), '#9a8e7e');
         b.add('gravel', boxGeo(3.4, 0.22, STEP + 0.1, 1), mat(x, hm - 0.24, z, pitch, yaw, 0), '#8a8274');
-      } else {
+      } else if (deck === 'main') {
         // rubber crossing deck between and beside the rails
         b.add('flat', boxGeo(2.6, 0.06, STEP + 0.05), mat(x, hm - 0.03, z, pitch, yaw, 0), '#3a3a38');
+      } else {
+        // a forest road's crossing: old sleepers laid as planking between and beside the rails, down in the ruts
+        b.add('planks', boxGeo(3.0, 0.1, STEP + 0.05, 1), mat(x, hm - 0.07, z, pitch, yaw, 0), '#7a6a52');
       }
       for (const s of [-1, 1]) {
         const ox = this.dz * s * 0.76, oz = -this.dx * s * 0.76;
@@ -136,7 +195,34 @@ export class Railway {
       b.add('flat', boxGeo(1.4, 0.08, 0.08), mat(x + ox, y + 7, z + oz, 0, yaw + Math.PI / 2, 0), '#5a4834');
     }
     this.buildCrossingGear(b, cols, sign);
+    this.buildCrossSigns(b, cols);
     this.buildTrain();
+  }
+
+  /**
+   * The St Andrew's cross on either approach to each unguarded crossing: two crossed boards, white
+   * with a red edge, on a post at the right-hand verge, facing the traffic.
+   */
+  private buildCrossSigns(b: Bucket, cols: Collider[]): void {
+    for (const c of this.crossings) {
+      const road = c.road;
+      for (const side of [-1, 1]) {
+        // a few metres short of the deck, along the road
+        const s = clamp(c.s - side * (c.hz + 8), 0, road.length);
+        const f = road.frame(s);
+        const lat = side * (road.zoneAt(s).width / 2 + 1.5);
+        const x = f.x + f.rx * lat, z = f.z + f.rz * lat;
+        const y = this.ground.terrainAt(x, z);
+        const rot = Math.atan2(-f.tx * side, -f.tz * side);
+        b.add('flat', boxGeo(0.1, 2.5, 0.1), mat(x, y + 1.25, z, 0, rot, 0), '#e8e4da');
+        for (const a of [0.62, -0.62]) {
+          const m = mat(x, y + 2.15, z, 0, rot, 0);
+          b.add('flat', boxGeo(1.35, 0.24, 0.03), m.clone().multiply(mat(0, 0, 0.07, 0, 0, a)), '#c82a20');
+          b.add('flat', boxGeo(1.25, 0.14, 0.03), m.clone().multiply(mat(0, 0, 0.085 + (a > 0 ? 0.004 : 0), 0, 0, a)), '#f0ece4');
+        }
+        cols.push({ x, z, r: 0.2, hw: 0, hd: 0, rot: 0, box: false });
+      }
+    }
   }
 
   private buildCrossingGear(b: Bucket, cols: Collider[], sign: (t: THREE.Texture) => string): void {
@@ -390,4 +476,34 @@ export class Railway {
       horn: horn ? clamp(1 - Math.abs(headTo) / 1200, 0.2, 1) : 0,
     };
   }
+}
+
+/**
+ * One step of the railway embankment, local z along the line (-len/2 … len/2) and y absolute: a crest
+ * 4.2 m wide from height t0 to t1, sides falling at 1 : 1.6 (steeper on a tall bank, so it never
+ * spreads past 6 m either side) down to `bottom`, below the ground.
+ */
+function embankment(len: number, t0: number, t1: number, bottom: number): THREE.BufferGeometry {
+  const crest = 2.1;
+  const foot = (t: number) => Math.min(crest + (t - bottom) * 1.6, 6);
+  const z0 = -len / 2, z1 = len / 2;
+  const pos: number[] = [], uv: number[] = [];
+  const quad = (a: number[], b: number[], c: number[], d: number[], ua: number[], ub: number[], uc: number[], ud: number[]) => {
+    pos.push(...a, ...b, ...c, ...a, ...c, ...d);
+    uv.push(...ua, ...ub, ...uc, ...ua, ...uc, ...ud);
+  };
+  for (const side of [-1, 1]) {
+    const f0 = foot(t0), f1 = foot(t1);
+    const sl0 = Math.hypot(f0 - crest, t0 - bottom) / 2, sl1 = Math.hypot(f1 - crest, t1 - bottom) / 2;
+    const a = [side * crest, t0, z0], b = [side * crest, t1, z1], c = [side * f1, bottom, z1], d = [side * f0, bottom, z0];
+    // wound so the face looks outward on either side
+    if (side > 0) quad(a, b, c, d, [0, z0 / 2], [0, z1 / 2], [sl1, z1 / 2], [sl0, z0 / 2]);
+    else quad(a, d, c, b, [0, z0 / 2], [sl0, z0 / 2], [sl1, z1 / 2], [0, z1 / 2]);
+  }
+  quad([-crest, t0, z0], [-crest, t1, z1], [crest, t1, z1], [crest, t0, z0], [0, z0 / 2], [0, z1 / 2], [crest, z1 / 2], [crest, z0 / 2]);
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.computeVertexNormals();
+  return g;
 }

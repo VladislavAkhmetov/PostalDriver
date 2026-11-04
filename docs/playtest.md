@@ -24,18 +24,18 @@ node scripts/playtest/cdp.mjs scripts/playtest/autopilot.js /tmp/playtest/yes.js
     localStorage.setItem('pt-jumped-13', '1');
     localStorage.removeItem('uaz-zarechye-day');           // без сохранения середины дня
     localStorage.setItem('uaz-zarechye-profile', JSON.stringify({
-      rub: 1997, money: 800000, runs: 12, day: 13, trust: 60, fuel: 0.8, damage: 0, talons: 25, garage: 6, prologue: true,
+      season: 1998, rub: 1997, money: 800000, runs: 12, day: 13, trust: 60, fuel: 0.8, damage: 0, talons: 25, garage: 6, prologue: true,
       muha: { step: 'end', day: 11, bond: 2, outcome: 'delivered', saw: 'asked', warned: true, pressed: 'hospital', ending: 'quit' },
       letters: { done: ['rashit', 'fedor', 'sabira'], next: 14 },
-      cases: { 'mityai-mushrooms': 'done', 'mityai-moto': 'done', birth: 'done', wedding: 'done' },
+      cases: { 'mityai-seedlings': 'done', 'mityai-moto': 'done', bees: 'done', birth: 'done', wedding: 'done' },
       roadStop: { done: true, day: 9, outcome: 'gave' },
-      // the salary book: what is paid already (September … October here), or the first day collects all the back pay
-      pay: { premium: 0, at: {}, paid: ['1997-8-A', '1997-8-B', '1997-9-A', '1997-9-B'] },
+      // the salary book: what is paid already (May here), or the first day collects all the back pay
+      pay: { premium: 0, at: {}, paid: ['1998-4-A', '1998-4-B'] },
     }));
   }
   ```
 
-  Без `pay` первый же день выплатит все авансы и получки с сентября (деньги в копилке тогда не показательны). Состояние сюжетов — какое нужно проверить: Муха «завязал» (`ending: 'quit'`) — зимой в котельной, весной грузчик на почте; `'jailed'` / `'north'` — его нет.
+  Без `pay` первый же день выплатит все авансы и получки с мая (деньги в копилке тогда не показательны). Состояние сюжетов — какое нужно проверить: Муха «завязал» (`ending: 'quit'`) — зимой в котельной, весной грузчик на почте; `'jailed'` / `'north'` — его нет.
 - В выводе по ходу: `>> DAY`, `CHOICE`, `PAGE`, `FADE`, `BOARD`, `GAI`, `EVENING`, `PROBLEM`. В конце `RESULT:` — JSON: дни (журнал, состояние сюжетов), все вопросы и ответы, все прозвучавшие строки (`heard` — их можно положить в `docs/voice/heard.json` для сценария озвучки) и список проблем.
 - `PROBLEM` — то, что надо смотреть: строка с остатками кода (`undefined`, `{to}`), застрял на цели, попутчик не вышел, день не кончился. «Застрял» — шесть попыток на одну цель за один день (счёт попыток начинается заново с каждым днём; `days` — это игровые дни, по вечерам).
 - Один день — 1,5–3 минуты (программная отрисовка без видеокарты).

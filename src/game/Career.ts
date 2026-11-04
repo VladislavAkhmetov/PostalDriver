@@ -80,7 +80,7 @@ const DESTS: Dest[] = [
     ],
   },
   {
-    id: 'khutor', gen: 'до хутора Берёзки', acc: 'на хутор Берёзки', name: 'Хутор Берёзки', who: 'Василий Степанович', from: 2, eta: 260, off: 380,
+    id: 'khutor', gen: 'до Берёзовки', acc: 'в Берёзовку', name: 'Берёзовка', who: 'Василий Степанович', from: 2, eta: 260, off: 380,
     kinds: [
       ['parts', 'Ремкомплект для мотоблока, заказан почтой.'],
       ['pension', 'Пенсия Степанычу — ждёт с утра у калитки.'],
@@ -124,19 +124,24 @@ const DESTS: Dest[] = [
     ],
   },
   {
-    id: 'camp', gen: 'до пионерлагеря', acc: 'в пионерлагерь', name: 'Пионерлагерь «Звёздочка»', who: 'Михалыч, сторож', from: 8, eta: 420, off: 250,
+    // shut since '92, it opens a summer shift again this June (day 9): on the board from then
+    id: 'camp', gen: 'до пионерлагеря', acc: 'в пионерлагерь', name: 'Пионерлагерь «Звёздочка»', who: 'Михалыч, сторож', from: 9, eta: 420, off: 250,
     kinds: [
       ['papers', '«Советский спорт» и «Сельская новь» — сторож выписывает с восьмидесятого.'],
       ['pension', 'Пенсия Михалычу. Сам в район не ездит — «на кого лагерь оставлю?»'],
-      ['invoices', 'Бумаги из районо: акт о консервации лагеря, на подпись сторожу.'],
+      ['invoices', 'Бумаги из районо: путёвки и списки первой смены, на подпись начальнику лагеря.'],
+      ['letters', 'Письма детям от родителей — «Звёздочка», первая смена. Целая пачка.'],
     ],
   },
 ];
 
 /** Requests Timur can take on top of the waybill. */
 export const CAPACITY = 2;
-/** What Timur is saving for: the trip to Ufa and the entrance exams, summer 1998. */
-export const GOAL = 3_000_000;
+/**
+ * What Timur is saving for by July 1998 (docs/season-1998.md): the bus to Ufa, the month of entrance
+ * exams in a hostel, a room and food for the first months of study, the textbooks.
+ */
+export const GOAL = 1_500_000;
 /** The driver-postman's salary per month, and the share paid as the advance on the 15th. */
 export const OKLAD = 450_000;
 const ADVANCE = 0.4;
@@ -159,7 +164,7 @@ export interface DayInfo {
   /** The season, and how much snow lies this morning (0…1). */
   season: Season;
   snow: number;
-  /** A word from the postmistress for the season (New Year's week), or null. */
+  /** A word from the postmistress for the day (Victory Day, Sabantuy, the last run…), or null. */
   note: string | null;
 }
 
@@ -169,9 +174,9 @@ export interface DayInfo {
  */
 const ROUTES: Record<number, { name: string; stops: string[] }> = {
   0: { name: 'Большое кольцо: Сосновка — Заречье', stops: ['sosnovka', 'zarechye', 'kolkhoz', 'apiary'] },
-  1: { name: 'Хутора: Берёзки — лесничество', stops: ['khutor', 'forestry', 'kolkhoz'] },
+  1: { name: 'Дальний: Берёзовка — лесничество', stops: ['khutor', 'forestry', 'kolkhoz'] },
   3: { name: 'Озёрный: Кайынлы — лагерь «Звёздочка»', stops: ['camp', 'kainly'] },
-  5: { name: 'Короткий: Сосновка — Берёзки', stops: ['sosnovka', 'khutor'] },
+  5: { name: 'Короткий: Сосновка — Берёзовка', stops: ['sosnovka', 'khutor'] },
 };
 const routeOf = (wd: number) => ROUTES[wd === 1 ? 1 : wd === 3 ? 3 : wd === 5 ? 5 : 0];
 
@@ -188,7 +193,7 @@ const REQUESTS: Record<string, [string, string, number, boolean][]> = {
     ['Тётка с рынка', 'Ящик рассады в банках сестре в Заречье.', 16000, true],
   ],
   khutor: [
-    ['Сестра Степаныча', 'Банки с вареньем брату на хутор. Стекло!', 15000, true],
+    ['Сестра Степаныча', 'Банки с вареньем брату в Берёзовку. Стекло!', 15000, true],
     ['Механик из гаража', 'Ремень вариатора для Степанычева мотоблока.', 14000, false],
   ],
   kolkhoz: [
@@ -216,33 +221,33 @@ const WEEKDAYS = ['Понедельник', 'Вторник', 'Среда', 'Ч�
 const MONTHS = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
 
 /**
- * The season (docs/design.md, «Календарь сезона»): the working days that are played, a week or two
- * apart — Timur works the ones in between too, off screen (the evening of each played day is the end
- * of its week). From the first morning, Wednesday 17 September 1997, to the first working day of
- * July 1998, back from the exams in Ufa; the beats of the year on their dates — the grandfather home in October,
- * the first snow, New Year's week, the Old New Year, the 23rd of February and the 8th of March, the
- * thaw, the spring, Sabantuy in June. After it the service goes on a week at a time.
+ * The season (docs/season-1998.md): the working days that are played, two to six days apart — Timur
+ * works the ones in between too, off screen. From the first morning, Wednesday 6 May 1998 (two days
+ * back from the army), to the last run before he leaves for Ufa, Monday 29 June; the beats of the
+ * early summer on their dates — Victory Day's cards, the grandfather home, the camp's first shift,
+ * Sabantuy, the haymaking. After the season the service goes on a week at a time.
  */
 const SEASON: [number, number, number][] = [
-  [1997, 8, 17], [1997, 8, 19], [1997, 8, 23], [1997, 8, 29],
-  [1997, 9, 4], [1997, 9, 9], [1997, 9, 15], [1997, 9, 21], [1997, 9, 29],
-  [1997, 10, 5], [1997, 10, 13], [1997, 10, 19], [1997, 10, 27],
-  [1997, 11, 5], [1997, 11, 11], [1997, 11, 17], [1997, 11, 23], [1997, 11, 30],
-  [1998, 0, 14], [1998, 0, 29], [1998, 1, 10], [1998, 1, 23],
-  [1998, 2, 6], [1998, 2, 19], [1998, 3, 9], [1998, 3, 28],
-  [1998, 4, 15], [1998, 5, 13], [1998, 6, 20],
+  [1998, 4, 6], [1998, 4, 8], [1998, 4, 12], [1998, 4, 14], [1998, 4, 18], [1998, 4, 23], [1998, 4, 26], [1998, 4, 29],
+  [1998, 5, 4], [1998, 5, 8], [1998, 5, 11], [1998, 5, 13], [1998, 5, 16], [1998, 5, 18], [1998, 5, 22], [1998, 5, 23],
+  [1998, 5, 27], [1998, 5, 29],
 ];
-/** The played day the grandfather is home from hospital in Ufa (the Saturday of the first October week). */
-export const GRANDPA_HOME = 5;
-/** Played days in the season (the last is July's, the exams). */
+/** The played day the grandfather is home from hospital in Ufa (Saturday 23 May; back the evening before). */
+export const GRANDPA_HOME = 6;
+/** Played days in the season (the last is the run before Ufa). */
 export const SEASON_DAYS = SEASON.length;
+/** The first working day, for the salary book: Timur is on the payroll from 6 May 1998. */
+const START = { y: 1998, m: 4, d: 6 };
+
+/** After the season the service picks up once the exams in Ufa are over: Monday 27 July 1998, then weekly. */
+const AFTER: [number, number, number] = [1998, 6, 27];
 
 /** The date of a played day (UTC midnight): from the table, then a week on each time (never a Sunday). */
 function dateFor(day: number): Date {
   const i = Math.max(1, day) - 1;
   if (i < SEASON.length) { const [y, m, d] = SEASON[i]; return new Date(Date.UTC(y, m, d)); }
-  const [y, m, d] = SEASON[SEASON.length - 1];
-  const t = new Date(Date.UTC(y, m, d + 7 * (i - SEASON.length + 1)));
+  const [y, m, d] = AFTER;
+  const t = new Date(Date.UTC(y, m, d + 7 * (i - SEASON.length)));
   if (t.getUTCDay() === 0) t.setUTCDate(t.getUTCDate() + 1);
   return t;
 }
@@ -270,14 +275,17 @@ function dateOf(day: number): { text: string; wd: number; y: number; m: number; 
 const MONTH_NOM = ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь'];
 
 const WEATHER: [string | null, string, number][] = [
-  ['Золотое утро', 'По радио: ясно, без осадков, тихо. Дороги подсохли.', 2],
+  ['Тихое утро', 'По радио: ясно, без осадков, тихо. Дороги подсохли.', 2],
   ['Ясно', 'По радио: солнечно, ветер слабый. Самое время ехать.', 3],
   ['Пасмурно', 'По радио: облачно, без существенных осадков.', 3],
   ['Дождь', 'По радио: дождь весь день. В низине у реки развезёт.', 2],
   [null, 'По радио: с утра ясно, к обеду тучи, у реки — ливень.', 2],
 ];
 
-/** The first snow, the winter and the thaw have their own weather (Atmosphere's WINTER keys). */
+/**
+ * The seasons have their own weather: the rainy May and June of the first season (more than half
+ * the days wet — drizzle, rain, thunderstorms), and the winter's for later (Atmosphere's WINTER keys).
+ */
 const SEASON_WEATHER: Partial<Record<Season, [string | null, string, number][]>> = {
   'first-snow': [
     ['Снегопад', 'По радио: первый снег! На асфальте гололедица, на грунтовках — каша.', 3],
@@ -297,17 +305,23 @@ const SEASON_WEATHER: Partial<Record<Season, [string | null, string, number][]>>
     ['Ясно', 'По радио: солнечно, снег тает на глазах. Грачи прилетели.', 2],
     ['Снегопад', 'По радио: вернулась зима — снег, ночью до минус десяти.', 1],
   ],
+  // May: the bird cherry in flower and its cold spell, long grey drizzles, the dirt roads soft
   spring: [
-    ['Ясно', 'По радио: солнечно, тепло. На полях сеют, земля сохнет.', 3],
-    ['Пасмурно', 'По радио: тепло, облачно, к вечеру тёплый дождь.', 3],
-    ['Дождь', 'По радио: весенний ливень. На грунтовках скользко.', 2],
-    ['Золотое утро', 'По радио: тихое тёплое утро, туман в низинах.', 2],
+    ['Ясно', 'По радио: солнечно, тепло, ветер слабый. Черёмуха цветёт — пахнет на всю дорогу.', 2],
+    ['Тихое утро', 'По радио: тихое тёплое утро, туман в низинах. К обеду — до двадцати.', 2],
+    ['Пасмурно', 'По радио: облачно и холодно — черёмуховые холода. Ночью до плюс трёх.', 3],
+    ['Морось', 'По радио: мелкий дождь весь день, туман. Грунтовки раскиснут.', 3],
+    ['Дождь', 'По радио: затяжной дождь. В низине у реки развезёт — передний мост и понижайка.', 3],
+    [null, 'По радио: с утра ясно, к обеду тучи, у реки — ливень.', 2],
   ],
+  // June: hot spells broken by afternoon thunderstorms, the «blind» rain through sunshine, haymaking weather
   summer: [
-    ['Ясно', 'По радио: жара до тридцати градусов, ясно. Следите за мотором.', 3],
-    ['Золотое утро', 'По радио: прохладное солнечное утро, сенокос в разгаре.', 3],
-    ['Дождь', 'По радио: гроза после полудня, сильный ливень.', 2],
-    ['Пасмурно', 'По радио: переменная облачность, сухой грейдер пылит.', 2],
+    ['Ясно', 'По радио: жарко, до двадцати восьми, ясно. Следите за мотором.', 2],
+    ['Тихое утро', 'По радио: тёплое тихое утро, роса, туман у реки. Сенокосная погода.', 2],
+    ['Слепой дождь', 'По радио: переменная облачность, кратковременные дожди. Грибной дождик — при солнце.', 3],
+    ['Гроза', 'По радио: после обеда грозы, ливень, местами град. В низинах — вода.', 3],
+    ['Дождь', 'По радио: дождь весь день. Грунтовки развезло — у моста осторожно.', 2],
+    [null, 'По радио: с утра ясно, к обеду тучи, у реки — ливень.', 2],
   ],
 };
 
@@ -316,7 +330,7 @@ const SEASON_WEATHER: Partial<Record<Season, [string | null, string, number][]>>
  * mares are milked, eggs for Kainly's wedding baking in the weeks before it (Cases.ts, 13 November).
  */
 const SEASONAL: [RegExp, (m: number, d: number) => boolean][] = [
-  [/[Рр]ассад/, (m) => m >= 2 && m <= 4],
+  [/[Рр]ассад/, (m, d) => (m >= 2 && m <= 4) || (m === 5 && d <= 10)],
   [/кумыс/, (m) => m >= 4 && m <= 8],
   [/к свадьбе/, (m, d) => (m === 9 && d >= 15) || (m === 10 && d <= 13)],
   // the berries from June, the honey harvest from the sainfoin and the lime
@@ -324,6 +338,12 @@ const SEASONAL: [RegExp, (m: number, d: number) => boolean][] = [
   [/под мёд/, (m) => m >= 4 && m <= 8],
 ];
 const inSeason = (note: string, m: number, d: number) => SEASONAL.every(([re, ok]) => !re.test(note) || ok(m, d));
+
+/**
+ * The days the story needs a sky for (by name in the season's table): the bird cherry's cold spell,
+ * a dry Sabantuy, the storms after it that the week's fade speaks of, a clear morning for the last run.
+ */
+const DAY_SKY: Record<number, string> = { 3: 'Пасмурно', 12: 'Ясно', 13: 'Гроза', 18: 'Ясно' };
 
 /** The morning at the post office: today's waybill by the timetable, and the requests. Same day, same morning. */
 export function boardFor(day: number, _trust = 0): DayInfo {
@@ -334,6 +354,8 @@ export function boardFor(day: number, _trust = 0): DayInfo {
   const total = skies.reduce((a, w) => a + w[2], 0);
   let pick = r() * total, wi = 0;
   while (pick > skies[wi][2]) { pick -= skies[wi][2]; wi++; }
+  const fixed = DAY_SKY[day] !== undefined ? skies.findIndex((w) => w[0] === DAY_SKY[day]) : -1;
+  if (fixed >= 0) wi = fixed;
   // the first day: a sunny morning for the lesson and the first stretch, clouding over later, rain by the river
   const [weather, forecast] = day === 1 ? [SUNNY_START, WEATHER[4][1]] : skies[wi];
   const route = routeOf(date.wd);
@@ -368,22 +390,23 @@ export function boardFor(day: number, _trust = 0): DayInfo {
     const [d, [from, note, pay, fragile]] = pool.splice(Math.floor(r() * pool.length), 1)[0];
     requests.push({ id: `${day}-r${requests.length}`, dest: d.id, kind: 'parcel', title: 'Просьба', note, pay, fragile, due: null, from });
   }
-  // the holidays of the year: cards (and mimosa) for everyone on the route, and Zinaida's word for the day
+  // the days of the year: cards for everyone on the route, and Zinaida's word for the day
   let note: string | null = null;
   const toAll = (key: string, title: string, what: string) => { for (const st of stops) orders.push({ id: `${day}-${key}-${st.id}`, dest: st.id, kind: 'letters', title, note: what, pay: 0, fragile: false, due: null }); };
-  if (date.m === 11 && date.d >= 22) {
-    note = 'Зинаида Павловна: «Новогодняя неделя — открытки и посылки мешками. Без опозданий — будет премия к празднику».';
-    toAll('ny', 'Новогодние открытки', 'Полный мешок: «С Новым 1998 годом!», «Здоровья и счастья», «Ждём в гости».');
-  } else if (date.m === 0 && date.d >= 12 && date.d <= 15) {
-    note = 'Зинаида Павловна: «Старый Новый год, а открытки всё идут. Кто к Новому не успел — к Старому шлёт».';
-  } else if (date.m === 1 && date.d >= 19 && date.d <= 23) {
-    note = 'Зинаида Павловна: «Двадцать третье февраля — день мужской. Открытки мужикам — по всему маршруту. И тебе будет — вечером».';
-    toAll('feb', 'Открытки к 23 Февраля', '«С Днём Советской Армии!» — по старой памяти, и «Защитнику Отечества» — по новой.');
-  } else if (date.m === 2 && date.d >= 2 && date.d <= 7) {
-    note = 'Зинаида Павловна: «Восьмое марта на носу. Открытки и мимоза из райцентра — по всему маршруту. Мимоза нежная, не помни».';
-    toAll('mar', 'Мимоза и открытки к 8 Марта', 'Веточки мимозы в газете и открытки с тюльпанами — женщинам на маршруте.');
-  } else if (date.m === 5 && date.d >= 10 && date.d <= 14) {
+  if (day === SEASON_DAYS) {
+    note = 'Зинаида Павловна: «Последний твой рейс перед Уфой. Люди знают — провожать будут, так что не торопись, но и не опаздывай. Вечером зайди — расчёт и характеристику дам».';
+  } else if (date.m === 4 && date.d >= 7 && date.d <= 8) {
+    note = 'Зинаида Павловна: «Завтра Девятое мая. Открытки ветеранам — каждому лично в руки, не в ящик. И гвоздики от сельсовета — не помни».';
+    toAll('may9', 'Открытки ветеранам к 9 Мая', '«С Днём Победы!» от сельсовета и почты, с гвоздикой — ветеранам на маршруте, лично в руки.');
+  } else if (date.m === 5 && date.d >= 1 && date.d <= 5) {
+    note = 'Зинаида Павловна: «В «Звёздочке» опять смена — первая с девяносто второго! Михалыч звонил три раза: письма детям вези, путёвки вези, и чтоб не опоздал».';
+  } else if (date.m === 5 && date.d >= 12 && date.d <= 14 && date.wd >= 4) {
     note = 'Зинаида Павловна: «В Сосновке сегодня Сабантуй! Скачки, бег в мешках, столб с петухом. Развезёшь почту — иди гуляй».';
+  } else if (date.m === 5 && date.d >= 26 && date.d <= 28) {
+    note = 'Зинаида Павловна: «Выпускники всю ночь гуляли — на дороге у Сосновки осторожнее, там ещё бродят с гитарой. Рассвет встречали».';
+  } else if (date.m === 11 && date.d >= 22) {
+    note = 'Зинаида Павловна: «Новогодняя неделя — открытки и посылки мешками. Без опозданий — будет премия к празднику».';
+    toAll('ny', 'Новогодние открытки', 'Полный мешок: «С Новым годом!», «Здоровья и счастья», «Ждём в гости».');
   } else if (day === GRANDPA_HOME) {
     note = 'Зинаида Павловна: «Урал-агай вернулся? Слава богу. Передай — пусть заходит, чай у меня всегда есть. Только пешком — я его знаю».';
   }
@@ -470,7 +493,7 @@ export function reckon(done: Delivery[], fines: number, arrests: number, damage:
 export interface PayBook {
   /** Bonus earned this month, percent of the salary (paid with the month's main pay, 0…30). */
   premium: number;
-  /** Paydays already paid («1997-8-A» is September's advance, «…-B» its main pay). */
+  /** Paydays already paid («1998-4-A» is May's advance, «…-B» its main pay). */
   paid: string[];
   /** Paydays that are late: the service day they will finally come on. */
   at: Record<string, number>;
@@ -488,12 +511,11 @@ export function paydays(book: PayBook, day: number): { lines: [string, number, s
   const lines: [string, number, string?][] = [], notes: [string, string][] = [];
   const { y, m, d } = dateOf(day);
   const keys: [string, number, number, boolean][] = [];
-  // every month since September 1997: the advance from the 15th, the main pay from the 28th —
-  // all that has fallen due by today (a week or two passes between played days, so a payday may lie between)
-  for (let yy = 1997, mm = 8; yy < y || (yy === y && mm <= m); mm === 11 ? (yy++, mm = 0) : mm++) {
+  // every month since he started (May 1998): the advance from the 15th, the main pay from the 28th —
+  // all that has fallen due by today (a few days pass between played days, so a payday may lie between)
+  for (let yy = START.y, mm = START.m; yy < y || (yy === y && mm <= m); mm === 11 ? (yy++, mm = 0) : mm++) {
     const past = yy < y || mm < m;
-    // he starts on the 17th of September: no advance for that month
-    if ((past || d >= 15) && !(yy === 1997 && mm === 8)) keys.push([`${yy}-${mm}-A`, yy, mm, false]);
+    if (past || d >= 15) keys.push([`${yy}-${mm}-A`, yy, mm, false]);
     if (past || d >= 28) keys.push([`${yy}-${mm}-B`, yy, mm, true]);
   }
   for (const [key, , mm, main] of keys) {
@@ -511,9 +533,10 @@ export function paydays(book: PayBook, day: number): { lines: [string, number, s
     book.paid.push(key);
     if (main) {
       const prem = Math.max(0, Math.min(30, book.premium));
-      // September 1997 is half a month, from the 17th
-      const part = key === '1997-8-B' ? 0.47 : 1 - ADVANCE;
-      lines.push([what, Math.round((OKLAD * part + (OKLAD * prem) / 100) / 1000) * 1000, `${key === '1997-8-B' ? 'с 17-го, ' : ''}${prem > 0 ? `премия ${pct(prem)} %` : 'без премии'}`]);
+      // the first month counts from the day he started (6 May: 26 of 31 days)
+      const first = key === `${START.y}-${START.m}-B`;
+      const part = first ? (31 - START.d + 1) / 31 - ADVANCE : 1 - ADVANCE;
+      lines.push([what, Math.round((OKLAD * part + (OKLAD * prem) / 100) / 1000) * 1000, `${first ? `с ${START.d}-го, ` : ''}${prem > 0 ? `премия ${pct(prem)} %` : 'без премии'}`]);
       book.premium = 0;
     } else lines.push([what, Math.round((OKLAD * ADVANCE) / 1000) * 1000]);
   }

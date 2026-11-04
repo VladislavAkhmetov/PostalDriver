@@ -26,6 +26,8 @@ export class Muha extends Person {
 
   constructor() {
     super('muha', {});
+    // he hails the van with both arms (the Waving clip), not a hand raised
+    this.waveClip = true;
     const h = this.human;
     // a cigarette between the fingers of the right hand, pointing forward in the T-pose (palms down)
     const at = h.bindAt('FingersR');
@@ -64,7 +66,7 @@ export class Muha extends Person {
     if (dist > 40) this.greeted = false;
     // a draw now and then, never while waving
     this.nextDrag -= dt;
-    if (this.nextDrag <= 0 && this.wave <= 0) { this.dragT = 1.8; this.nextDrag = 8 + Math.random() * 7; }
+    if (this.nextDrag <= 0 && this.wave <= 0 && !this.busy) { this.dragT = 1.8; this.nextDrag = 8 + Math.random() * 7; }
     this.dragT = Math.max(0, this.dragT - dt);
     this.dragW = damp(this.dragW, this.dragT > 0.3 ? 1 : 0, 5, dt);
     this.glow = damp(this.glow, this.dragT > 0.3 && this.dragT < 1.4 ? 1 : 0.3, 8, dt);

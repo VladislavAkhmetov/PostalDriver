@@ -15,12 +15,10 @@ import type { World } from './World';
  * the driver; it is there, or it isn't, as the season has it.
  */
 
-/** The Sitting clip's pelvis against the figure's feet, as for the driver (Passenger.ts). */
-const SEAT_HIPS_Y = 0.465, SIT_RAW_Y = 1.1, SIT_RAW_Z = -0.6;
+/** The pelvis over a bench's feet, as for the driver (Passenger.ts). */
+const SEAT_HIPS_Y = 0.465;
 function sit(p: Person): Person {
-  const h = p.human;
-  h.play('Sitting', { fade: 0, once: true, at: 1 });
-  h.model.position.set(0, SEAT_HIPS_Y - SIT_RAW_Y * h.s, -SIT_RAW_Z * h.s);
+  p.human.seat(SEAT_HIPS_Y);
   return p;
 }
 
@@ -88,7 +86,8 @@ export class Countryside {
     this.plough = within(m, d, [8, 10], [10, 8]) || within(m, d, [3, 15], [4, 31]);
     this.harvest = within(m, d, [7, 1], [9, 12]);
     this.ice = within(m, d, [11, 1], [2, 10]);
-    this.sabantuy = m === 5 && d >= 10 && d <= 14;
+    // the second Saturday of June (13 June 1998): the maidan in Sosnovka for the day
+    this.sabantuy = m === 5 && d >= 12 && d <= 14;
     this.world.setGrazing(this.grazing);
     if (this.tractor) this.tractor.group.visible = this.plough;
     for (const c of this.combines) c.group.visible = this.harvest;
@@ -135,8 +134,22 @@ export class Countryside {
         p.group.position.set(x, this.ground.terrainAt(x, z), z);
         p.group.rotation.y = b.rot;
         this.person(p);
+        this.world.nearOnly(p, 200);
         this.sitters.push({ p, waved: false });
       }
+    }
+    // the fixed seats (World.townSeats): the old women at the panel blocks' entrances and the seed
+    // seller, the domino players in the yard, the roadside sellers in the villages
+    const shirts = ['#5a5a4a', '#4a5a6a', '#6a5a4a', '#3a4a3a', '#7a7a6a'];
+    for (const t of this.world.townSeats) {
+      const p = sit(t.who === 'man'
+        ? makeMan(shirts[Math.floor(r() * shirts.length)], r() < 0.5 ? '#2e2a30' : '#3a3a32', r() < 0.6 ? '#8e8880' : '#3a2e26')
+        : makePerson(coats[Math.floor(r() * coats.length)], scarves[Math.floor(r() * scarves.length)], r() < 0.4, 'dress'));
+      p.group.position.set(t.at.x, t.at.y, t.at.z);
+      p.group.rotation.y = t.at.rot;
+      this.person(p);
+      this.world.nearOnly(p);
+      this.sitters.push({ p, waved: false });
     }
   }
 
