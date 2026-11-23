@@ -292,16 +292,8 @@ export class Tape {
     setTimeout(() => { this.talking = false; if (this.on && !this.gone && this.el.paused) this.nextSong(); }, (1.4 + talk + 0.8) * 1000);
   }
 
-  /** The call sign: three soft vibraphone notes. */
+  /** The call sign: removed synthetic sine beeps */
   private jingle(): void {
-    const ctx = this.ctx, t0 = ctx.currentTime + 0.05;
-    [784, 659, 523, 659].forEach((f, i) => {
-      const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = f;
-      const g = ctx.createGain();
-      const at = t0 + i * 0.22;
-      g.gain.setValueAtTime(0, at); g.gain.linearRampToValueAtTime(0.32, at + 0.01); g.gain.exponentialRampToValueAtTime(0.001, at + 0.6);
-      o.connect(g).connect(this.dropout); o.start(at); o.stop(at + 0.65);
-    });
   }
 
   /** The presenter talking: a run of syllables, `at` seconds from now for `dur` seconds (the words are on screen). */

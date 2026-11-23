@@ -10,7 +10,8 @@ export const SURF: Record<Surface, { mu: number; crr: number; rough: number }> =
   // lugs bite into clay (decent grip) but the wheels plough: high rolling drag
   mud: { mu: 0.54, crr: 0.14, rough: 0.4 },
   wood: { mu: 0.72, crr: 0.02, rough: 0.35 },
-  grass: { mu: 0.56, crr: 0.06, rough: 0.7 },
+  // Firm turf rolls more freely than rutted dirt, while staying rough and less grippy.
+  grass: { mu: 0.56, crr: 0.035, rough: 0.7 },
   water: { mu: 0.34, crr: 0.22, rough: 0.3 },
 };
 
@@ -38,7 +39,7 @@ export interface GroundInfo {
   tag: string;
 }
 
-export const newGround = (): GroundInfo => ({ height: 0, surface: 'grass', onRoad: false, road: null, s: 0, lat: 0, half: 0, mu: 0.6, crr: 0.05, rough: 0.6, puddle: false, water: 0, tag: '' });
+export const newGround = (): GroundInfo => ({ height: 0, surface: 'grass', onRoad: false, road: null, s: 0, lat: 0, half: 0, ...SURF.grass, puddle: false, water: 0, tag: '' });
 
 export class PointIndex<T extends { x: number; z: number }> {
   private cells = new Map<number, T[]>();
@@ -333,7 +334,7 @@ export class Ground {
     this.marks = {
       town: 260 * k, junction, sosStart: 1990 * k, sosEnd: 2330 * k, sosStop: 2210 * k,
       forest: 2360 * k, mud: 3060 * k, bridge, zarStart: 3880 * k, zarEnd: L - 25, zarStop: 4190 * k,
-      potholesFrom: 430 * k, potholesTo: 1250 * k, church: 4080 * k, farm: 3600 * k, tower: 3790 * k, sawmill: 2810 * k, home: 260 * k + 410,
+      potholesFrom: 430 * k, potholesTo: 1250 * k, church: 4080 * k, farm: 3600 * k, tower: 3790 * k, sawmill: 2810 * k, home: 260 * k + 422,
     };
     const m = this.marks;
     {
@@ -542,15 +543,19 @@ export class Ground {
   private buildHomeRoad(): void {
     const f = this.main.frame(this.marks.home);
     const pts: [number, number][] = [
-      [f.x, f.z], [f.x - 16, f.z + 1], [f.x - 75, f.z - 6], [-110, -660], [-190, -650], [-260, -600], [-320, -530], [-400, -480],
+      [f.x, f.z],
+      [f.x - 16, f.z + 1.5],
+      [f.x - 75, f.z - 3],
+      [-110, -660], [-190, -650], [-260, -600], [-320, -530], [-400, -480],
       [-480, -470], [-560, -500], [-630, -560], [-690, -630], [-735, -700],
     ];
     const road = new Road('home-road', pts.map(([x, z]) => new THREE.Vector3(x, 0, z)), 2);
     const L = road.length;
-    const hollow = Math.round(L * 0.47), village = L - 210;
+    const hollow = Math.round(L * 0.47), village = L - 330;
     road.zones = [
-      { from: 0, to: 40, surface: 'gravel', width: 4.6, tag: 'town' },
-      { from: 40, to: hollow - 32, surface: 'dirt', width: 4, tag: 'forest' },
+      { from: 0, to: 16, surface: 'asphalt', width: 6.0, tag: 'town' },
+      { from: 16, to: 45, surface: 'gravel', width: 4.8, tag: 'town' },
+      { from: 45, to: hollow - 32, surface: 'dirt', width: 4, tag: 'forest' },
       { from: hollow - 32, to: hollow + 32, surface: 'mud', width: 4.4, tag: 'mud' },
       { from: hollow + 32, to: village, surface: 'dirt', width: 4, tag: 'forest' },
       { from: village, to: 1e9, surface: 'dirt', width: 4.6, tag: 'fields' },
@@ -745,10 +750,10 @@ export class Ground {
     }
     const jy = this.main.frame(this.marks.junction).y;
     for (const p of this.stub.samples) p.y = lerp(jy, p.y, smoothstep(0, 50, p.s));
-    // the road home leaves the main street at its level
+    // the road home leaves the main street at its level (stays level through intersection and gas station apron)
     {
       const ya = this.main.frame(this.marks.home).y;
-      for (const p of this.homeRoad.samples) p.y = lerp(ya, p.y, smoothstep(0, 30, p.s));
+      for (const p of this.homeRoad.samples) p.y = lerp(ya, p.y, smoothstep(20, 60, p.s));
     }
     // the branch's dead ends meet it at its own level
     for (const road of this.branchSpurs) {
@@ -1004,7 +1009,9 @@ export class Ground {
     // soaked ground: slicker clay, softer ruts; asphalt only loses a little
     if (this.wet > 0) {
       const w = this.wet;
-      if (surf === 'dirt' || surf === 'mud' || surf === 'grass') { out.mu *= 1 - 0.14 * w; out.crr += (surf === 'dirt' ? 0.012 : 0.02) * w; }
+      // Wet turf loses grip, but the root mat does not churn up like a muddy rut.
+      if (surf === 'grass') { out.mu *= 1 - 0.14 * w; out.crr += 0.01 * w; }
+      else if (surf === 'dirt' || surf === 'mud') { out.mu *= 1 - 0.14 * w; out.crr += (surf === 'dirt' ? 0.012 : 0.02) * w; }
       else if (surf === 'gravel') out.mu *= 1 - 0.06 * w;
       else if (surf === 'asphalt') out.mu *= 1 - 0.08 * w;
     }

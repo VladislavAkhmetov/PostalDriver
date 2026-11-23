@@ -25,18 +25,24 @@ export interface ReachTask {
   onArrive?: () => void;
   /** Called when the task is over (completed or timed out). */
   then?: () => void;
+  /** Recover if the hand cannot reach the requested contact. */
+  onTimeout?: () => void;
   /** A label for the owner of a chain of tasks (the smoking sequence), so it can tell whether the hand is still its own. */
   tag?: string;
   /** Overrides how far past the wrist the contact point lies. */
   extent?: number;
+  /** Keep the fingers attached to a moving control after taking hold. */
+  follow?: boolean;
+  /** A held object's contact point to place on the target, accounting for the solved wrist rotation. */
+  contact?: THREE.Object3D;
 }
 
 /** Wrist-to-contact distance per pose: how far the hand reaches past the wrist (fingers included). */
 const EXTENT: Record<PoseName, number> = {
   relaxed: 0.07, grip: 0.07, knob: 0.07, point: 0.19, pinch: 0.15, lighter: 0.07, vcig: 0.12, drag: 0.12, open: 0.1,
 };
-/** Seated figure constants, as in Officer: hips sit this high above the group origin. */
-const SEAT_HIPS_Y = 0.465, SIT_RAW_Y = 1.1, SIT_RAW_Z = -0.6;
+/** Hips above the seated figure's group origin. */
+const SEAT_HIPS_Y = 0.465;
 
 const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _c = new THREE.Vector3(), _d = new THREE.Vector3();
 const _e = new THREE.Vector3(), _f = new THREE.Vector3();
@@ -45,6 +51,10 @@ const WRIST_BEND = 0.95;
 const _m = new THREE.Matrix4();
 const _q = new THREE.Quaternion(), _qp = new THREE.Quaternion(), _qg = new THREE.Quaternion();
 const D2R = Math.PI / 180;
+const BEND_AXIS = new THREE.Vector3(1, 0, 0);
+const MITTEN_BONES = ['MiddleHand', 'Fingers', 'Thumb1', 'Thumb2'] as const;
+/** Centre of the rim relative to the wrist, along the palm and under its skin. */
+const RIM_CONTACT = new THREE.Vector3(0, 0.076, -0.032);
 /** Shoulder to wrist of a grown man, metres: the figure's arms are stretched to it. */
 const ARM_LEN = 0.6;
 /** Forward lean of the trunk over the wheel, radians (the trunk itself is never seen). */
@@ -52,20 +62,18 @@ const LEAN = 0.26;
 /** Wrist to fingertip of the articulated rig (palm + middle finger), metres. */
 const RIG_HAND = 0.193;
 /**
- * What the modelled hand shows per pose, PS2-style: a mitten — the four fingers stuck together and
- * only gently bowed, the thumb laid alongside — rather than a fist wrapped round the rim or a V round
- * the cigarette, which the single finger bone of the model can only make by crumpling the skin.
+ * The four fingers curl together, with two joints for the thumb.
  * [knuckle, finger bend, thumb fold, thumb tip], degrees.
  */
 const MITTEN: Record<PoseName, [number, number, number, number]> = {
   relaxed: [18, 18, 10, 8],
-  grip: [30, 34, 14, 10],
-  knob: [28, 32, 14, 10],
+  grip: [24, 27, 11, 10],
+  knob: [25, 27, 14, 10],
   point: [14, 12, 12, 8],
   pinch: [20, 18, 16, 10],
-  lighter: [30, 34, 8, 4],
-  vcig: [12, 8, 12, 8],
-  drag: [18, 10, 12, 8],
+  lighter: [34, 32, 6, 4],
+  vcig: [17, 13, 18, 12],
+  drag: [17, 13, 18, 12],
   open: [5, 3, 8, 4],
 };
 // elbows down and a little out, as at ten to two (group space: +X is the driver's left)
@@ -75,6 +83,7 @@ const DOWN = new THREE.Vector3(0, -1, 0);
 class Arm {
   /** Smoothed contact point, cabin space. */
   readonly pos = new THREE.Vector3();
+  readonly target = new THREE.Vector3();
   task: ReachTask | null = null;
   home: () => THREE.Vector3 = () => _a.set(0, 0, 0);
   homePalm: () => THREE.Vector3 = () => DOWN;
@@ -86,58 +95,66 @@ class Arm {
   fingerW = 0;
   private t = 0;
   private arrived = false;
-  private extent = 0.07;
+  private returning = true;
+  extent = 0.07;
   readonly wrist = new THREE.Vector3();
   /** The palm normal the hand wants this frame (cabin space). */
   readonly palmDir = new THREE.Vector3(0, -1, 0);
   pose: PoseName = 'grip';
 
   /** `size`: the figure's hand against the rig's, so contact points sit at its own fingertips. */
-  constructor(private shoulder: THREE.Vector3, private holder: THREE.Object3D, private size = 1) {
+  constructor(readonly shoulder: THREE.Vector3, private holder: THREE.Object3D, private size = 1) {
     this.pos.copy(shoulder).add(new THREE.Vector3(0, -0.3, -0.4));
   }
 
   assign(task: ReachTask): void {
-    this.task = task;
     this.task?.carry?.removeFromParent();
+    this.task = task;
     this.t = 0;
     this.arrived = false;
     if (task.carry) this.holder.add(task.carry);
   }
 
-  private finish(): void {
+  private finish(timedOut = false): void {
     const task = this.task;
     this.task = null;
+    this.returning = true;
     task?.carry?.removeFromParent();
-    task?.then?.();
+    (timedOut ? task?.onTimeout ?? task?.then : task?.then)?.();
   }
 
   update(dt: number): void {
     const task = this.task;
-    const target = _b.copy(task ? task.target() : this.home());
+    const target = this.target.copy(task ? task.target() : this.home());
     if (task && this.arrived && task.push) target.addScaledVector(task.push, clamp((this.t - 0.1) / Math.max(task.hold * 0.5, 0.05), 0, 1));
     this.pose = task ? task.pose : this.homePose();
     const ext = (task ? task.extent ?? EXTENT[task.pose] : EXTENT[this.pose]) * this.size;
     this.extent += (ext - this.extent) * Math.min(1, dt * 14);
-    this.palmDir.lerp(task?.palm ?? (task ? DOWN : this.homePalm()), Math.min(1, dt * 12)).normalize();
+    const seated = !task && !this.returning;
+    this.palmDir.lerp(task?.palm ?? (task ? DOWN : this.homePalm()), seated ? 1 : Math.min(1, dt * 12)).normalize();
     const fingers = task ? task.fingers : this.homeFingers?.();
-    this.fingerW += ((fingers ? 1 : 0) - this.fingerW) * Math.min(1, dt * 10);
-    if (fingers) this.fingerDir.lerp(fingers, Math.min(1, dt * 12)).normalize();
-    // ease toward the goal; fast enough to hold a moving wheel rim
+    this.fingerW += ((fingers ? 1 : 0) - this.fingerW) * (seated ? 1 : Math.min(1, dt * 10));
+    if (fingers) this.fingerDir.lerp(fingers, seated ? 1 : Math.min(1, dt * 12)).normalize();
+    // Once back on the wheel, track its moving contact without a smoothing delay.
     const k = task && !this.arrived ? 14 : 22;
-    this.pos.lerp(target, 1 - Math.exp(-k * dt));
-    if (task) {
-      this.t += dt;
-      if (!this.arrived && this.pos.distanceTo(target) < 0.03) { this.arrived = true; this.t = 0; task.onArrive?.(); }
-      if (this.task === task) {
-        if (this.arrived && this.t > task.hold && !(task.until?.())) this.finish();
-        else if (!this.arrived && this.t > 2.5) this.finish();
-      }
-    }
+    if (seated || (task?.follow && this.arrived)) this.pos.copy(target);
+    else this.pos.lerp(target, 1 - Math.exp(-k * dt));
+    if (!task && this.pos.distanceToSquared(target) < 0.0001) this.returning = false;
     // the wrist stops short of the contact point by the length of the hand, back along the fingers
     const dir = _a.copy(this.pos).sub(this.shoulder).normalize();
     if (this.fingerW > 0.001) dir.lerp(this.fingerDir, this.fingerW).normalize();
     this.wrist.copy(this.pos).addScaledVector(dir, -this.extent);
+  }
+
+  complete(dt: number, contactDistance: number): void {
+    const task = this.task;
+    if (!task) return;
+    this.t += dt;
+    const reached = task.contact ? contactDistance < 0.004 : this.pos.distanceToSquared(this.target) < 0.0009;
+    if (!this.arrived && reached) { this.arrived = true; this.t = 0; task.onArrive?.(); }
+    if (this.task !== task) return;
+    if (this.arrived && this.t > task.hold && !(task.until?.())) this.finish();
+    else if (!this.arrived && this.t > 2.5) this.finish(true);
   }
 }
 
@@ -145,33 +162,34 @@ class Arm {
  * The driver: Timur himself, seated — the modelled hero on the people's skeleton, in his tracksuit,
  * with the head, neck and torso cut away because the camera sits inside them (first person, as in a
  * shooter: arms and legs only). His arms are driven by IK to wherever the cab asks them to go. The
- * skeleton's hand is a palm, one bone for the four fingers and a two-part thumb, so it is posed from
- * an invisible articulated hand (HandRig): the model's palm takes the rig's frame and its fingers and
- * thumb close by the rig's joint angles, while the rig's palm, V and thumb pad stay the anchors for
- * whatever is held (a pack, a lighter, the cigarette between two fingers).
+ * wrist frame drives the visible Mixamo hand. The invisible rig still carries the pack, lighter
+ * and cassette. The cigarette follows the visible knuckle as it closes against the thumb.
  */
 export class Hands {
+  /** Additional lean toward the driver's window, 0…1. */
+  windowLean = 0;
   readonly human: Human;
   private readonly left: Arm;
   private readonly right: Arm;
   readonly rigL: HandRig;
   readonly rigR: HandRig;
+  readonly cigaretteGrip = new THREE.Object3D();
   private readonly scale: number;
   /** Per side: the palm bone's rotation relative to the hand frame (fingers +Y, back of the hand +Z). */
   private readonly off: Record<'L' | 'R', THREE.Quaternion>;
   /** Hand bones the clips leave alone, with their rest rotations (the bends are re-applied each frame). */
-  private readonly rest: [THREE.Bone, THREE.Quaternion][] = [];
+  private readonly rest: Record<'L' | 'R', [THREE.Bone, THREE.Quaternion][]> = { L: [], R: [] };
   /** The trunk as the Sitting clip leaves it, before the lean over the wheel. */
   private abdomen: THREE.Quaternion | null = null;
   /** The mitten's eased angles per side (see MITTEN). */
   private readonly mitten: Record<'L' | 'R', [number, number, number, number]> = { L: [...MITTEN.grip], R: [...MITTEN.grip] };
 
   /** `hips` is where the driver's pelvis sits in the seat; `eye` the camera, so the figure is fitted to it. */
-  constructor(private parent: THREE.Object3D, hips: THREE.Vector3, eye: THREE.Vector3) {
+  constructor(parent: THREE.Object3D, hips: THREE.Vector3, eye: THREE.Vector3) {
     this.human = new Human('timur', {
       // first person: arms and legs only — no shoulders, chest or head to be seen
       // (forearms, not the upper arms, whose sleeves would loom at the edges of the view)
-      keep: /LowerArm|Palm|Hand|Finger|Thumb|UpperLeg|LowerLeg|Foot/,
+      keep: /LowerArm|Palm|Hand|Finger|Thumb|UpperLeg|LowerLeg|Foot|Toe/,
     });
     const h = this.human;
     // the forearm sleeve stops short of the elbow, so its cut edge never shows at the side of the view
@@ -183,10 +201,17 @@ export class Hands {
     this.rigL = new HandRig(-1, size);
     this.rigR = new HandRig(1, size);
     this.off = { L: this.palmOffset('L'), R: this.palmOffset('R') };
-    for (const S of ['L', 'R']) for (const n of ['MiddleHand', 'Fingers', 'Thumb1', 'Thumb2']) {
+    for (const S of ['L', 'R'] as const) for (const n of MITTEN_BONES) {
       const b = h.bone(`${n}${S}`);
-      if (b) this.rest.push([b, b.quaternion.clone()]);
+      this.rest[S].push([b, b.quaternion.clone()]);
     }
+    // Seat the shaft in the groove between the index and middle fingers on the mitten mesh.
+    this.cigaretteGrip.name = 'CigaretteGrip';
+    const groove = new THREE.Object3D();
+    const shaft = new THREE.Vector3(-0.12, 1, 0.02).normalize();
+    groove.position.copy(h.bindAt('PalmR')).addScaledVector(new THREE.Vector3(-0.087, 0.003, 0.011), h.s);
+    groove.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), shaft);
+    h.attach('FingersR', groove).add(this.cigaretteGrip);
     // the modelled figure has a long body and short arms for a man of 1.8 m: arms to true length,
     // all of it in the upper arm (the baggy sleeve stretches out of sight, the cuff in view stays true),
     // the spine fitted to the seat below
@@ -194,8 +219,8 @@ export class Hands {
       const l1 = h.bindAt(`LowerArm${S}`).distanceTo(h.bindAt(`UpperArm${S}`)), l2 = h.bindAt(`Palm${S}`).distanceTo(h.bindAt(`LowerArm${S}`));
       h.bone(`LowerArm${S}`)?.position.multiplyScalar(clamp((ARM_LEN - l2) / l1, 1, 1.8));
     }
-    h.play('Sitting', { fade: 0, once: true, at: 1 });
-    h.model.position.set(0, SEAT_HIPS_Y - SIT_RAW_Y * h.s, -SIT_RAW_Z * h.s);
+    h.seat(SEAT_HIPS_Y);
+    h.play('Sitting', { speed: 0 });
     h.tick(0.01);
     // fit: head centre a little below the camera, hips on the seat; past a sensible build the spine
     // gives way instead (the torso is cut away, only where the shoulders end up matters)
@@ -252,7 +277,8 @@ export class Hands {
     const ab = this.human.bone('Abdomen');
     if (!ab || !this.abdomen) return;
     ab.quaternion.copy(this.abdomen);
-    this.human.spin('Abdomen', _d.set(1, 0, 0), LEAN);
+    this.human.spin('Abdomen', _d.set(1, 0, 0), LEAN + this.windowLean * 0.14);
+    this.human.spin('Abdomen', _d.set(0, 0, -1), this.windowLean * 0.18);
   }
 
   /** Group space → cabin space (the group is turned round and scaled). */
@@ -284,16 +310,21 @@ export class Hands {
   /** The articulated hand itself (its palm, V and thumb are anchors for held things). */
   rigOf(hand: 'L' | 'R'): HandRig { return hand === 'L' ? this.rigL : this.rigR; }
 
+  setCigaretteLength(length: number): void {
+    this.cigaretteGrip.position.y = -Math.min(0.027, length * 0.55) / this.scale;
+  }
+
   /** The task a hand is on, if any (to see whether a chain is still its own). */
   taskOf(hand: 'L' | 'R'): ReachTask | null { return (hand === 'L' ? this.left : this.right).task; }
 
   update(dt: number): void {
-    this.left.update(dt);
-    this.right.update(dt);
     const h = this.human;
     h.tick(dt);
     this.lean();
-    for (const [b, q] of this.rest) b.quaternion.copy(q);
+    this.toCabin(h.at('UpperArmL', _a), this.left.shoulder);
+    this.toCabin(h.at('UpperArmR', _a), this.right.shoulder);
+    this.left.update(dt);
+    this.right.update(dt);
     this.arm(this.left, this.rigL, 'L', dt);
     this.arm(this.right, this.rigR, 'R', dt);
   }
@@ -302,6 +333,44 @@ export class Hands {
   private arm(a: Arm, rig: HandRig, side: 'L' | 'R', dt: number): void {
     const h = this.human;
     h.reach(side, this.toGroup(a.wrist, _a), POLE[side], 1);
+    if (a.task?.follow && !a.task.contact) {
+      // Refine the wrist against the solved forearm, so the grip stays on the knob
+      // throughout the circle instead of drifting by the length of the fingers.
+      for (let i = 0; i < 3; i++) {
+        const forward = h.at(`Palm${side}`, _c).sub(h.at(`LowerArm${side}`, _d)).normalize();
+        const target = this.toGroup(a.pos, _e).addScaledVector(forward, -a.extent / this.scale);
+        h.reach(side, target, POLE[side], 1);
+      }
+    }
+    this.seatRig(a, rig, side);
+    const m = this.mitten[side], goal = MITTEN[a.pose], k = 1 - Math.exp(-18 * dt);
+    for (let i = 0; i < 4; i++) m[i] += (goal[i] - m[i]) * k;
+    this.poseHand(side, rig);
+    const contact = a.task?.contact;
+    let contactDistance = Infinity;
+    if (contact || !a.task) {
+      const target = this.toGroup(a.pos, new THREE.Vector3());
+      const point = new THREE.Vector3(), wrist = new THREE.Vector3();
+      // Match the moving rim or the actual prop contact after orienting the wrist and fingers.
+      for (let i = 0; i <= (contact ? 6 : 2); i++) {
+        if (contact) h.group.worldToLocal(contact.getWorldPosition(point));
+        else point.copy(RIM_CONTACT).applyQuaternion(rig.group.quaternion).add(rig.group.position);
+        contactDistance = point.distanceTo(target) * this.scale;
+        if (contactDistance < 0.0005 || i === (contact ? 6 : 2)) break;
+        h.at(`Palm${side}`, wrist).add(target).sub(point);
+        h.reach(side, wrist, POLE[side], 1);
+        this.seatRig(a, rig, side);
+        this.poseHand(side, rig);
+      }
+    }
+    rig.setPose(a.pose);
+    rig.update(dt);
+    a.complete(dt, contactDistance + a.pos.distanceTo(a.target));
+  }
+
+  /** Seat the hand on the current IK wrist and apply its requested orientation. */
+  private seatRig(a: Arm, rig: HandRig, side: 'L' | 'R'): void {
+    const h = this.human;
     const wrist = h.at(`Palm${side}`, _c);
     const elbow = h.at(`LowerArm${side}`, _d);
     const f = _a.copy(wrist).sub(elbow).normalize();
@@ -309,7 +378,7 @@ export class Hands {
       // the wrist bends the hand toward the finger direction asked for, as far as a wrist goes
       const fd = this.dirToGroup(a.fingerDir, _e).normalize();
       const ang = f.angleTo(fd);
-      if (ang > WRIST_BEND) fd.copy(_f.copy(f).lerp(fd, WRIST_BEND / ang)).normalize();
+      if (a.task && !a.task.contact && ang > WRIST_BEND) fd.copy(_f.copy(f).lerp(fd, WRIST_BEND / ang)).normalize();
       f.lerp(fd, a.fingerW).normalize();
     }
     // the palm normal wanted, turned into the plane square to the fingers
@@ -323,33 +392,23 @@ export class Hands {
     _m.makeBasis(x, f.clone(), z);
     rig.group.quaternion.setFromRotationMatrix(_m);
     rig.group.position.copy(wrist);
-    rig.setPose(a.pose);
-    rig.update(dt);
-    const m = this.mitten[side], goal = MITTEN[a.pose], k = 1 - Math.exp(-14 * dt);
-    for (let i = 0; i < 4; i++) m[i] += (goal[i] - m[i]) * k;
-    this.poseHand(side, rig, x, f);
   }
 
   /** Lay the model's hand into the rig's frame and bow its fingers and thumb as a mitten. */
-  private poseHand(side: 'L' | 'R', rig: HandRig, x: THREE.Vector3, f: THREE.Vector3): void {
+  private poseHand(side: 'L' | 'R', rig: HandRig): void {
     const h = this.human;
     const palm = h.bone(`Palm${side}`);
-    if (!palm) return;
     // the palm bone's rotation in group space is the hand frame times the bind offset
     const want = _q.copy(rig.group.quaternion).multiply(this.off[side]);
     palm.parent!.getWorldQuaternion(_qp);
     h.group.getWorldQuaternion(_qg);
     _qp.premultiply(_qg.invert());
     palm.quaternion.copy(_qp.invert().multiply(want));
+    const angles = this.mitten[side];
+    for (const [i, [bone, rest]] of this.rest[side].entries()) {
+      const bend = angles[i] + (i === 3 ? rig.flick * 18 : 0);
+      bone.quaternion.copy(rest).multiply(_q.setFromAxisAngle(BEND_AXIS, -bend * D2R));
+    }
     palm.updateMatrixWorld(true);
-    // one bone carries all four fingers, kept together as one gently bowed block
-    const [knuckle, middle, fold, tip] = this.mitten[side];
-    // fingers close toward the palm: about the knuckle axis, away from the back of the hand
-    h.spin(`MiddleHand${side}`, x, -knuckle * D2R);
-    h.spin(`Fingers${side}`, x, -middle * D2R);
-    // the thumb lies along the side of the hand (its side is mirrored between the hands)
-    const s = side === 'R' ? -1 : 1;
-    h.spin(`Thumb1${side}`, f, s * fold * D2R);
-    h.spin(`Thumb2${side}`, f, s * (tip + rig.flick * 18) * D2R);
   }
 }

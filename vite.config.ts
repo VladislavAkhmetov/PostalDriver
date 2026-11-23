@@ -6,6 +6,14 @@ export default defineConfig({
     open: false
   },
   build: {
-    target: 'esnext'
+    target: 'esnext',
+    rollupOptions: {
+      input: {
+        game: 'index.html',
+        speedometer: 'speedometer-preview.html',
+        postOffice: 'post-office-preview.html',
+        paz: 'paz-preview.html'
+      }
+    }
   }
 });

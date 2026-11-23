@@ -309,7 +309,7 @@ export class Vehicle {
       let target: number;
       if (this.clutch >= 1) target = coupled * (1 + this.slip * 0.8);
       else if (this.clutch > 0) target = IDLE + this.thrEff * 1400 + this.slip * 800;
-      else target = IDLE + this.thrEff * (this.gear === 0 || shifting ? 3000 : 1200);
+      else target = IDLE + this.thrEff * (this.gear === 0 ? 2800 : shifting ? 600 : 1200);
       target = clamp(target, IDLE * 0.92, 4400);
       this.rpm = damp(this.rpm, target, this.clutch >= 1 ? 20 : 7, h);
       let tq = this.thrEff * torque(this.rpm);
@@ -488,7 +488,7 @@ export class Vehicle {
         const w = -this.r;
         let wvx = fx * this.vx + rx * this.vy, wvz = fz * this.vx + rz * this.vy;
         const vcx = wvx + w * pz, vcz = wvz - w * px;
-        const ovx = 0, ovz = 0;
+        const ovx = c.vx ?? 0, ovz = c.vz ?? 0;
         const vn = (vcx - ovx) * nx + (vcz - ovz) * nz;
         if (vn >= 0) continue;
         const arm = pz * nx - px * nz;
@@ -500,7 +500,7 @@ export class Vehicle {
         this.r -= clamp((arm * j) / IZ, -1.1, 1.1) * 0.55;
         // scrubbing along the contact: paint on paint, tyre on kerb
         const tx = -nz, tz = nx;
-        const vt = vcx * tx + vcz * tz;
+        const vt = (vcx - ovx) * tx + (vcz - ovz) * tz;
         const jt = clamp(-vt * MASS * 0.35, -0.4 * j, 0.4 * j);
         wvx += (jt * tx) / MASS; wvz += (jt * tz) / MASS;
         this.vx = wvx * fx + wvz * fz;

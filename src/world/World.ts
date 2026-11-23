@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { Bucket, boxGeo, cellKey, crossQuads, planeGeo } from '../core/geom';
 import { clamp, fbm, lerp, mulberry32, noise2, rand, RNG, smoothstep } from '../core/math';
 import {
-  BLUE, blueSign, directionSign, FOLK_SCHEMES, folkGableTex, folkGateTex, folkWindowGlow, folkWindowTex, kmPost, paint, settlementSign, Textures, warningSign,
+  BLUE, blueSign, directionSign, FOLK_SCHEMES, folkGableTex, folkGateTex, folkWindowGlow, folkWindowTex, gasServiceSign, kmPost, paint, prioritySign, settlementSign, Textures, warningSign, yieldSign,
 } from '../core/textures';
 import { Ground, Poi, Road, Surface } from './Ground';
 import {
@@ -14,6 +14,7 @@ import { barrierArm, BILLBOARDS, billboard, billboardTex, cafe, chimney, crossin
 import { Traffic, TrafficSound } from './Traffic';
 import { buildVehicle, setVehicleLamps } from './Vehicles';
 import { buildCar } from './Cars';
+import { buildDevyatka } from './Devyatka';
 import type { GaiPatrol } from './Police';
 import { Officer } from './Officer';
 import { Muha } from './Muha';
@@ -22,13 +23,14 @@ import { snowCover, snowy } from './Snow';
 import { makeMan, makePerson, Person } from './People';
 import { Villagers } from './Villagers';
 import { Animal, AnimalKind } from './Animals';
-import { barn, birdhouse, folkGate, folkHouse, FolkMats, goose, hives, mosque, munca, shadoof, spring, zirat } from './Urmanly';
+import { barn, birdhouse, brickMansion, mansionGate, neighbourMotorcycle, neighbourCot, folkGate, folkHouse, FolkMats, goose, hives, mosque, munca, shadoof, spring, zirat } from './Urmanly';
 import {
   bins, carpetRack, clothesLines, dominoTable, dovecote, hen, houseOfCulture, kiosk, kvassBarrel, lenin, localAt, milkStand, noticeBoard, obelisk,
   panelLife, payphone, perchedPigeons, playground, porchBench, roadsideSale,
 } from './Town';
 import { Pigeons } from './Pigeons';
 import { buildSoviet } from './Soviet';
+import { PostOfficeInterior } from './PostOfficeInterior';
 
 export class ColliderIndex {
   private cells = new Map<number, Collider[]>();
@@ -87,13 +89,13 @@ export class World {
   readonly colliders = new ColliderIndex();
   readonly stops: Stop[] = [];
   readonly people: Person[] = [];
-  /** Timur's friend Muha, hanging about by the shop with his tinted saloon. */
+  /** Timur's friend Muha, hanging about by the shop with his green 2109. */
   muha: Muha | null = null;
-  /** Muha's saloon by the shop (it can be taken away), and where he stands by it. */
+  /** Muha's 2109 by the shop (Lysyi can take it), and where he stands by it. */
   muhaCar!: { group: THREE.Group; col: Collider };
   private muhaAt!: Place & { col: Collider };
-  /** The district hospital across from the post office, and әсәй at its door. */
-  hospital!: { pos: THREE.Vector3; nurse: Person };
+  /** Hospital arrival point and interior anchor. No permanent character at the door. */
+  hospital!: { pos: THREE.Vector3; interior: Place };
   /** Timur's family home on the edge of Klyuchevsk: where the prologue's drive ends, өләсәй at the gate. */
   home!: { pos: THREE.Vector3; person: Person; s: number; grandpa?: Person };
   /** The cars and men across the forest road by the sawmill, out on the day of Muha's second chapter. */
@@ -121,8 +123,15 @@ export class World {
   homePose!: { x: number; z: number; yaw: number };
   /** The van's place before the grandfather's garage, as Vehicle has a pose (the cab facing −Z): the evening repair is filmed there. */
   garageFront = { x: 0, z: 0, yaw: 0 };
-  /** Where Zinaida Pavlovna stands at the post office door: the morning's route sheet is had here. */
+  /** The post office door, where the morning's route sheet is had. The forecourt in front is where the van parks. */
   postDoor!: THREE.Vector3;
+  /** Small cutscene room, spatially inside the actual post office; its window sees this world. */
+  postInterior!: PostOfficeInterior;
+  /**
+   * Zinaida on the porch. Hidden from onboarding onward (`setAway`); a mission that wants her
+   * at the door calls `setAway(postmaster, false)`. She stands clear of the parking bays.
+   */
+  postmaster!: Person;
   /** The grandfather on the post office porch, seen off to the Ufa bus the first morning (away the rest of the time). */
   postGrandpa!: Person;
   /**
@@ -184,6 +193,7 @@ export class World {
   setAway(p: Person, on: boolean): void {
     if (on) { this.away.add(p); p.group.visible = false; this.culled.delete(p); } else if (this.away.delete(p)) p.group.visible = true;
   }
+  isAway(p: Person): boolean { return this.away.has(p); }
   /** Figures hidden for being too far away (see update). */
   private readonly culled = new Set<Person>();
   /** Patrol car and inspector at the GAI post, driven by Police. */
@@ -222,6 +232,7 @@ export class World {
     this.buildRoads();
     this.planStation();
     this.planHome();
+    this.planPostOffice();
     this.buildTerrain();
     this.buildRiver(b);
     this.buildTown(b, r);
@@ -664,6 +675,9 @@ export class World {
     }
     const [bx, bz] = at(-6, -8.7);
     g.addPad(bx, bz, ap.rot, 3.4, 2.2, top, 10, edge - 1);
+    // side driveway connecting the forecourt to the country road
+    const [sxDrive, szDrive] = at(15 + 6, 0);
+    g.addPad(sxDrive, szDrive, ap.rot, 5, 3.5, top, 3);
     this.station = { ap, edge };
   }
 
@@ -1000,6 +1014,13 @@ export class World {
    * slope, and an unmade road's dead end would otherwise leave a step the van can't climb out of.
    */
   private yard!: { cx: number; cz: number; rot: number };
+  /** Local (lx, lz) offset in the family's yard frame to world coordinates. */
+  yardPoint(lx: number, lz: number): { x: number; y: number; z: number } {
+    const { cx, cz, rot } = this.yard;
+    const c = Math.cos(rot), sn = Math.sin(rot);
+    const x = cx + lx * c + lz * sn, z = cz - lx * sn + lz * c;
+    return { x, y: this.ground.terrainAt(x, z), z };
+  }
   private planHome(): void {
     const g = this.ground;
     const lane = g.homeRoad.samples, end = lane[lane.length - 1];
@@ -1010,6 +1031,22 @@ export class World {
     const y = end.y - 0.05;
     const c = Math.cos(rot), s = Math.sin(rot);
     g.addPad(cx + 0.5 * s, cz + 0.5 * c, rot, 13.6, 13.6, y, 12, Infinity, 'dirt');
+  }
+
+  /**
+   * Level the post-office forecourt to the carriageway before the terrain mesh is built, the same
+   * way the filling station's apron is a pad the van drives on. Local +z of the building faces the road.
+   */
+  private planPostOffice(): void {
+    const g = this.ground;
+    const po = this.place(40, 3.5 + 14);
+    const c = Math.cos(po.rot), s = Math.sin(po.rot);
+    const lz = (POST_LOT.z0 + POST_LOT.z1) / 2;
+    const x = po.x + lz * s, z = po.z + lz * c;
+    const f = g.main.frame(40);
+    const edge = 3.5 - 0.15;
+    const roadY = g.height(f.x + f.rx * edge, f.z + f.rz * edge);
+    g.addPad(x, z, po.rot, POST_LOT.halfX, (POST_LOT.z1 - POST_LOT.z0) / 2, roadY, 6);
   }
 
   /**
@@ -1063,16 +1100,77 @@ export class World {
     // the house: a log house with carved blue window surrounds and a sun on the gable, the aerial on
     // its roof, the glazed veranda toward the yard; a bench by the porch
     const hp = at(-5, -6.5);
-    hp.y = this.groundMin(hp, 9, 8.6);
+    hp.y = yard.y;
     folkHouse(b, hp, r, fm, cols, { yard: 1, lit: true, w: 6.4, d: 8, aerial: true });
     bench(b, at(-8.5, -1.3));
+
+    // ground details: dark rich dirt pad beneath and around the house
+    b.add('dirt', boxGeo(12, 0.08, 11), T(hp, 0.5, 0.01, 0), '#483a2b');
+
+    // driveway dirt tracks from the gate to where the van parks
+    b.add('dirt', boxGeo(3.6, 0.06, 12), T(at(0.3, 5.0), 0, 0.02, 0), '#4a3d2e');
+    b.add('mud', boxGeo(0.55, 0.07, 11), T(at(-0.45, 5.5), 0, 0.025, 0), '#322518');
+    b.add('mud', boxGeo(0.55, 0.07, 11), T(at(1.05, 5.5), 0, 0.025, 0), '#322518');
+    b.add('mud', boxGeo(2.2, 0.07, 1.8), T(at(0.3, 10.0), 0, 0.026, 0), '#281c10');
+
+    // wooden boardwalks (деревянные мостки) across the muddy yard
+    b.add('planks', boxGeo(0.85, 0.06, 5.0), T(at(-0.8, -1.8), 0, 0.04, 0), '#6c5844');
+    b.add('planks', boxGeo(5.2, 0.06, 0.85), T(at(2.5, -1.8), 0, 0.04, 0), '#6c5844');
+
+    // rustic chopping block with axe and birch firewood
+    const cb = at(-3.6, 1.8);
+    b.add('logs', new THREE.CylinderGeometry(0.32, 0.35, 0.68, 8), T(cb, 0, 0.34, 0), '#7a664e');
+    b.add('boards', boxGeo(0.04, 0.75, 0.03), T(cb, 0, 0.85, 0, 0.25, 0, 0.15), '#8a7256');
+    b.add('flat', boxGeo(0.04, 0.14, 0.18), T(cb, 0, 0.69, 0.04, 0.25, 0, 0.15), '#3c4046');
+    b.add('boards', new THREE.CylinderGeometry(0.08, 0.08, 0.52, 6), T(at(-3.1, 1.9), 0, 0.08, 0, 0, 0.4, Math.PI / 2), '#a89882');
+    b.add('boards', new THREE.CylinderGeometry(0.09, 0.09, 0.48, 6), T(at(-3.3, 2.3), 0, 0.09, 0, 0, -0.6, Math.PI / 2), '#a89882');
+    b.add('boards', new THREE.CylinderGeometry(0.07, 0.07, 0.50, 6), T(at(-3.8, 2.4), 0, 0.07, 0, 0, 1.1, Math.PI / 2), '#a89882');
+    b.add('boards', new THREE.CylinderGeometry(0.08, 0.08, 0.55, 6), T(at(-4.0, 1.6), 0, 0.08, 0, 0, -0.2, Math.PI / 2), '#a89882');
+    cols.push({ x: cb.x, z: cb.z, r: 0.45, hw: 0, hd: 0, rot: 0, box: false });
+
+    // wooden doghouse by the front fence
+    const dh = at(-6.8, 8.2);
+    b.add('boards', boxGeo(0.95, 0.8, 1.1), T(dh, 0, 0.4, 0), '#7c6648');
+    b.add('slate', boxGeo(1.15, 0.05, 1.25), T(dh, -0.26, 0.95, 0, 0, 0, 0.5), '#8a8880');
+    b.add('slate', boxGeo(1.15, 0.05, 1.25), T(dh, 0.26, 0.95, 0, 0, 0, -0.5), '#8a8880');
+    b.add('flat', planeGeo(0.38, 0.46), T(dh, 0, 0.32, 0.56), '#1e1c18');
+    b.add('flat', new THREE.CylinderGeometry(0.14, 0.11, 0.09, 8), T(dh, 0.2, 0.05, 0.8), '#6a727a');
+    cols.push(boxCollider(dh, 0, 0, 1.0, 1.2));
+
+    // shadoof well (журавль) in the yard
+    shadoof(b, at(-9.5, 2.5, Math.PI / 5), cols);
+
+    // water barrel catching rainwater under the veranda corner, and bucket
+    const wb = at(0.9, -5.2);
+    b.add('rust', new THREE.CylinderGeometry(0.35, 0.32, 0.95, 10), T(wb, 0, 0.48, 0), '#3d5248');
+    b.add('mud', new THREE.CylinderGeometry(0.33, 0.33, 0.02, 10), T(wb, 0, 0.92, 0), '#283832');
+    b.add('flat', new THREE.CylinderGeometry(0.14, 0.11, 0.32, 8), T(at(-0.8, -3.4), 0, 0.16, 0), '#3b6a8a');
+    cols.push({ x: wb.x, z: wb.z, r: 0.4, hw: 0, hd: 0, rot: 0, box: false });
+
+    // geese pecking in the yard
+    goose(b, at(-3.2, 4.2), false, true);
+    goose(b, at(-4.0, 4.8), true, false);
+
     // the garage: a corrugated-iron box with a pitched roof, its doors to the yard
     const gp = at(7.5, -5.5);
-    gp.y = this.groundMin(gp, 4, 6.5);
+    gp.y = yard.y;
+    b.add('concrete', boxGeo(4.2, 2.0, 6.4), T(gp, 0, -0.9, 0), '#6c6e72');
     b.add('metalRoof', boxGeo(4, 2.5, 6.2), T(gp, 0, 1.2, 0), '#7a8a96');
     b.add('slate', boxGeo(4.6, 0.07, 7), T(gp, 0, 2.6, 0, 0.12, 0, 0), '#9a9a92');
     b.add('flat', boxGeo(3.2, 2.1, 0.06), T(gp, 0, 1.05, 3.12), '#5a6a74');
     cols.push(boxCollider(gp, 0, 0, 4, 6.2));
+
+    // spare tyres and wooden ladder leaning against the garage wall
+    b.add('flat', new THREE.TorusGeometry(0.42, 0.14, 8, 16), T(at(5.4, -2.3), 0, 0.42, 0, 0, 0.2, 0.15), '#26282a');
+    b.add('flat', new THREE.TorusGeometry(0.42, 0.14, 8, 16), T(at(5.7, -2.2), 0, 0.42, 0, 0, 0.2, 0.12), '#202224');
+    b.add('boards', boxGeo(0.05, 2.6, 0.05), T(at(6.2, -2.35), -0.2, 1.25, 0, -0.25, 0, 0), '#6c5c46');
+    b.add('boards', boxGeo(0.05, 2.6, 0.05), T(at(6.2, -2.35), 0.2, 1.25, 0, -0.25, 0, 0), '#6c5c46');
+    for (let li = 0; li < 5; li++) b.add('boards', boxGeo(0.4, 0.04, 0.04), T(at(6.2, -2.35), 0, 0.4 + li * 0.45, 0.2 - li * 0.1), '#6c5c46');
+
+    // shrubs and lilac bushes along the fence
+    for (const lx of [-10, -8, 6, 9.5]) b.add('flat', new THREE.SphereGeometry(0.75, 6, 5), T(at(lx, 10.2), 0, 0.65, 0), '#3e5c32');
+    for (const lz of [4, 6.5, -2]) b.add('flat', new THREE.SphereGeometry(0.85, 6, 5), T(at(-12.2, lz), 0, 0.75, 0), '#38542c');
+    this.addTree('birch', at(-10.5, 6.5).x, at(-10.5, 6.5).z, 12, r, true);
     // the woodpile along the back fence
     const wp = at(-9, -11.6);
     for (let i = 0; i < 3; i++) b.add('boards', new THREE.CylinderGeometry(0.16, 0.16, 5, 6), T(wp, 0, 0.2 + i * 0.3, -i * 0.05, 0, 0, Math.PI / 2), '#8a6a4a');
@@ -1125,7 +1223,7 @@ export class World {
       sign(hm.village - 6, 1, false);
       sign(hm.village - 2, -1, true);
       // the neighbour at her gate, who sees the post van off every morning (the first morning's horn lesson)
-      const np = this.placeOn(road, L - 120, half + 3.4);
+      const np = this.placeOn(road, this.villageHomes.find(h => h.id === 'mityai')?.s ?? L - 120, half + 3.4);
       const apai = makePerson('#4a5a3a', '#d8c8a0', false, 'dress');
       apai.group.position.set(np.x, np.y, np.z);
       apai.group.rotation.y = np.rot;
@@ -1136,7 +1234,7 @@ export class World {
     }
     // өләсәй by the porch, and the grandfather by her, leaning on his stick
     const pp = at(-3.4, -0.6);
-    const ebi = makePerson('#6a4a5a', '#c84a3a', true, 'dress');
+    const ebi = new Person('olosay', {});
     ebi.group.position.set(pp.x, pp.y, pp.z);
     ebi.group.rotation.y = pp.rot;
     this.group.add(ebi.group);
@@ -1165,6 +1263,8 @@ export class World {
    * wooden mosque, on the right the shadoof well; hay meadows behind the gardens, and before the
    * village, in a clearing in the wood, the cemetery under its birches.
    */
+  readonly villageHomes: { id: 'mityai' | 'rinat' | 'rafail' | 'alia'; s: number; side: number }[] = [];
+
   private buildUrmanly(b: Bucket, r: RNG, cols: Collider[]): void {
     const g = this.ground, road = g.homeRoad, L = road.length, v = g.homeMarks.village;
     const from = v + 6, to = L - 36;
@@ -1204,9 +1304,31 @@ export class World {
           continue;
         }
         let plotW = rand(r, 21, 26);
+        const mansion = side > 0 && s <= L - 270 && s + plotW > L - 270;
+        if (mansion) {
+          plotW = 36;
+          const hs = s + 9, gs = s + 25;
+          const hp = on(hs, FL + 9);
+          hp.y = this.groundMin(hp, 11.5, 10.5);
+          brickMansion(b, hp, cols);
+          mansionGate(b, on(gs, FL), cols);
+          this.fenceAlong(b, s + .3, gs - 4.1, FL, r, true, road);
+          this.fenceAlong(b, gs + 4.1, s + plotW - .3, FL, r, true, road);
+          const cp = on(gs, FL - 2.4, false);
+          const car = this.parked(b, buildCar('suv', '#252b28', 86), cp);
+          cols.push(boxCollider(cp, 0, 0, car.width, car.length));
+          b.add('brickRed', boxGeo(2.1, .8, 1.1), T(on(s + 33, FL + 8), 0, .4, 0));
+          clear(on(s + 18, FL + 19), 25);
+          this.villageHomes.push({ id: 'rafail', s: gs, side });
+          s += plotW;
+          sideFence(s, side);
+          continue;
+        }
         if (to - (s + plotW) < 14) plotW = to - s;
-        const m = this.folk[Math.floor(r() * this.folk.length)];
-        const abandoned = !abandonedDone && side < 0 && mosqueDone;
+        const scheme = this.folk[Math.floor(r() * this.folk.length)];
+        const aliaHome = side > 0 && s <= L - 215 && s + plotW > L - 215;
+        const m = aliaHome ? {...scheme,base:'#83a9b6',trim:'#eee5cb'} : scheme;
+        const abandoned = !abandonedDone && side < 0 && mosqueDone && !(s <= L - 185 && s + plotW > L - 185);
         if (abandoned) abandonedDone = true;
         // the house at the near end of the plot and the gates after it, or the other way about
         const flip = i++ % 2 === 1;
@@ -1218,13 +1340,33 @@ export class World {
         // the veranda faces the gates: along the road +s is the house's local −x on the right, +x on the left
         const yard = ((gs > hs ? 1 : -1) * -side) as 1 | -1;
         folkHouse(b, hp, r, m, cols, { yard, lit: r() < 0.6, abandoned, w, d });
+        const mityaiHome = side > 0 && s <= L - 115 && s + plotW > L - 115;
+        const rinatHome = side < 0 && s <= L - 185 && s + plotW > L - 185;
+        if (mityaiHome) {
+          this.villageHomes.push({ id: 'mityai', s: gs, side });
+          neighbourMotorcycle(b, on(gs, side * (FL + 2.8)), cols);
+        }
+        if (rinatHome) {
+          this.villageHomes.push({ id: 'rinat', s: gs, side });
+          neighbourCot(b, on(gs, side * (FL + 2.8)), cols);
+        }
+        if (aliaHome) {
+          this.villageHomes.push({id:'alia',s:gs,side});
+          b.add('flat', boxGeo(4.5,2.05,.12), T(on(gs,side*FL),0,1.16,.13), '#83a9b6');
+          for (const dx of [-3.3,3.3]) {
+            const pot=on(gs+dx,side*(FL-.5));
+            b.add('boards',new THREE.CylinderGeometry(.27,.23,.45,8),T(pot,0,.23,0),'#806b53');
+            b.add('flat',new THREE.SphereGeometry(.32,6,4),T(pot,0,.53,0),'#60734b');
+          }
+          b.add('boards',boxGeo(1.6,.12,.45),T(on(gs+3.5,side*(FL-1.2)),0,.45,0),'#9a896b');
+        }
         clear(hp, 15);
         // along the street: boards, the palisade before the windows, the gates, boards again
         const p0 = hs - w / 2 - 0.2, p1 = hs + w / 2 + 0.2, g0 = gs - gw / 2, g1 = gs + gw / 2;
         this.fenceAlong(b, s + 0.3, Math.min(p0, g0) - 0.1, side * FL, r, true, road);
         this.fenceAlong(b, p0, p1, side * FL, r, false, road);
         if (abandoned) this.fenceAlong(b, g0, g1, side * FL, r, true, road);
-        else folkGate(b, on(gs, side * FL), m, cols);
+        else folkGate(b, on(gs, side * FL), m, cols, mityaiHome || rinatHome);
         this.fenceAlong(b, Math.max(p1, g1) + 0.1, s + plotW - 0.3, side * FL, r, true, road);
         // rowan or lilac in the palisade (on the empty yard, nettles and a self-sown birch)
         tree('bush', on(hs + rand(r, -w / 3, w / 3), side * (FL + 0.8)), rand(r, 2.6, 3.6));
@@ -1324,7 +1466,7 @@ export class World {
     const pos: number[] = [], uv: number[] = [];
     const pt = (s: number, lat: number) => {
       const f = road.frame(s), x = f.x + f.rx * lat, z = f.z + f.rz * lat;
-      return [x, this.ground.terrainAt(x, z) + 0.07, z];
+      return [x, this.ground.terrainAt(x, z) + PAVEMENT_LIFT, z];
     };
     for (let s = s0; s < s1 - 0.01; s += 2) {
       const t = Math.min(s1, s + 2);
@@ -1365,28 +1507,37 @@ export class World {
     const po = this.place(40, half + 14);
     po.y = this.groundMin(po, 16, 10);
     postOffice(b, po, cols);
+    // the steps stick out past the shell; stop the van at the porch, not inside it
+    cols.push(boxCollider(po, 0, 5.8, 3.4, 1.6));
+    this.postInterior = new PostOfficeInterior(po);
+    this.group.add(this.postInterior.root);
     {
-      // Zinaida Pavlovna at the post office door in the mornings, seeing the van off (a stand-in in the post's blue)
-      const zp = this.place(40, half + 3.4);
-      const zinaida = makePerson('#2a4a8a', '#4a3a32', false, 'woman');
+      const gy = (x: number, z: number) => this.ground.terrainAt(x, z);
+      // the door itself: parking in the forecourt is a few metres from here
+      const door = localAt(po, 0, 6.4, gy);
+      this.postDoor = new THREE.Vector3(door.x, door.y, door.z);
+      // Zinaida stands on the porch, off the bays, but stays away until a mission calls her out
+      const zp = localAt(po, 2.55, 5.35, gy);
+      const zinaida = new Person('zinaida', {});
+      this.postmaster = zinaida;
       zinaida.group.position.set(zp.x, zp.y, zp.z);
       zinaida.group.rotation.y = zp.rot;
       this.group.add(zinaida.group);
       this.people.push(zinaida);
-      cols.push({ x: zp.x, z: zp.z, r: 0.35, hw: 0, hd: 0, rot: 0, box: false });
       this.greeters.push(zinaida);
-      this.postDoor = new THREE.Vector3(zp.x, zp.y, zp.z);
-      // the grandfather by her the first morning, waiting on the porch for the Ufa bus (the story shows him: main.ts)
-      const kp = this.place(38.6, half + 3.9);
+      this.setAway(zinaida, true);
+      // the grandfather beside the door the first morning, waiting on the porch for the Ufa bus
+      const kp = localAt(po, -2.55, 5.35, gy);
       const kartatay = new Person('kartatay', {});
       kartatay.group.position.set(kp.x, kp.y, kp.z);
       kartatay.group.rotation.y = kp.rot;
       this.group.add(kartatay.group);
       this.people.push(kartatay);
       this.postGrandpa = kartatay;
+      cols.push({ x: kp.x, z: kp.z, r: 0.35, hw: 0, hd: 0, rot: 0, box: false });
       this.setAway(kartatay, true);
     }
-    this.exclusions.push({ x: po.x, z: po.z, r: 16 });
+    this.exclusions.push({ x: po.x, z: po.z, r: 20 });
     const blocks: Place[] = [];
     for (const [s, lat] of [[100, -(half + 32)], [205, -(half + 34)], [175, half + 40]] as [number, number][]) {
       const p = this.place(s, lat);
@@ -1401,14 +1552,15 @@ export class World {
     sp.y = this.groundMin(sp, 10, 8);
     shop(b, sp, cols);
     {
-      // Muha by the shop: a dark saloon with no badges pulled up on the verge, him beside it smoking
-      const cp = this.place(80, -(half + 2.6), false);
-      const car = buildCar('sedan', '#1c1e22', 4);
+      // Muha by the shop, smoking beside his 2109. Lamps on this side stand at s = 6, 44, 82…
+      // The old saloon's nose sat in the one at 82, so the nine is parked short of it.
+      const cp = this.place(78, -(half + 2.6), false);
+      const car = buildDevyatka();
       if (car.lights) car.lights.visible = false;
       car.group.position.set(cp.x, cp.y + 0.02, cp.z);
       car.group.rotation.y = cp.rot;
       this.group.add(car.group);
-      // the saloon can go (Lysyi takes it back): its collider is one that can be lifted out
+      // Lysyi can take the car back: its collider is one that can be lifted out
       const carCol = boxCollider({ x: cp.x, y: 0, z: cp.z, rot: cp.rot }, 0, 0, car.width, car.length);
       this.colliders.dynamic.push(carCol);
       this.muhaCar = { group: car.group, col: carCol };
@@ -1424,7 +1576,7 @@ export class World {
       this.muhaAt = { x: mp.x, y: mp.y, z: mp.z, rot: mp.rot, col: muhaCol };
     }
     {
-      // the district hospital across from the post office: two white storeys, a red cross, әсәй on her shift at the door
+      // District hospital: staff work inside; the roadside point is only for patient drop-off.
       const hp = this.place(26, -(half + 19));
       hp.y = this.groundMin(hp, 18, 11);
       b.add('plaster', boxGeo(18, 7.4, 11, 2), T(hp, 0, 3.5, 0), '#ebe7de');
@@ -1442,13 +1594,7 @@ export class World {
       cols.push(boxCollider(hp, 0, 0, 18, 11));
       this.exclusions.push({ x: hp.x, z: hp.z, r: 15 });
       const np = this.place(26, -(half + 3.2));
-      const nurse = makePerson('#e8e6e0', '#e8e6e0', false, 'woman');
-      nurse.group.position.set(np.x, np.y, np.z);
-      nurse.group.rotation.y = np.rot;
-      this.group.add(nurse.group);
-      this.people.push(nurse);
-      cols.push({ x: np.x, z: np.z, r: 0.35, hw: 0, hd: 0, rot: 0, box: false });
-      this.hospital = { pos: new THREE.Vector3(np.x, np.y, np.z), nurse };
+      this.hospital = { pos: new THREE.Vector3(np.x, np.y, np.z), interior: hp };
     }
     const bs = this.place(125, half + 3.6);
     busStop(b, bs, cols);
@@ -1509,8 +1655,65 @@ export class World {
     return car;
   }
 
+  /** Road-distance span of the post-office forecourt, so the pavement can stop either side of the mouth. */
+  private postLotSpan(): [number, number] {
+    const g = this.ground, po = this.place(40, 3.5 + 14);
+    const gy = (x: number, z: number) => g.terrainAt(x, z);
+    let lo = Infinity, hi = -Infinity;
+    for (const lx of [-POST_LOT.halfX, POST_LOT.halfX]) for (const lz of [POST_LOT.z0, POST_LOT.z1]) {
+      const q = localAt(po, lx, lz, gy);
+      const s = g.main.nearestS(q.x, q.z);
+      lo = Math.min(lo, s); hi = Math.max(hi, s);
+    }
+    return [lo - 0.6, hi + 0.6];
+  }
+
   /**
-   * Klyuchevsk lived in (Town.ts): pavements along the main street and paths to the doors; at each
+   * Asphalt apron in front of the post office, open onto the street across its whole width.
+   * Same surface as the yard drives (asphalt, the pale drive tint) and the same kerb and bay
+   * paint as the filling station. Four nose-in bays; the outer left one keeps a Zhiguli, the
+   * three by the door are free. A concrete path, like the other door paths, runs to the steps.
+   */
+  private buildPostOfficeYard(b: Bucket, cols: Collider[], pave: string, drive: string): void {
+    const g = this.ground, po = this.place(40, 3.5 + 14);
+    const gy = (x: number, z: number) => g.terrainAt(x, z);
+    const at = (lx: number, lz: number, turn = 0) => localAt(po, lx, lz, gy, turn);
+    const { halfX, apronZ0, z1 } = POST_LOT;
+    // a slab, not a sheet: the road's grass shoulder is a mesh of its own and would otherwise
+    // lie across the mouth. Top sits a few centimetres over that shoulder and the carriageway edge.
+    const apron = at(0, (apronZ0 + z1) / 2);
+    b.add('asphalt', boxGeo(halfX * 2, 0.22, z1 - apronZ0, 4), T(apron, 0, -0.04, 0), drive);
+    // the path up the middle, over the asphalt, meeting the steps
+    const wz0 = 6.55, wz1 = 14.1;
+    const walk = at(0, (wz0 + wz1) / 2);
+    b.add('concrete', boxGeo(3.2, 0.06, wz1 - wz0, 2), T(walk, 0, 0.08, 0), pave);
+    const line = (lx: number, lz: number, w: number, d: number) => {
+      b.add('flat', boxGeo(w, 0.02, d), T(at(lx, lz), 0, 0.1, 0), '#e8e4d0');
+    };
+    const kerb = (lx: number, lz: number, w: number, d: number) => {
+      b.add('concrete', boxGeo(w, 0.16, d), T(at(lx, lz), 0, 0.16, 0), '#b4b0a6');
+    };
+    const zHead = 6.95, zTail = 11.85, depth = zTail - zHead, bayW = 2.6;
+    for (const cx of [-7.55, -4.55, 4.55, 7.55]) {
+      line(cx - bayW / 2, (zHead + zTail) / 2, 0.1, depth);
+      line(cx + bayW / 2, (zHead + zTail) / 2, 0.1, depth);
+      line(cx, zHead, bayW, 0.1);
+    }
+    const kz0 = zHead, kz1 = z1 - 0.35;
+    kerb(-halfX - 0.12, (kz0 + kz1) / 2, 0.22, kz1 - kz0);
+    kerb(halfX + 0.12, (kz0 + kz1) / 2, 0.22, kz1 - kz0);
+    // one car in the outer bay, nose to the building, so the stalls by the door stay open
+    const stall = at(-7.55, (zHead + zTail) / 2, Math.PI);
+    stall.y += 0.06;
+    const car = this.parked(b, buildSoviet('vaz2106', 'blue'), stall);
+    cols.push(boxCollider(stall, 0, 0, car.width, car.length));
+    const mid = at(0, (apronZ0 + z1) / 2);
+    this.exclusions.push({ x: mid.x, z: mid.z, r: 11 });
+  }
+
+  /**
+   * Klyuchevsk lived in (Town.ts): pavements along the main street, a forecourt with marked bays
+   * in front of the post office, and paths to the hospital and the shop; at each
    * panel block an asphalt drive with Zhigulis parked on it, benches at the entrances with the old
    * women on them, the balconies glazed or hung with washing, aerials on the roof, bins; in the
    * yards a playground, the carpet rack, washing lines, the domino table. On the right, the House
@@ -1528,11 +1731,19 @@ export class World {
     const tree = (kind: TreeKind, p: { x: number; z: number }, h: number) => this.addTree(kind, p.x, p.z, h, r, true);
     const seat = (at: Place, who: 'babka' | 'man') => this.townSeats.push({ at, who });
 
-    // ---- pavements both sides of the main street, and paths to the doors of the post office, hospital and shop
+    // ---- pavements both sides of the main street, broken on the post-office side for the forecourt
     // concrete slabs, lighter than the road (the asphalt texture would read as more roadway)
     const PAVE = '#bcb8b0', DRIVE = '#d4d0c8';
-    for (const side of [-1, 1]) this.strip(b, g.main, 0, m.town, side * (half + 2.7), side * (half + 4.7), 'concrete', PAVE);
-    this.strip(b, g.main, 38.6, 41.4, half + 4.6, half + 9.1, 'concrete', PAVE);
+    const [lot0, lot1] = this.postLotSpan();
+    for (const side of [-1, 1]) {
+      const lat0 = side * (half + 2.7), lat1 = side * (half + 4.7);
+      if (side < 0) this.strip(b, g.main, 0, m.town, lat0, lat1, 'concrete', PAVE);
+      else {
+        this.strip(b, g.main, 0, lot0, lat0, lat1, 'concrete', PAVE);
+        this.strip(b, g.main, lot1, m.town, lat0, lat1, 'concrete', PAVE);
+      }
+    }
+    this.buildPostOfficeYard(b, cols, PAVE, DRIVE);
     this.strip(b, g.main, 26.2, 28.6, -(half + 4.6), -(half + 13.6), 'concrete', PAVE);
     this.strip(b, g.main, 65.9, 68.9, -(half + 4.6), -(half + 9.1), 'concrete', PAVE);
 
@@ -2113,6 +2324,25 @@ export class World {
     put(m.home + 25, directionSign([['Урманлы', '1']], 'right'), 2.0, 1.0, 2.2, 2, -1);
     // …and for those coming out of town past the GAI post
     put(m.home - 30, directionSign([['Урманлы', '1']], 'left'), 2.0, 1.0, 2.2, 2);
+    // priority road & gas station signs along the main highway
+    put(m.home - 45, prioritySign(), 0.8, 0.8, 2.2, 1, 1);
+    put(m.home - 55, gasServiceSign(), 0.9, 1.1, 2.2, 1, 1);
+    put(m.home + 45, prioritySign(), 0.8, 0.8, 2.2, 1, -1);
+    put(m.home + 55, gasServiceSign(), 0.9, 1.1, 2.2, 1, -1);
+
+    // signs along the country road (homeRoad) approaching the intersection (driver's right side)
+    const putRoad = (road: Road, s: number, tex: THREE.Texture, w: number, h: number, height = 2.2, posts = 1, side = -1) => {
+      const halfR = road.zoneAt(s).width / 2;
+      const fR = road.frame(s);
+      const lat = side * (halfR + 1.8);
+      const x = fR.x + fR.rx * lat, z = fR.z + fR.rz * lat;
+      const rot = Math.atan2(fR.tx, fR.tz);
+      signPost(b, { x, y: this.ground.terrainAt(x, z), z, rot }, this.signMat(tex), w, h, height, posts);
+      this.colliders.add({ x, z, r: 0.2, hw: 0, hd: 0, rot: 0, box: false });
+    };
+    putRoad(this.ground.homeRoad, 32, gasServiceSign(), 0.9, 1.1, 2.2, 1, -1);
+    putRoad(this.ground.homeRoad, 20, yieldSign(), 0.9, 0.9, 2.2, 1, -1);
+    putRoad(this.ground.homeRoad, 8, directionSign([['Ключевск', '1']], 'right'), 2.2, 1.1, 2.3, 2, -1);
     put(m.potholesFrom - 40, warningSign('uneven'), 1.0, 1.0, 2.2);
     // 60 zone around the GAI post, both directions
     put(m.town + 170, limitSign(60), 0.9, 0.9, 2.2);
@@ -2458,7 +2688,14 @@ export class World {
       const c = Math.cos(gp.rot), sn = Math.sin(gp.rot);
       const x = gp.x - 4.5 * c + 3.5 * sn, z = gp.z + 4.5 * sn + 3.5 * c;
       const park = { x, y: g.terrainAt(x, z) + 0.02, z, yaw: gp.rot + Math.PI / 2 + 0.1 };
-      for (const v of models) this.group.add(v.group);
+      // Valid staging before Police takes control (also used by location/cutscene previews).
+      models.forEach((model, index) => {
+        model.group.position.set(park.x, park.y, park.z);
+        model.group.rotation.y = park.yaw;
+        model.group.visible = index === 0;
+        if (model.lights) model.lights.visible = false;
+        this.group.add(model.group);
+      });
       const v = models[0];
       const col: Collider = { x, z, r: Math.hypot(v.width, v.length) / 2, hw: v.width / 2, hd: v.length / 2, rot: park.yaw, box: true };
       this.colliders.dynamic.push(col);
@@ -2496,6 +2733,16 @@ export class World {
     park('vaz2105', 'baklaj', ap, -0.4, -2.9, Math.PI / 2);
     this.fuelBay = { x: ap.x, z: ap.z, rot: ap.rot };
     this.exclusions.push({ x: ap.x, z: ap.z, r: 26 });
+    // side driveway and intersection mouth exclusions
+    const cSt = Math.cos(ap.rot), sSt = Math.sin(ap.rot);
+    const dxX = ap.x + 21 * cSt, dxZ = ap.z - 21 * sSt;
+    this.exclusions.push({ x: dxX, z: dxZ, r: 9 });
+    const fHome = g.main.frame(m.home);
+    const ixX = fHome.x - 7 * fHome.rx, ixZ = fHome.z - 7 * fHome.rz;
+    this.exclusions.push({ x: ixX, z: ixZ, r: 12 });
+    // paved apron at the intersection mouth connecting homeRoad to the main road
+    const ixRot = Math.atan2(-fHome.tx, -fHome.tz);
+    b.add('asphalt', boxGeo(14, 0.4, 10, 4), T({ x: ixX, y: fHome.y - 0.15, z: ixZ, rot: ixRot }), '#b8b8b2');
 
     // babushka with buckets of potatoes opposite the hamlet before the fork
     const sB = m.junction - 190;
@@ -2530,8 +2777,8 @@ export class World {
       this.smoke.push({ sprite: s, age: i * 0.4, life: 6.4 });
     }
 
-    // hand-painted billboards
-    const boards: [number, number, number][] = [[m.town + 410, -1, 0], [m.town + 640, 1, 1], [m.junction - 330, 1, 2], [m.junction + 140, -1, 3], [m.forest + 60, 1, 4]];
+    // hand-painted billboards (billboard 0 moved to side=1, south of the intersection to keep the road and gas station clear)
+    const boards: [number, number, number][] = [[m.town + 480, 1, 0], [m.town + 640, 1, 1], [m.junction - 330, 1, 2], [m.junction + 140, -1, 3], [m.forest + 60, 1, 4]];
     for (const [s, side, k] of boards) {
       const p = this.place(s, side * (half(s) + 6), true, side * 0.5);
       cols.push(...billboard(b, p, sign(billboardTex(BILLBOARDS[k]))));
@@ -2673,7 +2920,7 @@ export class World {
     }
   }
 
-  /** Muha's saloon at the shop or gone. */
+  /** Muha's 2109 at the shop, or gone. */
   setMuhaCar(on: boolean): void {
     this.muhaCar.group.visible = on;
     const d = this.colliders.dynamic, i = d.indexOf(this.muhaCar.col);
@@ -2742,6 +2989,12 @@ const CELL = 240;
  * material in a cell is a draw call of its own.
  */
 const PROP_CELL = 480;
+const PAVEMENT_LIFT = 0.07;
+/**
+ * Post-office forecourt in the building frame (+z toward the road). The pad (z0…z1) levels
+ * the ground up to the wall; the visible apron starts past the steps (apronZ0) and runs onto the carriageway.
+ */
+const POST_LOT = { halfX: 9.5, z0: 5.15, apronZ0: 6.7, z1: 15.6 };
 /** Beyond this, metres, people are not drawn or animated: past the thickest fog's far end, a few pixels at most. */
 const PEOPLE_FAR = 420;
 /** Ambient townsfolk (sitters, loiterers) are not drawn past this. */

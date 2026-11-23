@@ -7,6 +7,7 @@
 const FILES = import.meta.glob('../assets/portraits/*.{jpg,jpeg,png,webp}', { eager: true, query: '?url', import: 'default' }) as Record<string, string>;
 
 const WHO: [RegExp, string][] = [
+  [/^Алия/, 'alia'],
   [/Муха/, 'muha'], [/Картатай|Урал-агай/, 'kartatay'], [/Зинаида/, 'zinaida'], [/Гульнара|^Әсәй/, 'esay'], [/Өләсәй/, 'olesey'],
   [/Кузьмин/, 'kuzmin'], [/Бритый/, 'brityi'], [/Пацан/, 'kid'], [/кожанке/, 'leather'], [/Серый/, 'seryi'],
   [/Нина Петровна/, 'nina'], [/Валентина/, 'valentina'], [/Степанович/, 'stepanych'], [/Галина Ивановна/, 'galina'],

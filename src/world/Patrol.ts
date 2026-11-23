@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { drawPlate, plateFor } from './Plates';
+import { addPlate, plateFor } from './Plates';
 import { headlights } from './Headlights';
 import type { VehicleModel } from './Vehicles';
 import vazUrl from '../assets/cars/vaz2106-gai.glb?url';
@@ -11,8 +11,7 @@ import nivaUrl from '../assets/cars/niva-gai.glb?url';
  * in white with the blue stripe and a roof bar, modelled (src/assets/cars/CREDITS.md) and prepared by
  * scripts/models/prep-car.mjs: metres, +Z forward, wheels on y = 0, the wheels as nodes on their
  * axles, the roof lenses and the glass as their own materials. Here the lenses get a glow to flash,
- * the glass a tint the crew shows through, the illegible modelled plates are covered by blue militia
- * plates, and brake lamps and the night glow of the lamps are added.
+ * the glass a tint the crew shows through, and the modelled plates are covered by period plates.
  */
 export type PatrolKind = 'militia' | 'militiaSuv';
 
@@ -47,15 +46,6 @@ export function loadPatrol(): Promise<void> {
   })());
 }
 
-let plateMat: THREE.MeshLambertMaterial | null = null;
-function militiaPlate(): THREE.MeshLambertMaterial {
-  if (plateMat) return plateMat;
-  const c = document.createElement('canvas'); c.width = 128; c.height = 28;
-  drawPlate(c.getContext('2d')!, plateFor(7, 'militia'), 128, 28);
-  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
-  return (plateMat = new THREE.MeshLambertMaterial({ map: t, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 }));
-}
-
 const rc = new THREE.Raycaster();
 /** The body's surface along Z at a height (front +1, back -1), or the bounding box's end. */
 function endAt(body: THREE.Object3D[], y: number, sign: 1 | -1, fallback: number): number {
@@ -64,7 +54,7 @@ function endAt(body: THREE.Object3D[], y: number, sign: 1 | -1, fallback: number
   return hit ? hit.point.z : fallback;
 }
 
-export function buildPatrol(kind: PatrolKind): VehicleModel {
+export function buildPatrol(kind: PatrolKind, seed: number): VehicleModel {
   const tpl = templates[kind];
   if (!tpl) throw new Error('loadPatrol() must finish before building patrol cars');
   const spec = SPEC[kind];
@@ -90,14 +80,11 @@ export function buildPatrol(kind: PatrolKind): VehicleModel {
   group.updateMatrixWorld(true);
   const box = new THREE.Box3().setFromObject(root);
   const L = box.max.z - box.min.z;
-  // blue militia plates over the modelled ones, brake lamps over the painted tail lamps
+  // Period registration plates over the modelled ones.
   const front = endAt(body, spec.plate[0], 1, box.max.z), back = endAt(body, spec.plate[1], -1, box.min.z);
-  const plate = militiaPlate();
+  const plate = plateFor(seed * 2 + (kind === 'militiaSuv' ? 1 : 0) + 470, 'patrol');
   for (const [z, y, s] of [[front, spec.plate[0], 1], [back, spec.plate[1], -1]] as const) {
-    const p = new THREE.Mesh(new THREE.PlaneGeometry(0.52, 0.112), plate);
-    p.position.set(0, y, z + s * 0.012);
-    if (s < 0) p.rotation.y = Math.PI;
-    group.add(p);
+    addPlate(group, plate, new THREE.Vector3(0, y, z + s * 0.012), s < 0);
   }
   const tail = new THREE.MeshLambertMaterial({ color: '#a01810', emissive: '#ff2a18', emissiveIntensity: 0, transparent: true, opacity: 0.85 });
   const tz = endAt(body, spec.tail[1], -1, box.min.z);

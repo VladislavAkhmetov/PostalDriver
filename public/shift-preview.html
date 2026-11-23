@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Выбор звука переключения передач КПП</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=PT+Mono&family=PT+Sans:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #101318;
+      --card: #181d24;
+      --border: #28303d;
+      --accent: #3b82f6;
+      --accent-gold: #f59e0b;
+      --text: #e2e8f0;
+      --text-dim: #94a3b8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'PT Sans', system-ui, sans-serif;
+      min-height: 100vh;
+      padding: 24px 16px 48px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .container {
+      width: 100%;
+      max-width: 820px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    header {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+    }
+    h1 { font-size: 20px; margin-bottom: 6px; }
+    p { color: var(--text-dim); font-size: 14px; line-height: 1.4; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      transition: all 0.15s;
+    }
+    .card:hover { border-color: var(--accent-gold); }
+    .card-info h3 { font-size: 16px; margin-bottom: 4px; color: #fff; }
+    .card-info p { font-size: 13px; color: var(--text-dim); }
+    .badge {
+      display: inline-block;
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-weight: 700;
+      background: rgba(245, 158, 11, 0.15);
+      color: #f59e0b;
+      margin-left: 6px;
+    }
+    .card-actions { display: flex; align-items: center; gap: 12px; }
+    audio { height: 36px; max-width: 220px; }
+    .btn-shift {
+      background: #f59e0b;
+      color: #0f172a;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-weight: 700;
+      font-size: 14px;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.1s;
+    }
+    .btn-shift:hover { background: #fbbf24; }
+    .btn-shift:active { transform: scale(0.96); }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>🕹 Выбор звука переключения механической КПП</h1>
+      <p>Ищем плотный механический щелчок кулисы и вход передачи (без шипения «ШШШ»). Плотный звук рычага внедорожника / грузовика.</p>
+    </header>
+
+    <div id="shiftsList"></div>
+  </div>
+
+  <script>
+    const shifts = [
+      {
+        id: 'shift_qubodup',
+        name: 'Вариант 1: «Чёткий тактильный щелчок кулисы 4х4»',
+        badge: '⭐ Рекомендуемый',
+        desc: 'Натуральный щелчок стального рычага в кулисе: выключение передачи и плотная фиксация в следующей.',
+        url: '/sound-samples/157451_71257-lq.mp3'
+      },
+      {
+        id: 'shift_lever_metal',
+        name: 'Вариант 2: «Тяжёлый металлический рычаг УАЗ»',
+        badge: 'Металлический рычаг',
+        desc: 'Плотный механический лязг стального напольного рычага внедорожника.',
+        url: '/sound-samples/151271_2578041-lq.mp3'
+      },
+      {
+        id: 'shift_kpp_doc',
+        name: 'Вариант 3: «Документальная механика КПП»',
+        badge: 'Студийный захват',
+        desc: 'Настоящая механическая коробка передач с глухим механическим входом шестерен.',
+        url: '/sound-samples/kpp_doc.mp3'
+      },
+      {
+        id: 'shift_trans_real',
+        name: 'Вариант 4: «Трансмиссия — реальный щелчок»',
+        badge: 'Реальный звук',
+        desc: 'Звук перевода селектора передач в пазу с мягким глухим стуком.',
+        url: '/sound-samples/transmissiya_real.mp3'
+      },
+      {
+        id: 'shift_gear_select',
+        name: 'Вариант 5: «Короткий механический затвор»',
+        badge: 'Короткий клик',
+        desc: 'Быстрый и четкий щелчок рычага коробки передач.',
+        url: '/sound-samples/629324_13885154-lq.mp3'
+      }
+    ];
+
+    let ctx = null;
+    function getCtx() {
+      if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+      if (ctx.state === 'suspended') ctx.resume();
+      return ctx;
+    }
+
+    const container = document.getElementById('shiftsList');
+    shifts.forEach(s => {
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.innerHTML = `
+        <div class="card-info">
+          <h3>${s.name} <span class="badge">${s.badge}</span></h3>
+          <p>${s.desc}</p>
+        </div>
+        <div class="card-actions">
+          <audio controls src="${s.url}"></audio>
+          <button class="btn-shift" onclick="playShift('${s.url}')">▶ Переключить</button>
+        </div>
+      `;
+      container.appendChild(card);
+    });
+
+    async function playShift(url) {
+      const c = getCtx();
+      const res = await fetch(url);
+      const buf = await c.decodeAudioData(await res.arrayBuffer());
+      const src = c.createBufferSource();
+      src.buffer = buf;
+      const gain = c.createGain();
+      gain.gain.value = 0.85;
+      src.connect(gain).connect(c.destination);
+      src.start();
+    }
+  </script>
+</body>
+</html>

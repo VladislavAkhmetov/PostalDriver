@@ -34,5 +34,12 @@ __pycache__/
 
 # Temporary test files
 test_*.mp3
+temp_*
+
+# Electron build
+build-electron/
+
+# Test reports and captures
+reports/
 
 

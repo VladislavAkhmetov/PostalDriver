@@ -1,0 +1,772 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Студийный звук двигателя · Профессиональная запись без гула</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=PT+Mono&family=PT+Sans:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #101318;
+      --card: #181d24;
+      --border: #28303d;
+      --accent: #3b82f6;
+      --accent-gold: #f59e0b;
+      --accent-green: #10b981;
+      --text: #e2e8f0;
+      --text-dim: #94a3b8;
+      --danger: #ef4444;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'PT Sans', system-ui, sans-serif;
+      min-height: 100vh;
+      padding: 24px 16px 48px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .container {
+      width: 100%;
+      max-width: 900px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+    header {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.35);
+    }
+    h1 {
+      font-size: 22px;
+      color: #fff;
+      margin-bottom: 8px;
+    }
+    .desc {
+      color: var(--text-dim);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    .status-alert {
+      background: rgba(16, 185, 129, 0.08);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      border-radius: 10px;
+      padding: 14px 18px;
+      font-size: 13px;
+      color: #a7f3d0;
+      line-height: 1.5;
+    }
+    .test-joint-box {
+      background: linear-gradient(135deg, rgba(245, 158, 11, 0.12), rgba(16, 185, 129, 0.08));
+      border: 1px solid rgba(245, 158, 11, 0.4);
+      border-radius: 12px;
+      padding: 18px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+    }
+    .test-joint-info h3 {
+      font-size: 16px;
+      color: var(--accent-gold);
+      margin-bottom: 4px;
+    }
+    .test-joint-info p {
+      font-size: 13px;
+      color: var(--text-dim);
+      line-height: 1.4;
+    }
+    .btn-joint {
+      background: #f59e0b;
+      color: #0f172a;
+      border: none;
+      padding: 12px 20px;
+      border-radius: 8px;
+      font-weight: 700;
+      font-size: 14px;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.15s ease;
+      box-shadow: 0 2px 10px rgba(245, 158, 11, 0.35);
+    }
+    .btn-joint:hover {
+      background: #fbbf24;
+      transform: translateY(-1px);
+    }
+    .btn-joint.playing {
+      background: #10b981;
+      color: #fff;
+      box-shadow: 0 2px 10px rgba(16, 185, 129, 0.4);
+    }
+    .controls-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.25);
+    }
+    .controls-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+    @media (max-width: 680px) {
+      .controls-grid { grid-template-columns: 1fr; }
+      .test-joint-box { flex-direction: column; align-items: flex-start; }
+    }
+    .control-block {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .controls-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .controls-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .value-display {
+      font-family: 'PT Mono', monospace;
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--accent-gold);
+    }
+    .slider {
+      width: 100%;
+      height: 8px;
+      border-radius: 4px;
+      background: #2a3444;
+      outline: none;
+      -webkit-appearance: none;
+      cursor: pointer;
+    }
+    .slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: var(--accent-gold);
+      cursor: pointer;
+      box-shadow: 0 0 10px rgba(245, 158, 11, 0.5);
+    }
+    .slider-blue::-webkit-slider-thumb {
+      background: #3b82f6;
+      box-shadow: 0 0 10px rgba(59, 130, 246, 0.5);
+    }
+    .presets-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .btn-preset {
+      background: #232a35;
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .btn-preset:hover {
+      background: #2e3847;
+      color: var(--text);
+    }
+    .btn-preset.active {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+    .section-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: #fff;
+      margin-top: 10px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .variants-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .variant-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 18px 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .variant-card:hover {
+      border-color: #475569;
+      background: #1e242e;
+    }
+    .variant-card.selected {
+      border-color: var(--accent);
+      background: rgba(59, 130, 246, 0.08);
+      box-shadow: 0 0 0 1px var(--accent);
+    }
+    .variant-card.rec {
+      border-color: rgba(245, 158, 11, 0.6);
+    }
+    .variant-card.rec.selected {
+      border-color: var(--accent-gold);
+      box-shadow: 0 0 0 1px var(--accent-gold);
+    }
+    .variant-left {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      flex: 1;
+    }
+    .variant-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .variant-name {
+      font-size: 16px;
+      font-weight: 700;
+      color: #fff;
+    }
+    .badge {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .badge-rec {
+      background: rgba(245, 158, 11, 0.2);
+      color: #fbbf24;
+      border: 1px solid rgba(245, 158, 11, 0.4);
+    }
+    .badge-alt {
+      background: rgba(59, 130, 246, 0.2);
+      color: #93c5fd;
+      border: 1px solid rgba(59, 130, 246, 0.4);
+    }
+    .badge-warn {
+      background: rgba(239, 68, 68, 0.15);
+      color: #fca5a5;
+      border: 1px solid rgba(239, 68, 68, 0.3);
+    }
+    .variant-desc {
+      font-size: 13px;
+      color: var(--text-dim);
+      line-height: 1.45;
+    }
+    .variant-tags {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-top: 4px;
+    }
+    .pill {
+      background: #232a35;
+      color: #cbd5e1;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+    }
+    .btn-listen {
+      background: #2563eb;
+      color: #fff;
+      border: none;
+      padding: 10px 18px;
+      border-radius: 8px;
+      font-weight: 700;
+      font-size: 13px;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.15s ease;
+      min-width: 110px;
+    }
+    .btn-listen:hover {
+      background: #1d4ed8;
+      transform: translateY(-1px);
+    }
+    .btn-listen.active {
+      background: #10b981;
+    }
+    .bottom-bar {
+      margin-top: 10px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      color: var(--text-dim);
+      font-size: 13px;
+    }
+    a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+    a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Студийные записи двигателя · Профессиональные микрофоны</h1>
+      <p class="desc">
+        Точное попадание в причину проблемы: прошлые варианты были записаны на дешёвые микрофоны/смартфоны («звук как на диктофон»). Здесь собраны только профессиональные студийные и полевые записи (Zoom H5, Sennheiser, Foley библиотеки).
+      </p>
+    </header>
+
+    <div class="status-alert">
+      🎯 <strong>В чём было дело:</strong><br>
+      • Ваш любимый звук стартера взят из профессиональной студийной Foley-библиотеки (с плотным студийным микрофоном).<br>
+      • А прошлые варианты работы двигателя брались из любительских записей водителей с YouTube — с зажатыми частотами и фазовой кашей («диктофон»).<br>
+      • Ниже представлены записи исключительно <strong>высокого студийного качества</strong>, в том числе из <strong>той же самой студийной сессии</strong>, где записывался стартер!
+    </div>
+
+    <!-- Интерактивная проверка стыка (Заводка -> Двигатель) -->
+    <div class="test-joint-box">
+      <div class="test-joint-info">
+        <h3>⚡ Проверка стыка: Заводка (3.9 с) ➔ Плавный переход в двигатель</h3>
+        <p>Запускает ваш эталонный студийный стартер («вжык-вжык»), а в момент схватывания (3.4 с) мягко вливает выбранный вариант мотора.</p>
+      </div>
+      <button class="btn-joint" id="btnTestJoint" onclick="testStarterJoint()">▶ Завести и проверить стык</button>
+    </div>
+
+    <!-- Интерактивный пульт управления -->
+    <div class="controls-card">
+      <div class="controls-grid">
+        <!-- Регулировка оборотов -->
+        <div class="control-block">
+          <div class="controls-header">
+            <span class="controls-title">🚗 Обороты двигателя (RPM):</span>
+            <span class="value-display" id="rpmLabel">1800 об/мин</span>
+          </div>
+          <input type="range" class="slider" id="rpmSlider" min="750" max="3500" value="1800" step="50" oninput="onRpmChange(this.value)">
+          <div class="presets-row">
+            <button class="btn-preset" id="p800" onclick="setRpm(800, 'p800')">Холостые (800)</button>
+            <button class="btn-preset active" id="p1800" onclick="setRpm(1800, 'p1800')">Крейсер (1800)</button>
+            <button class="btn-preset" id="p2600" onclick="setRpm(2600, 'p2600')">Разгон (2600)</button>
+          </div>
+        </div>
+
+        <!-- Регулировка среза низкого гула -->
+        <div class="control-block">
+          <div class="controls-header">
+            <span class="controls-title">🎚 Срез низкого гула (HPF):</span>
+            <span class="value-display" id="hpfLabel" style="color: #60a5fa;">125 Гц</span>
+          </div>
+          <input type="range" class="slider slider-blue" id="hpfSlider" min="70" max="250" value="125" step="5" oninput="onHpfChange(this.value)">
+          <div class="presets-row">
+            <button class="btn-preset" id="h80" onclick="setHpf(80, 'h80')">80 Гц</button>
+            <button class="btn-preset active" id="h125" onclick="setHpf(125, 'h125')">125 Гц (Оптимум)</button>
+            <button class="btn-preset" id="h170" onclick="setHpf(170, 'h170')">170 Гц (Макс. сухо)</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Список вариантов для переключения на лету -->
+    <div class="section-title">Студийные варианты высокого качества:</div>
+    <div class="variants-grid">
+
+      <!-- Вариант 1: Родной Джип - Студийный холостой ход (из той же сессии, что и стартер) -->
+      <div class="variant-card selected rec" id="card-pro-jeep-idle" onclick="selectVariant('pro-jeep-idle')">
+        <div class="variant-left">
+          <div class="variant-header">
+            <span class="variant-name">Вариант 1: «Родной Джип — Студийный холостой»</span>
+            <span class="badge badge-rec">⭐ Из той же сессии, что и стартер</span>
+          </div>
+          <div class="variant-desc">
+            Записан в <strong>той же самой профессиональной Foley-сессии</strong>, что и ваш эталонный стартер! 
+            Идеальное студийное совпадение по микрофону, воздуху и тембру. 
+            Ровный, плотный, сочный рокот 4-цилиндрового внедорожника. Отсечён саб-гул ниже 125 Гц — слышен чистый механический такт.
+          </div>
+          <div class="variant-tags">
+            <span class="pill">Один микрофон со стартером</span>
+            <span class="pill">Профессиональный Foley-пак</span>
+            <span class="pill">Бесшовный стык 100%</span>
+            <span class="pill">HPF 125 Гц</span>
+          </div>
+        </div>
+        <button class="btn-listen" id="btn-pro-jeep-idle">▶ Включить</button>
+      </div>
+
+      <!-- Вариант 2: Родной Джип - Студийный ход / крейсер -->
+      <div class="variant-card rec" id="card-pro-jeep-cruise" onclick="selectVariant('pro-jeep-cruise')">
+        <div class="variant-left">
+          <div class="variant-header">
+            <span class="variant-name">Вариант 2: «Родной Джип — Студийный ход/разгон»</span>
+            <span class="badge badge-rec">⭐ Из той же сессии, что и стартер</span>
+          </div>
+          <div class="variant-desc">
+            Ходовой звук двигателя из той же студийной записи. 
+            Более бодрый, наполненный механический рокот под тягой. Идеален для крейсерской езды и разгона, без дорожных помех и скрипов.
+          </div>
+          <div class="variant-tags">
+            <span class="pill">Та же студия, что и стартер</span>
+            <span class="pill">Звук на ходу</span>
+            <span class="pill">Бодрый отклик</span>
+            <span class="pill">HPF 125 Гц</span>
+          </div>
+        </div>
+        <button class="btn-listen" id="btn-pro-jeep-cruise">▶ Включить</button>
+      </div>
+
+      <!-- Вариант 3: Zoom H5 Прогрев мотора (LHermanns) -->
+      <div class="variant-card" id="card-pro-zoom-warmup" onclick="selectVariant('pro-zoom-warmup')">
+        <div class="variant-left">
+          <div class="variant-header">
+            <span class="variant-name">Вариант 3: «Zoom H5 — Прогрев 4-цил мотора»</span>
+            <span class="badge badge-alt">Стереорекордер Zoom H5</span>
+          </div>
+          <div class="variant-desc">
+            Профессиональный полевой рекордер Zoom H5 с конденсаторными капсюлями X/Y. 
+            Кристальная чёткость: отчётливо слышен каждый такт поршня, щелчки клапанов и впуск карбюратора. 
+            Никакой диктофонной мути или сжатия.
+          </div>
+          <div class="variant-tags">
+            <span class="pill">Zoom H5 конденсаторные микрофоны</span>
+            <span class="pill">Кристальные транзиенты</span>
+            <span class="pill">Отчётливые клапана</span>
+            <span class="pill">HPF 130 Гц</span>
+          </div>
+        </div>
+        <button class="btn-listen" id="btn-pro-zoom-warmup">▶ Включить</button>
+      </div>
+
+      <!-- Вариант 4: Klankbeeld Классический 4-цил (Sennheiser) -->
+      <div class="variant-card" id="card-pro-klankbeeld" onclick="selectVariant('pro-klankbeeld')">
+        <div class="variant-left">
+          <div class="variant-header">
+            <span class="variant-name">Вариант 4: «Klankbeeld — Классический 4-цил (OHV)»</span>
+            <span class="badge badge-alt">Sennheiser Broadcast</span>
+          </div>
+          <div class="variant-desc">
+            Запись мастера полевого звука Klankbeeld на студийный микрофон Sennheiser. 
+            Сухое, ритмичное, абсолютно чёткое тарахтение карбюраторного 4-цилиндрового мотора с верхними клапанами (OHV). 
+            Ноль каши в средних частотах, великолепная артикуляция.
+          </div>
+          <div class="variant-tags">
+            <span class="pill">Микрофон Sennheiser</span>
+            <span class="pill">Сухое тарахтение OHV</span>
+            <span class="pill">Чёткий механический такт</span>
+            <span class="pill">HPF 130 Гц</span>
+          </div>
+        </div>
+        <button class="btn-listen" id="btn-pro-klankbeeld">▶ Включить</button>
+      </div>
+
+      <!-- Вариант 5: Volvo 240 DL Ретро 4-цил карбюратор -->
+      <div class="variant-card" id="card-pro-volvo" onclick="selectVariant('pro-volvo')">
+        <div class="variant-left">
+          <div class="variant-header">
+            <span class="variant-name">Вариант 5: «Ретро 4-цилиндровый мотор (Стерео-студия)»</span>
+            <span class="badge badge-alt">Студийный захват</span>
+          </div>
+          <div class="variant-desc">
+            Спокойное, уверенное урчание классического 4-цилиндрового двигателя объёмом 2.3 л. 
+            Мягкое дыхание карбюратора, аккуратный выхлоп без низкочастотного давления на череп.
+          </div>
+          <div class="variant-tags">
+            <span class="pill">Винтажный 4-цил</span>
+            <span class="pill">Мягкое дыхание</span>
+            <span class="pill">HPF 125 Гц</span>
+          </div>
+        </div>
+        <button class="btn-listen" id="btn-pro-volvo">▶ Включить</button>
+      </div>
+
+      <!-- Вариант 6: Прошлый вариант "на диктофон" для сравнения -->
+      <div class="variant-card" id="card-old-dictaphone" onclick="selectVariant('old-dictaphone')">
+        <div class="variant-left">
+          <div class="variant-header">
+            <span class="variant-name">Вариант 6: Прошлый вариант («словно на диктофон»)</span>
+            <span class="badge badge-warn">Для сравнения (Любительский микрофон)</span>
+          </div>
+          <div class="variant-desc">
+            Тот самый прошлый звук с плохим микрофоном. Включите его, а затем сразу переключите на Вариант 1 или 3 — 
+            разница в детализации, прозрачности и качестве записи слышна мгновенно.
+          </div>
+        </div>
+        <button class="btn-listen" id="btn-old-dictaphone">▶ Сравнить (Диктофон)</button>
+      </div>
+
+    </div>
+
+    <div class="bottom-bar">
+      <span>💡 Нажмите «Завести и проверить стык» вверху для любого выбранного варианта.</span>
+      <a href="/sound-preview.html">← Перейти к проверке клаксона и стартера</a>
+    </div>
+  </div>
+
+  <script>
+    let ctx = null;
+    let currentRpm = 1800;
+    let currentHpf = 125;
+    let activeVariantId = 'pro-jeep-idle';
+    let currentEngine = null;
+    let jointPlaying = false;
+    let starterSource = null;
+
+    function getAudioCtx() {
+      if (!ctx) {
+        ctx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (ctx.state === 'suspended') ctx.resume();
+      return ctx;
+    }
+
+    const buffers = {};
+    async function loadBuf(url) {
+      if (buffers[url]) return buffers[url];
+      const c = getAudioCtx();
+      const res = await fetch(url);
+      const b = await c.decodeAudioData(await res.arrayBuffer());
+      buffers[url] = b;
+      return b;
+    }
+
+    class CrispEnginePlayer {
+      constructor(ctx, sampleUrl, refRpm = 1350) {
+        this.ctx = ctx;
+        this.sampleUrl = sampleUrl;
+        this.refRpm = refRpm;
+        this.gain = ctx.createGain();
+        this.gain.gain.value = 0;
+
+        // High-pass filter (срез инфранизкого гула)
+        this.hpf = ctx.createBiquadFilter();
+        this.hpf.type = 'highpass';
+        this.hpf.frequency.value = currentHpf;
+        this.hpf.Q.value = 0.7;
+
+        // Low-pass tone (комфортный верх без свиста)
+        this.tone = ctx.createBiquadFilter();
+        this.tone.type = 'lowpass';
+        this.tone.frequency.value = 2400;
+        this.tone.Q.value = 0.55;
+
+        this.gain.connect(this.hpf).connect(this.tone).connect(ctx.destination);
+        this.src = null;
+      }
+
+      async start(fadeTime = 0.15, startVol = 0.85) {
+        const buf = await loadBuf(this.sampleUrl);
+        this.src = this.ctx.createBufferSource();
+        this.src.buffer = buf;
+        this.src.loop = true;
+        this.src.connect(this.gain);
+        this.src.start(0, Math.random() * buf.duration);
+
+        const t = this.ctx.currentTime;
+        this.gain.gain.setValueAtTime(0, t);
+        this.gain.gain.linearRampToValueAtTime(startVol, t + fadeTime);
+        this.updateRpm(currentRpm);
+      }
+
+      updateRpm(rpm) {
+        if (!this.src) return;
+        const t = this.ctx.currentTime;
+        const ratio = Math.max(700, rpm) / this.refRpm;
+        this.src.playbackRate.setTargetAtTime(Math.max(0.65, Math.min(1.85, ratio)), t, 0.05);
+        this.tone.frequency.setTargetAtTime(1600 + (rpm - 750) * 0.45, t, 0.08);
+      }
+
+      updateHpf(freq) {
+        this.hpf.frequency.setTargetAtTime(freq, this.ctx.currentTime, 0.05);
+      }
+
+      stop(fadeTime = 0.12) {
+        if (!this.src) return;
+        const t = this.ctx.currentTime;
+        this.gain.gain.linearRampToValueAtTime(0, t + fadeTime);
+        const s = this.src;
+        this.src = null;
+        setTimeout(() => { try { s.stop(); } catch(e){} }, (fadeTime + 0.05) * 1000);
+      }
+    }
+
+    const variantDefs = {
+      'pro-jeep-idle': {
+        url: '/sound-samples/pro_jeep_studio_idle.wav',
+        ref: 1350
+      },
+      'pro-jeep-cruise': {
+        url: '/sound-samples/pro_jeep_studio_cruise.wav',
+        ref: 1600
+      },
+      'pro-zoom-warmup': {
+        url: '/sound-samples/pro_zoom_h5_warmup.wav',
+        ref: 1400
+      },
+      'pro-klankbeeld': {
+        url: '/sound-samples/pro_klankbeeld_classic.wav',
+        ref: 1300
+      },
+      'pro-volvo': {
+        url: '/sound-samples/pro_volvo_classic_idle.wav',
+        ref: 1350
+      },
+      'old-dictaphone': {
+        url: '/sound-samples/engine_uaz_direct_continuation.wav',
+        ref: 1350
+      }
+    };
+
+    function selectVariant(id) {
+      activeVariantId = id;
+      document.querySelectorAll('.variant-card').forEach(c => c.classList.remove('selected'));
+      const card = document.getElementById('card-' + id);
+      if (card) card.classList.add('selected');
+
+      if (currentEngine) {
+        stopAll(0.08);
+        startVariant(id);
+      }
+    }
+
+    async function startVariant(id, fadeTime = 0.15) {
+      const c = getAudioCtx();
+      const def = variantDefs[id];
+      if (!def) return;
+
+      currentEngine = new CrispEnginePlayer(c, def.url, def.ref);
+      await currentEngine.start(fadeTime);
+
+      updateUiPlaying(id, true);
+    }
+
+    function stopAll(fadeTime = 0.12) {
+      if (currentEngine) {
+        currentEngine.stop(fadeTime);
+        currentEngine = null;
+      }
+      if (starterSource) {
+        try { starterSource.stop(); } catch(e){}
+        starterSource = null;
+      }
+      jointPlaying = false;
+      document.getElementById('btnTestJoint').classList.remove('playing');
+      document.getElementById('btnTestJoint').innerText = '▶ Завести и проверить стык';
+      document.querySelectorAll('.btn-listen').forEach(b => {
+        b.classList.remove('active');
+        b.innerText = b.id.includes('old') ? '▶ Сравнить (Диктофон)' : '▶ Включить';
+      });
+    }
+
+    function updateUiPlaying(id, isPlaying) {
+      document.querySelectorAll('.btn-listen').forEach(b => {
+        b.classList.remove('active');
+        b.innerText = b.id.includes('old') ? '▶ Сравнить (Диктофон)' : '▶ Включить';
+      });
+      if (isPlaying) {
+        const btn = document.getElementById('btn-' + id);
+        if (btn) {
+          btn.classList.add('active');
+          btn.innerText = '⏸ Остановить';
+        }
+      }
+    }
+
+    document.querySelectorAll('.btn-listen').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const id = btn.id.replace('btn-', '');
+        if (currentEngine && activeVariantId === id) {
+          stopAll();
+        } else {
+          stopAll(0.08);
+          selectVariant(id);
+          startVariant(id);
+        }
+      });
+    });
+
+    async function testStarterJoint() {
+      const c = getAudioCtx();
+      if (jointPlaying) {
+        stopAll();
+        return;
+      }
+
+      stopAll(0.05);
+      jointPlaying = true;
+      const jointBtn = document.getElementById('btnTestJoint');
+      jointBtn.classList.add('playing');
+      jointBtn.innerText = '⏹ Идёт заводка... (слушаем стык)';
+
+      // Запускаем эталонный студийный стартер (3.90 сек)
+      const starterBuf = await loadBuf('/sound-samples/starter_jeep_long.wav');
+      const sSrc = c.createBufferSource();
+      sSrc.buffer = starterBuf;
+      const sGain = c.createGain();
+      sGain.gain.value = 0.95;
+      sSrc.connect(sGain).connect(c.destination);
+      sSrc.start();
+      starterSource = sSrc;
+
+      // В момент схватывания (3.4 с) мягко вливаем непрерывный звук мотора
+      setTimeout(async () => {
+        if (!jointPlaying) return;
+        jointBtn.innerText = '🚗 Двигатель завёлся! (слушаем ход)';
+
+        const def = variantDefs[activeVariantId];
+        currentEngine = new CrispEnginePlayer(c, def.url, def.ref);
+        await currentEngine.start(0.55, 0.85);
+        updateUiPlaying(activeVariantId, true);
+
+        // Плавный спад хвоста стартера
+        const t = c.currentTime;
+        sGain.gain.setValueAtTime(0.95, t);
+        sGain.gain.linearRampToValueAtTime(0, t + 0.5);
+      }, 3400);
+    }
+
+    function onRpmChange(val) {
+      currentRpm = parseInt(val, 10);
+      document.getElementById('rpmLabel').innerText = currentRpm + ' об/мин';
+      document.querySelectorAll('.presets-row .btn-preset').forEach(b => b.classList.remove('active'));
+      if (currentEngine) currentEngine.updateRpm(currentRpm);
+    }
+    function setRpm(rpm, btnId) {
+      document.getElementById('rpmSlider').value = rpm;
+      onRpmChange(rpm);
+      const b = document.getElementById(btnId);
+      if (b) b.classList.add('active');
+    }
+
+    function onHpfChange(val) {
+      currentHpf = parseInt(val, 10);
+      document.getElementById('hpfLabel').innerText = currentHpf + ' Гц';
+      document.querySelectorAll('#h80, #h125, #h170').forEach(b => b.classList.remove('active'));
+      if (currentEngine) currentEngine.updateHpf(currentHpf);
+    }
+    function setHpf(hpf, btnId) {
+      document.getElementById('hpfSlider').value = hpf;
+      onHpfChange(hpf);
+      const b = document.getElementById(btnId);
+      if (b) b.classList.add('active');
+    }
+  </script>
+</body>
+</html>

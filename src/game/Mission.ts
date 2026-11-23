@@ -50,6 +50,9 @@ const RADIUS = 25;
 export class Mission {
   routeS = 0;
   time = 0;
+  /** Loading finished early: extra deadline allowance, never negative driving time. */
+  private deadlineBonus = 0;
+  private get scheduleTime(): number { return this.time - this.deadlineBonus; }
   private honks: number[] = [];
   private hornWas = false;
   private active: Stop | null = null;
@@ -58,7 +61,7 @@ export class Mission {
   private stuckFor = 0;
   private stuckCount = 0;
   private bumps = 0;
-  /** Mission time of the last hand-over, null before the first (the time itself may start below zero: Muha's head start). */
+  /** Mission time of the last hand-over, null before the first. */
   private deliveredT: number | null = null;
   finished = false;
   /** Parcels' condition, 100 % at the start. */
@@ -113,8 +116,8 @@ export class Mission {
   }
 
   /** The day so far, for the autosave (Autosave.ts). */
-  snapshot(): { handed: string[]; deliveries: Delivery[]; time: number; cargo: number; police: PoliceLog; extras: [string, number, number][]; visited: string[] } {
-    return { handed: [...this.handed], deliveries: this.deliveries.map((d) => ({ ...d })), time: this.time, cargo: this.cargo, police: { ...this.police }, extras: this.extras.map((e) => [...e] as [string, number, number]), visited: [...this.visited] };
+  snapshot(): { handed: string[]; deliveries: Delivery[]; time: number; deadlineBonus?: number; cargo: number; police: PoliceLog; extras: [string, number, number][]; visited: string[] } {
+    return { handed: [...this.handed], deliveries: this.deliveries.map((d) => ({ ...d })), time: this.time, deadlineBonus: this.deadlineBonus, cargo: this.cargo, police: { ...this.police }, extras: this.extras.map((e) => [...e] as [string, number, number]), visited: [...this.visited] };
   }
 
   /** Back to a day saved part-way: the morning's orders are this mission's; these were handed over, at these times. */
@@ -122,7 +125,11 @@ export class Mission {
     const ids = new Set(this.orders.map((o) => o.id));
     for (const id of s.handed) if (ids.has(id)) this.handed.add(id);
     this.deliveries.push(...s.deliveries.filter((d) => this.handed.has(d.order.id)));
-    this.time = s.time;
+    // Old checkpoints stored schedule time (including the negative head start).
+    // main grants the day's allowance before restoring, so add it back just once.
+    const legacy = s.deadlineBonus === undefined;
+    this.deadlineBonus = Math.max(0, s.deadlineBonus ?? this.deadlineBonus);
+    this.time = Math.max(0, s.time + (legacy ? this.deadlineBonus : 0));
     this.cargo = s.cargo;
     Object.assign(this.police, s.police);
     this.extras.push(...s.extras);
@@ -157,7 +164,10 @@ export class Mission {
   hold: (() => boolean) | null = null;
 
   /** Time spent off the clock-face — changing a wheel, a chat — counts against the deadlines. */
-  addTime(sec: number): void { this.time += sec; }
+  addTime(sec: number): void { this.time = Math.max(0, this.time + sec); }
+
+  /** Idempotent across starting/resuming the route. */
+  grantHeadStart(sec: number): void { this.deadlineBonus = Math.max(this.deadlineBonus, sec, 0); }
 
   /** A rider driven, a favour done: on the evening sheet. */
   extra(label: string, money: number, trust: number): void { this.extras.push([label, money, trust]); }
@@ -178,9 +188,9 @@ export class Mission {
   }
 
   /** Seconds left to the soonest deadline (negative when late), or a large number when none. */
-  get left(): number { const o = this.soonest; return o ? o.due! - this.time : 1e4; }
+  get left(): number { const o = this.soonest; return o ? o.due! - this.scheduleTime : 1e4; }
   /** For the route strip: seconds to the soonest deadline, or null. */
-  get dueLeft(): number | null { const o = this.soonest; return o ? o.due! - this.time : null; }
+  get dueLeft(): number | null { const o = this.soonest; return o ? o.due! - this.scheduleTime : null; }
   /** «Пенсия → Сосновка» for the soonest deadline, or null. */
   get urgentLabel(): string | null {
     const o = this.soonest;
@@ -245,7 +255,7 @@ export class Mission {
     const day = parseInt(this.orders[0]?.id?.split('-')[0] ?? '1', 10);
     return storyFor(stop.id, {
       day,
-      cargo: fragile ? this.cargo : 100, left: due.length ? Math.min(...due) - this.time : 1e4, damage: this.lastDamage, fines: p.fines, arrests: p.arrests, escapes: p.escapes,
+      cargo: fragile ? this.cargo : 100, left: due.length ? Math.min(...due) - this.scheduleTime : 1e4, damage: this.lastDamage, fines: p.fines, arrests: p.arrests, escapes: p.escapes,
       rain: this.lastRain, dark: this.lastDark, stuck: this.stuckCount, visited: [...this.visited], kinds: mine.map((o) => o.kind),
     }, stop.line);
   }
@@ -264,7 +274,7 @@ export class Mission {
     if (p.escapes) { grade -= 0.5; remarks.push('из ГАИ звонили'); }
     return {
       time: this.time, distance, bumps: this.bumps, stuck: this.stuckCount, delivered: this.delivered, total: this.stops.length,
-      police: { ...p }, cargo: fragile ? this.cargo : 100, budget: SCHEDULE, late, grade: Math.max(2, Math.floor(grade + 1e-6)), remarks,
+      police: { ...p }, cargo: fragile ? this.cargo : 100, budget: SCHEDULE + this.deadlineBonus, late, grade: Math.max(2, Math.floor(grade + 1e-6)), remarks,
       deliveries: [...this.deliveries],
       extras: [...this.extras],
     };
@@ -319,7 +329,7 @@ export class Mission {
         for (const o of this.orders) {
           if (o.dest !== near.id || this.handed.has(o.id)) continue;
           this.handed.add(o.id);
-          this.deliveries.push({ order: o, late: o.due === null ? 0 : Math.max(0, this.time - o.due), cargo: o.fragile ? this.cargo : 100 });
+          this.deliveries.push({ order: o, late: o.due === null ? 0 : Math.max(0, this.scheduleTime - o.due), cargo: o.fragile ? this.cargo : 100 });
         }
         this.deliveredT = this.time;
         this.ev.delivered(near);

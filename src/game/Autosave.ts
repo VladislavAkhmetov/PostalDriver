@@ -27,6 +27,7 @@ export interface DaySave {
   handed: string[];
   deliveries: Delivery[];
   time: number;
+  deadlineBonus?: number;
   cargo: number;
   police: PoliceLog;
   extras: [string, number, number][];
@@ -48,6 +49,7 @@ export function loadDay(day: number, runs: number): DaySave | null {
     if (!s || s.v !== 1 || s.day !== day || s.runs !== runs) return null;
     if (!Array.isArray(s.planned) || !s.planned.length || !Array.isArray(s.handed) || !Array.isArray(s.deliveries) || !Array.isArray(s.extras) || !Array.isArray(s.visited)) return null;
     if (!num(s.time) || !num(s.cargo) || !s.police || !num(s.police.fines)) return null;
+    if (s.deadlineBonus !== undefined && (!num(s.deadlineBonus) || s.deadlineBonus < 0)) return null;
     const v = s.van;
     if (!v || ![v.x, v.z, v.yaw, v.fuel, v.damage, v.steer, v.rad].every(num)) return null;
     return s;

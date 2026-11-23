@@ -6,6 +6,7 @@ import type { Railway } from './Railway';
 import { Officer } from './Officer';
 import { crewFor, isPolice } from './Cars';
 import { buildVehicle, rollWheels, setBeacons, setBrake, VehicleKind, VehicleModel } from './Vehicles';
+import { setHighBeam } from './Headlights';
 
 /** A drivable polyline: the asphalt run (main road up to the fork, then the stub) or the dirt run beyond. */
 export interface Actor {
@@ -53,6 +54,13 @@ interface Car {
   sh: { x: number; z: number; vx: number; vz: number; yaw: number; w: number; t: number };
   /** 0…1 how far it has pulled over to let a siren by. */
   yield: number;
+  /**
+   * High-beam warning of a manned post: 0 not yet decided, 1 will flash, −1 will not.
+   * `warnT` is seconds into the blinks (−1 idle); `warnN` is one blink or two.
+   */
+  warn: -1 | 0 | 1;
+  warnT: number;
+  warnN: 1 | 2;
 }
 
 const KINDS_ASPHALT: [VehicleKind, string, number][] = [
@@ -60,7 +68,7 @@ const KINDS_ASPHALT: [VehicleKind, string, number][] = [
   // passenger cars: modelled foreign bodies in 90s paint and liveries
   ['sedan', '#7a1e24', 20], ['sedan', '#2e4a6a', 20], ['compact', '#3e5a3a', 18],
   ['suv', '#18191b', 23], ['taxi', '#e0b42a', 19], ['militia', '#ecece6', 18], ['militiaSuv', '#ecece6', 17],
-  ['moskvich', '#b8322c', 19], ['paz', '#d8a83a', 13], ['tractor', '#3a6aa8', 7],
+  ['kosmich404', 'stock', 19], ['paz', 'white-blue', 13], ['tractor', '#3a6aa8', 7],
   // pixel-art Zhiguli, Bobik, LiAZ bus and an ambulance (Soviet.ts; the colour names the paint variant)
   ['vaz2101', 'yellow', 18], ['vaz2101', 'grey', 18], ['vaz2105', 'green', 19], ['vaz2105', 'baklaj', 19], ['vaz2106', 'blue', 20], ['vaz2106', 'red', 20],
   ['bobik', 'khaki', 17], ['liaz', 'yellow', 13], ['liaz', 'red', 13], ['ambulance', 'skoraya', 22],
@@ -81,6 +89,38 @@ const DECEL = 3.2, DECEL_MAX = 8;
 /** Speed that still lets a car stop within `gap` metres (plus whatever the leader is doing). */
 export const stopSpeed = (gap: number, lead = 0) => Math.sqrt(2 * DECEL * Math.max(0, gap) + lead * lead);
 
+/**
+ * How far an oncoming car is when it blinks its high beams.
+ * Soft per-lamp glare carries the one or two short flashes in the 360p frame.
+ * The blinks finish before the cars pass; at night they can start farther away.
+ * Closer than MIN the car has already cleared the post inside a gap too short
+ * to read as anything but glare, and it stays dark.
+ * Closing speed on the asphalt is about 30–40 m/s. The post is usually much
+ * further ahead than the car: only a car already between the van and the post
+ * may flash. The tight case is the road home, which meets the highway 86 m
+ * before the lay-by — 76 sits just inside that, so the first car past the
+ * booth still blinks as you turn onto the asphalt.
+ */
+const WARN_AT = 76;
+const WARN_AT_NIGHT = 108;
+const WARN_MIN = 32;
+/** A car this close behind one that already flashed stays dark: not every one in a row. */
+const WARN_GAP = 85;
+/** Metres past the post before a flash counts — abreast of the booth is not "already by". */
+const WARN_PAST = 8;
+const FLASH_ON = 0.16;
+const FLASH_OFF = 0.18;
+
+function beamPulse(t: number, n: number): number {
+  const period = FLASH_ON + FLASH_OFF;
+  const i = Math.floor(t / period);
+  if (i >= n) return 0;
+  return t - i * period < FLASH_ON ? 1 : 0;
+}
+function flashEnd(n: number): number {
+  return n * (FLASH_ON + FLASH_OFF) - FLASH_OFF;
+}
+
 export class Traffic {
   readonly group = new THREE.Group();
   readonly paths: Path[];
@@ -98,6 +138,16 @@ export class Traffic {
   actors: Actor[] = [];
   /** Main-road distance where the forest track is shut for the day (the sawmill), or null. */
   closedAt: number | null = null;
+  /**
+   * Manned posts drivers warn about, by source ('gai', and whatever posts come later).
+   * Each entry is a world point: it counts once it sits within POST_REACH of a traffic
+   * path, so a new road warns on its own as soon as that road carries traffic.
+   */
+  private postSrc = new Map<string, { x: number; z: number }[]>();
+  private pins: { path: Path; d: number }[] = [];
+  private pinKey = '';
+  /** +1/−1, the way the van was last driving along a traffic path. 0 until it has. */
+  private heading = 0;
 
   constructor(private ground: Ground, private rail: Railway | null, dynamic: Collider[], sprayTex: THREE.Texture) {
     this.sprayMat = new THREE.SpriteMaterial({ map: sprayTex, transparent: true, depthWrite: false, opacity: 0, color: '#c8ccce' });
@@ -115,7 +165,7 @@ export class Traffic {
       const col: Collider = { x: 1e9, z: 1e9, r: 4, hw: 1, hd: 3, rot: 0, box: true };
       dynamic.push(col);
       const spray = [0, 1, 2].map(() => { const sp = new THREE.Sprite(this.sprayMat.clone()); sp.visible = false; this.group.add(sp); return sp; });
-      this.cars.push({ model: null as unknown as VehicleModel, path: a, d: 0, dir: 1, v: 0, vmax: 10, col, held: 0, honked: false, live: false, x: 0, z: 0, vx: 0, vz: 0, spray, sh: { x: 0, z: 0, vx: 0, vz: 0, yaw: 0, w: 0, t: 0 }, yield: 0 });
+      this.cars.push({ model: null as unknown as VehicleModel, path: a, d: 0, dir: 1, v: 0, vmax: 10, col, held: 0, honked: false, live: false, x: 0, z: 0, vx: 0, vz: 0, spray, sh: { x: 0, z: 0, vx: 0, vz: 0, yaw: 0, w: 0, t: 0 }, yield: 0, warn: 0, warnT: -1, warnN: 1 });
       col.mass = 1300;
       const car = this.cars[this.cars.length - 1];
       // a hit shoves the car off its line, spins it a little and leaves it standing for a while
@@ -155,6 +205,7 @@ export class Traffic {
     c.col.x = 1e9; c.col.z = 1e9;
     for (const sp of c.spray) sp.visible = false;
     if (!c.model) return;
+    setHighBeam(c.model.lights, 0);
     c.model.group.visible = false;
     const key = c.model.kind + c.model.group.userData.color;
     const list = this.pool.get(key) ?? [];
@@ -230,7 +281,10 @@ export class Traffic {
   }
 
   private spawn(c: Car, pl: { path: Path; d: number }, pdir: number): void {
-    const kinds = pl.path.name === 'asphalt' ? KINDS_ASPHALT : KINDS_DIRT;
+    // The Kosmich represents one car with its own registration.
+    const kinds = pl.path.name === 'asphalt'
+      ? KINDS_ASPHALT.filter(([kind]) => kind !== 'kosmich404' || !this.cars.some((car) => car.live && car.model.kind === kind))
+      : KINDS_DIRT;
     const [kind, color, vmax] = kinds[Math.floor(Math.random() * kinds.length)];
     const r = Math.random();
     // mostly oncoming; sometimes a slow one ahead to catch up with, or a faster one from behind
@@ -250,6 +304,7 @@ export class Traffic {
     c.path = pl.path; c.d = d; c.dir = dir; c.vmax = vmax * (0.85 + Math.random() * 0.25);
     c.sh.x = c.sh.z = c.sh.vx = c.sh.vz = c.sh.yaw = c.sh.w = c.sh.t = 0;
     c.v = this.zoneSpeed(c) * 0.9; c.held = 0; c.honked = false; c.live = true;
+    c.warn = 0; c.warnT = -1; c.warnN = 1;
     c.col.hw = c.model.width / 2; c.col.hd = c.model.length / 2; c.col.r = Math.hypot(c.col.hw, c.col.hd);
   }
 
@@ -261,6 +316,8 @@ export class Traffic {
       const f = pl.path.frame(pl.d, this.f);
       const along = pvx * f.tx + pvz * f.tz;
       pdir = along < -1 ? -1 : 1;
+      if (along > 1.5) this.heading = 1;
+      else if (along < -1.5) this.heading = -1;
     }
     // spawning
     this.spawnT -= dt;
@@ -351,6 +408,7 @@ export class Traffic {
       g.rotation.set(-Math.atan2(yf - yb, L2 * 2), yaw2, 0, 'YXZ');
       c.vx = hx * c.v + sh.vx; c.vz = hz * c.v + sh.vz; c.x = ox2; c.z = oz2;
       c.col.x = ox2; c.col.z = oz2; c.col.rot = yaw2;
+      c.col.vx = c.vx; c.col.vz = c.vz;
 
       // road spray kicked up behind the wheels on a wet road
       const sprayK = clamp(wet - 0.35, 0, 1) * clamp((c.v - 4) / 12, 0, 1);
@@ -368,7 +426,7 @@ export class Traffic {
       const ox = x - px, oz = z - pz;
       const dist = Math.hypot(ox, oz);
       const k = c.model.kind;
-      const heavy = k === 'moskvich' || k === 'gai' || k === 'sedan' || k === 'compact' || k === 'taxi' || k === 'militia' || k === 'militiaSuv' ? 0.3
+      const heavy = k === 'kosmich404' || k === 'gai' || k === 'sedan' || k === 'compact' || k === 'taxi' || k === 'militia' || k === 'militiaSuv' ? 0.3
         : k === 'uaz' || k === 'suv' ? 0.5 : k === 'tractor' ? 0.8 : 1;
       const gain = clamp(1 - dist / 140, 0, 1) ** 2 * (0.5 + heavy * 0.5) * clamp(c.v / 6, 0.3, 1);
       if (gain > best.gain) {
@@ -378,6 +436,118 @@ export class Traffic {
     }
     best.honk = this.honkQ;
     this.honkQ = 0;
+    this.flashWarnings(dt, pl);
     return best;
+  }
+
+  /**
+   * A manned post. `source` keeps its own list, so the lay-by, a radar set out
+   * in a village and a later post on another road don't wipe each other.
+   * An empty list clears that source. Points are world XZ; a post the traffic
+   * paths don't pass (no cars there yet) simply never warns.
+   */
+  setPosts(source: string, posts: readonly { x: number; z: number }[]): void {
+    const prev = this.postSrc.get(source);
+    if (!posts.length) {
+      if (!prev) return;
+      this.postSrc.delete(source);
+      // not '' — an empty list builds the same key, and would keep the old pins
+      this.pinKey = '\0';
+      return;
+    }
+    if (prev && prev.length === posts.length && prev.every((p, i) => p.x === posts[i].x && p.z === posts[i].z)) return;
+    this.postSrc.set(source, posts.map((p) => ({ x: p.x, z: p.z })));
+    this.pinKey = '';
+  }
+
+  /** Shoulder: the inspector stands a few metres off the centre line. */
+  private static readonly POST_REACH = 12;
+
+  /** Posts dropped onto the traffic paths. Cached until a source moves. */
+  private posted(): { path: Path; d: number }[] {
+    const raw: { x: number; z: number }[] = [];
+    for (const list of this.postSrc.values()) raw.push(...list);
+    raw.sort((a, b) => a.x - b.x || a.z - b.z);
+    const key = raw.map((p) => `${p.x.toFixed(1)},${p.z.toFixed(1)}`).join(';');
+    if (key === this.pinKey) return this.pins;
+    this.pinKey = key;
+    const reach = Traffic.POST_REACH;
+    this.pins = [];
+    for (const p of raw) {
+      const hit = this.nearestOnPaths(p.x, p.z, reach);
+      if (hit) this.pins.push(hit);
+    }
+    return this.pins;
+  }
+
+  /** Closest point on any traffic path, or null when nothing passes within `reach` metres. */
+  private nearestOnPaths(x: number, z: number, reach: number): { path: Path; d: number } | null {
+    const r2 = reach * reach;
+    let best = r2, bestD = 0, bestPath: Path | null = null;
+    for (const path of this.paths) {
+      const { xs, zs, cum } = path;
+      for (let i = 1; i < xs.length; i++) {
+        const ax = xs[i - 1], az = zs[i - 1];
+        const dx = xs[i] - ax, dz = zs[i] - az;
+        const l2 = dx * dx + dz * dz;
+        if (l2 < 1e-4) continue;
+        let u = ((x - ax) * dx + (z - az) * dz) / l2;
+        if (u < 0) u = 0; else if (u > 1) u = 1;
+        const px = ax + dx * u, pz = az + dz * u;
+        const dd = (x - px) * (x - px) + (z - pz) * (z - pz);
+        if (dd < best) { best = dd; bestPath = path; bestD = cum[i - 1] + u * (cum[i] - cum[i - 1]); }
+      }
+    }
+    return bestPath ? { path: bestPath, d: bestD } : null;
+  }
+
+  /**
+   * Oncoming, already past a manned post the van has not reached, and close
+   * enough for the blink to read. `head` is the van's direction along the path.
+   */
+  private inWarningZone(c: Car, pl: { path: Path; d: number }, head: number, posts: { path: Path; d: number }[], reach: number): boolean {
+    if (c.path !== pl.path || c.dir === head || c.sh.t > 0) return false;
+    const gap = head * (c.d - pl.d);
+    if (gap < WARN_MIN || gap > reach) return false;
+    return posts.some((p) => p.path === c.path && head * (p.d - pl.d) > WARN_PAST && head * (p.d - c.d) > WARN_PAST);
+  }
+
+  /** Play a warning already started, and start one for a car that has just come into the window. */
+  private flashWarnings(dt: number, pl: { path: Path; d: number } | null): void {
+    const night = this.cars.find((c) => c.model)?.model.tail.userData.night ?? 0;
+    const reach = night > 0.35 ? WARN_AT_NIGHT : WARN_AT;
+    const posts = pl && this.heading !== 0 ? this.posted() : [];
+    const due: Car[] = [];
+    for (const c of this.cars) {
+      if (!c.live) continue;
+      if (c.warnT >= 0) {
+        c.warnT += dt;
+        const done = c.warnT >= flashEnd(c.warnN);
+        setHighBeam(c.model.lights, done ? 0 : beamPulse(c.warnT, c.warnN), night);
+        if (done) c.warnT = -1;
+        continue;
+      }
+      setHighBeam(c.model.lights, 0, night);
+      if (c.warn !== 0 || !pl || this.heading === 0) continue;
+      if (this.inWarningZone(c, pl, this.heading, posts, reach)) due.push(c);
+    }
+    const head = this.heading;
+    // the car the van will meet first decides first, so it can keep the one behind it dark
+    due.sort((a, b) => head * (a.d - b.d));
+    for (const c of due) {
+      let pred: Car | null = null, pd = Infinity;
+      for (const o of this.cars) {
+        if (!o.live || o === c || o.path !== c.path || o.dir !== c.dir || o.warn === 0) continue;
+        const closer = head * (c.d - o.d);
+        if (closer > 0 && closer < pd) { pd = closer; pred = o; }
+      }
+      const blocked = pred !== null && pd < WARN_GAP && pred.warn === 1;
+      const yes = !blocked && !isPolice(c.model.kind) && c.model.kind !== 'gai' && Math.random() < 0.55;
+      c.warn = yes ? 1 : -1;
+      if (!yes) continue;
+      c.warnN = Math.random() < 0.72 ? 2 : 1;
+      c.warnT = 0;
+      setHighBeam(c.model.lights, 1, night);
+    }
   }
 }

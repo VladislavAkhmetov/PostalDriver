@@ -106,7 +106,7 @@ const BRIBE_OK = [
 const CALLS = [
   'Водитель почтовой машины! Немедленно остановитесь!',
   'Почта, прижмись к обочине! Кому сказано!',
-  'Буханка, номер вижу! Остановитесь — хуже будет!',
+  'Почтовик, номер вижу! Остановитесь — хуже будет!',
   'Глуши мотор, гонщик! Всё равно догоним!',
   'У меня бензин казённый, почта, — а у тебя?',
   'Сейчас подрежу — пеняй на себя!',
@@ -701,6 +701,10 @@ export class Police {
   }
 
   update(dt: number, t: number, px: number, pz: number, pvx: number, pvz: number, pyaw = 0): void {
+    // where the radar actually is today (the lay-by, or out in a village). Quiet days — the
+    // prologue, the first morning — nobody is there to warn about. Other posts can register
+    // themselves on the traffic the same way, under their own source name.
+    this.traffic.setPosts('gai', this.quiet ? [] : [{ x: this.p.post.x, z: this.p.post.z }]);
     const ins = this.p.inspector;
     const ip = ins.group.position;
     const dIns = Math.hypot(ip.x - px, ip.z - pz);
@@ -1186,7 +1190,7 @@ export class Police {
     model.group.rotation.set(0, yaw, 0);
     col.x = x; col.z = z; col.rot = yaw; col.hw = model.width / 2; col.hd = model.length / 2; col.r = Math.hypot(col.hw, col.hd);
     this.roadblock = { on: true, used: true, x, z, yaw };
-    this.ev.megaphone('Всем постам! Буханка идёт на вас — перекрыть дорогу!');
+    this.ev.megaphone('Всем постам! Почтовик идёт на вас — перекрыть дорогу!');
     this.ev.toast('Впереди заграждение ГАИ!', 3);
   }
 

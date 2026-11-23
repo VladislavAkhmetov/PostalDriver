@@ -1,3 +1,4 @@
+import { readAlia, type AliaState } from './AliaStory';
 import { newPayBook, type PayBook } from './Career';
 import { OLD_TO_1997 } from './Money';
 import type { MuhaState } from './MuhaStory';
@@ -7,10 +8,10 @@ import type { GaiMemory } from '../world/Police';
 import type { CasesSaved } from './Cases';
 /** What carries over from run to run, kept in the browser. */
 export interface Profile {
-  /** Roubles in the depot's till. */
+  /** Legacy balance retained for save compatibility; no longer earned, spent or shown. */
   money: number;
   runs: number;
-  /** The van's crash damage, 0…1: it is not mended unless you pay. */
+  /** The van's crash damage, 0…1, until repaired through the post office. */
   damage: number;
   /** What is left in the tank, 0…1. */
   fuel: number;
@@ -26,6 +27,9 @@ export interface Profile {
   rub?: number;
   /** How far Muha's story has got (absent: not met yet). */
   muha?: MuhaState;
+  alia?: AliaState;
+  /** Optional drive home after a completed workday, recoverable after reload. */
+  returnEvening?: number;
   /** The van's broken parts, on top of `damage`: the steering linkage (and which way it pulls), the radiator. */
   wear?: Wear;
   /** Evenings spent in the garage with the grandfather (his stories come in turn). */
@@ -38,7 +42,7 @@ export interface Profile {
   roadStop?: RoadStopState;
   /** The old letters from the cupboard: which have gone home, which is on its way. */
   letters?: LettersState;
-  /** The summer's exams in Ufa: gone and passed, or «на следующий год»; and the July they come next. */
+  /** Legacy exam fields: ignored by the current story, retained for older saves. */
   exams?: 'passed' | 'next';
   examYear?: number;
   /** What Sergeant Kuzmin remembers of the post van: meetings, envelopes, warnings. */
@@ -65,6 +69,8 @@ export function loadProfile(): Profile {
       // saves from before the parts were told apart: the old one-number damage split between them
       wear: p.wear && typeof p.wear.steer === 'number' ? p.wear : { steer: Math.min(1, (p.damage ?? 0) * 0.6), rad: Math.min(1, (p.damage ?? 0) * 0.4), pull: 1 },
       garage: p.garage ?? 0,
+      alia: readAlia(p.alia),
+      returnEvening: Number.isInteger(p.returnEvening) && p.returnEvening === p.day - 1 && [4,9,13,18].includes(p.returnEvening) ? p.returnEvening : undefined,
       // a save from before the prologue existed has never seen it: it plays once, on «Продолжить»
       prologue: p.prologue ?? false,
       roadStop: p.roadStop && typeof p.roadStop.done === 'boolean' ? p.roadStop : undefined,
@@ -81,7 +87,7 @@ export function saveProfile(p: Profile): void {
   try { localStorage.setItem(KEY, JSON.stringify(p)); } catch { /* private mode */ }
 }
 
-/** How the van gets mended: in his grandfather's garage at home (parts only — Timur alone while the grandfather is in hospital in Ufa, then with him on the stool by the pit), or at Kolka's workshop (parts and labour). */
+/** How the van gets mended: in his grandfather's garage at home (parts only — Timur alone while the grandfather is away on his Ufa voucher, then with him on the stool by the pit), or at Kolka's workshop (parts and labour). */
 export type RepairKind = 'grandpa' | 'kolka';
 /** Parts for a full repair, 1997 roubles: the body and engine, the steering linkage, the radiator. */
 const FULL_REPAIR = 300000, STEER_PARTS = 70000, RAD_PARTS = 50000;
@@ -94,12 +100,10 @@ export const repairCost = (p: Profile, kind: RepairKind = 'grandpa'): number => 
 /** Anything worth mending. */
 export const needsRepair = (p: Profile): boolean => repairCost(p) >= 1000;
 
-/** Pay for a repair as far as the till allows; returns the share of the work done, 0…1. */
+/** Repair through the post office; returns 1 when repaired, 0 when already sound. */
 export function repair(p: Profile, kind: RepairKind): number {
   if (!needsRepair(p)) return 0;
-  const full = repairCost(p, kind);
-  const share = Math.min(1, p.money / full);
-  p.money = Math.max(0, p.money - Math.round(full * share));
+  const share = 1; // Parts and workshop work are provided by the post office.
   const keep = 1 - share;
   p.damage = keep < 0.01 ? 0 : p.damage * keep;
   if (p.wear) { p.wear.steer = keep < 0.01 ? 0 : p.wear.steer * keep; p.wear.rad = keep < 0.01 ? 0 : p.wear.rad * keep; }
@@ -109,13 +113,13 @@ export function repair(p: Profile, kind: RepairKind): number {
 
 /**
  * The grandfather's word on the evenings Timur mends the van in his garage alone: a long-distance
- * call from the hospital in Ufa, one evening at a time — the work, the old days on this route, and
+ * call from the sanatorium near Ufa, one evening at a time — the work, the old days on this route, and
  * now and then a hint at what he never told (docs/design.md, «Тайна картатая»).
  */
-/** In the garage of an evening, from the stool by the pit (the grandfather home from hospital). */
+/** In the garage of an evening, from the stool by the pit (the grandfather home from Ufa). */
 const GRANDPA: string[] = [
   'Тягу на сколько затягивал? На четырнадцать?.. Ключ на тринадцать, улым! Армия армией, а ключи учить надо.',
-  'В семьдесят девятом у меня на этой самой буханке тяга лопнула под Сосновкой. Шёл пешком, мешок на плече. Баба Шура тогда ещё молодая была, накормила. Привет ей передай.',
+  'В семьдесят девятом у меня на этом самом вездеходе тяга лопнула под Сосновкой. Шёл пешком, мешок на плече. Баба Шура тогда ещё молодая была, накормила. Привет ей передай.',
   'Радиатор паял? Олово, канифоль да терпение. Терпения у тебя, улым, пока на одну пайку. Ничего, у меня тоже на одну было.',
   'Зинаида на почту девчонкой пришла, собак боялась. А теперь собаки её боятся. И начальство тоже. Ты её слушай.',
   'Знаешь, почему в Заречье почту ждут? Я ни разу не опоздал. Ну, один раз. Мост тогда смыло — так я вброд.',
@@ -124,17 +128,22 @@ const GRANDPA: string[] = [
   'Өләсәй твоя за меня вышла, потому что я ей письма сам носил. От себя же. Ты ей помогай — она за нас двоих тянет.',
   'Муха этот твой… Мальчишкой у меня в гараже велосипеды чинил. Руки золотые были. Куда он их теперь дел?',
   'В шкафу у Зинаиды пачка писем лежит, «до востребования», с девяносто первого. Никто не востребовал. Ты загляни как-нибудь.',
-  'Я в твои годы тоже в город хотел. Не поехал — дед заболел. Вот и я заболел. А ты всё равно поедешь. Я сказал.',
+  'Зинаида говорит, ты уже сам объезды находишь. Мне бы раньше такой отпуск — может, и научился бы отдыхать.',
   'Развал на глаз выставил? Завтра проедешь — скажешь, как. Тянет — значит, глаз ещё не набил. Ничего, набьёшь.',
   'Митяй опять свой мотоцикл заводил — слышал? Полвека заводит. Вот это, улым, характер.',
 ];
-/** The first weeks, while he is in hospital in Ufa: on the trunk line to the post office. */
+/** While he is at the sanatorium near Ufa: on the trunk line to the post office. */
 const GRANDPA_PHONE: string[] = [
   'Тягу на сколько затягивал? На четырнадцать?.. Ключ на тринадцать, улым! Армия армией, а ключи учить надо.',
-  'Радиатор паял? Олово, канифоль да терпение. Тут врачи тоже всё про терпение.',
+  'Радиатор паял? Олово, канифоль да терпение. Тут тоже всё про терпение: грязи, кефир — и молчи.',
   'Есть одно письмо… Ладно. Не по телефону. Приеду — расскажу. Гайки на колёсах проверь.',
 ];
-export const grandpaLine = (p: Profile, home = true): string => {
-  const l = home ? GRANDPA : GRANDPA_PHONE;
+/** The week with his sister in Ufa, after the voucher: still on the trunk line. */
+const GRANDPA_SISTER_PHONE: string[] = [
+  'Хадия кормит так, что санаторий вспоминаю с нежностью. Неделя — и я дома. Ключ на тринадцать, улым.',
+  'В пятницу вечерним автобусом. Встречать не надо: өләсәй встретит, а ты почту вези. Гайки проверь.',
+];
+export const grandpaLine = (p: Profile, home: boolean | 'sister' = true): string => {
+  const l = home === 'sister' ? GRANDPA_SISTER_PHONE : home ? GRANDPA : GRANDPA_PHONE;
   return l[((p.garage ?? 1) - 1) % l.length];
 };

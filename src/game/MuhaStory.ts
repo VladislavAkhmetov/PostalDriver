@@ -9,8 +9,8 @@ import type { Mission } from './Mission';
 /**
  * Muha's story, chapter one (docs/design.md, «Муха»): Zhenka, Timur's best friend from before the
  * army, hangs about by the shop in Klyuchevsk next to a tinted saloon and works for "a serious man"
- * in the district town. Told the way the rest of the game is, from the cab: cards with answers when
- * the van stops by him, a line of chatter, a fade to black — no cutscenes.
+ * in the district town. Their first meeting is an exterior conversation; later chapters use
+ * roadside dialogue and can adopt the same StoryScene runner independently.
  *
  *  1. `meet`  — he waves the van down: "alive, demobbed!", a bit of bragging, "drop by, I've a job".
  *  2. `ask`   — another day: a box taped shut for Seryi in a village on today's route; cash up front.
@@ -68,6 +68,8 @@ export interface MuhaState {
 }
 
 export interface StoryHooks {
+  meetScene(done: (bond: number) => void, cancel: () => void): boolean;
+  hospitalScene?(speaker: string, line: string): boolean;
   choice(speaker: string, line: string, options: string[], pick: (i: number) => void): void;
   closeChoice(): void;
   choiceOpen(): boolean;
@@ -350,22 +352,8 @@ export class MuhaStory {
   // ------------------------------------------------------------ 1. the meeting
 
   private meet(): void {
-    const h = this.hooks;
-    // he comes up to the window with his hand out
-    this.world.muha?.act('Handshake', 4);
-    h.choice(MUHA, 'Тимурка?! Живой! Дембель! А чего на почтовой буханке — картатай пристроил?', ['Здорово, Жень! Сам-то как?', 'Работаю. Некогда, Жень'], (i) => {
-      if (i === 1) {
-        h.say(MUHA, 'Ну работай, работай, почтальон. Заезжай как-нибудь — дело есть. Лёгкое. Почта ж везде ездит.');
-        this.done('ask');
-        return;
-      }
-      h.choice(MUHA, 'Я? Кручусь. При деле теперь — у одного серьёзного человека в райцентре. Видал тачку? Своя.', ['Откуда деньги-то, Жень?', 'Красивая. Поздравляю'], (j) => {
-        h.say(MUHA, j === 0
-          ? 'Много будешь знать — скоро состаришься. Ладно, свои люди. Заезжай как-нибудь — дело есть, лёгкое. Почта ж везде ездит.'
-          : 'То-то! Слушай, заезжай как-нибудь — дело есть, лёгкое. Почта ж везде ездит. Бывай, дембель!');
-        this.done('ask', 1);
-      });
-    });
+    const started = this.hooks.meetScene(bond => this.done('ask', bond), () => { this.busy = false; });
+    if (!started) this.busy = false;
   }
 
   // ------------------------------------------------------------ 2. the box
@@ -387,10 +375,10 @@ export class MuhaStory {
       this.carrying = true;
       // a box with no line in the waybill: the post looks closer at vans that carry such things
       this.police.checkOdds = 0.75;
-      const o: Order = { id: BOX, dest: dest.id, kind: 'parcel', title: 'Коробка от Мухи', note: 'замотана скотчем, не по ведомости', pay: 30000, fragile: false, due: null, from: 'Муха' };
+      const o: Order = { id: BOX, dest: dest.id, kind: 'parcel', title: 'Коробка от Мухи', note: 'замотана скотчем, не по ведомости', pay: 0, fragile: false, due: null, from: 'Муха' };
       this.mission.addOrder(o);
-      this.mission.extra('Муха · задаток за коробку', 50000, 0);
-      h.say(MUHA, 'Красавчик! Пятьдесят — держи, остальное Серый отдаст. Только у поста ГАИ не гони, лишний раз не светись.');
+      this.mission.extra('Муха · взял коробку для Серого', 0, 0);
+      h.say(MUHA, 'Красавчик! Знал, что выручишь. Серый у магазина встретит. Только у поста ГАИ не гони, лишний раз не светись.');
       h.toast(`В кузове: коробка от Мухи → ${dest.name}`);
       this.done('after');
     };
@@ -399,7 +387,7 @@ export class MuhaStory {
       h.say(MUHA, 'Ну смотри. Я-то думал, свой пацан… Ладно, бывай, почтальон.');
       this.done('after', -1);
     };
-    h.choice(MUHA, `Тимур, выручи. Коробку надо ${to} закинуть, Серому — он тебя сам найдёт. Пятьдесят тысяч сразу, и он ещё сверху добавит. Тебе ж по пути.`,
+    h.choice(MUHA, `Тимур, выручи по старой дружбе. Коробку надо ${to} закинуть, Серому — он тебя сам найдёт. Я сегодня никак, а он ждёт. Тебе ж по пути.`,
       ['Что внутри?', 'Давай, отвезу', 'Не, Жень. Почта — не такси для коробок'], (i) => {
         if (i === 1) take();
         else if (i === 2) refuse();
@@ -413,7 +401,7 @@ export class MuhaStory {
     this.carrying = false;
     this.police.checkOdds = 0.3;
     this.s.outcome = 'delivered';
-    setTimeout(() => this.hooks.say(SERYI, 'От Мухи? Давай сюда. Не открывал? Правильно. Держи сверху — и забудь, что видел.'), 3200);
+    setTimeout(() => this.hooks.say(SERYI, 'От Мухи? Давай сюда. Не открывал? Правильно. Мухе передай: забрал. И забудь, что видел.'), 3200);
   }
 
   private seize(): void {
@@ -444,13 +432,13 @@ export class MuhaStory {
       this.inspecting = false;
       if (i === 0) {
         h.say(KUZMIN, 'Знакомый, значит. Ну, открываем.');
-        setTimeout(() => open('Коробку изымаю, протокол — штраф сто тысяч. А знакомому своему передай: Кузьмин его знает. И тачку его тоже.', 100000, 'груз без документов', 0), 1600);
+        setTimeout(() => open('Коробку изымаю, оформлю протокол. А знакомому своему передай: Кузьмин его знает. И тачку его тоже.', 100000, 'груз без документов', 0), 1600);
       } else if (i === 1) {
         h.say(KUZMIN, 'По ведомости, говоришь? Ведомость — вот она. Открывай.');
-        setTimeout(() => open('Ещё и врёт в глаза. Изъятие, штраф двести тысяч, и начальнице твоей позвоню — пусть знает, что у неё по району возят.', 200000, 'груз без документов, ложные показания', -5), 1600);
+        setTimeout(() => open('Ещё и врёт в глаза. Коробку изымаю. И начальнице твоей позвоню — пусть знает, что у неё по району возят.', 200000, 'груз без документов, ложные показания', -5), 1600);
       } else {
         h.say(KUZMIN, 'Подкинули ему… Сам и открывай.');
-        setTimeout(() => open('Сто тысяч штраф, коробка — в отдел. В следующий раз, почта, смотри, что тебе «подкидывают».', 100000, 'груз без документов', 0), 1600);
+        setTimeout(() => open('Оформлю протокол, коробка — в отдел. В следующий раз, почта, смотри, что тебе «подкидывают».', 100000, 'груз без документов', 0), 1600);
       }
     });
     return true;
@@ -531,7 +519,7 @@ export class MuhaStory {
     this.blockStill = d < 30 && kmh < 3 ? this.blockStill + dt : 0;
     if (this.talk < 0 && !this.talking && this.blockStill > 1 && !h.choiceOpen()) {
       this.talking = true;
-      h.choice(GUY, 'Э, почта! Куда прёшь? Закрыто. Разворачивай свою буханку.', ['Мне дальше, почту везу', 'Понял, разворачиваюсь', 'Мужики, а что случилось-то?'], (i) => {
+      h.choice(GUY, 'Э, почта! Куда прёшь? Закрыто. Разворачивай свой вездеход.', ['Мне дальше, почту везу', 'Понял, разворачиваюсь', 'Мужики, а что случилось-то?'], (i) => {
         this.talking = false;
         this.talk = i;
         this.blockStill = 0;
@@ -571,7 +559,7 @@ export class MuhaStory {
     } else if (o === 'detour') {
       h.choice(MUHA, warned
         ? 'Ну что, объехал? Молодец, что послушал. Разъехались там без всего — покричали и разъехались. Пилорама теперь Лысого.'
-        : 'Слыхал, ты в тот день к пилораме подъезжал — пацаны буханку видели. Хорошо, что развернулся. Я тебя утром предупредить хотел, а ты мимо пролетел.',
+        : 'Слыхал, ты в тот день к пилораме подъезжал — пацаны почтовик видели. Хорошо, что развернулся. Я тебя утром предупредить хотел, а ты мимо пролетел.',
       ['Жень, а ты там был?', 'Мне-то что, я почту вожу'], (i) => {
         h.say(MUHA, i === 0
           ? 'Был. Позвали всё-таки, под конец. Стоял у машины, как дурак. Витьку жалко — он там двадцать лет пилил, а теперь «под Лысым». Ладно, не бери в голову.'
@@ -622,7 +610,7 @@ export class MuhaStory {
     const d = Math.hypot(r.pos.x - v.x, r.pos.z - v.z);
     this.arriveT = d < 26 && kmh < 2.5 ? this.arriveT + dt : 0;
     if (this.arriveT > 0.6) {
-      h.say(r.speaker, r.line);
+      if (r.out !== 'hospital' || !h.hospitalScene?.(r.speaker, r.line)) h.say(r.speaker, r.line);
       if (r.out === 'police') setTimeout(() => h.say(MUHA, 'Сдал, значит… Ладно. Может, так и правильно. Бывай, Тимур.'), 5200);
       this.pressOut = r.out;
       this.s.bond = Math.max(-3, Math.min(3, this.s.bond + r.bond));
@@ -638,7 +626,7 @@ export class MuhaStory {
 
   private finale(): void {
     const h = this.hooks;
-    h.choice(MUHA, 'Здорово, почтальон. Тачку Лысый забрал — и пусть. Я, Тимур, всё. Завязал. Зинаида Павловна сказала — на почту грузчик нужен, с понедельника. Ты в Уфу уедешь — а я при буханке. Возьмёшь пока в напарники?',
+    h.choice(MUHA, 'Здорово, почтальон. Тачку Лысый забрал — и пусть. Я, Тимур, всё. Завязал. Зинаида Павловна сказала — на почту грузчик нужен, с понедельника. Ты в Уфу уедешь — а я при вездеходе. Возьмёшь пока в напарники?',
       ['Возьму, Жень', 'Посмотрим, как себя покажешь'], (i) => {
         h.say(MUHA, i === 0 ? 'Я ж знал. С меня пельмени. Ну, с мамки моей.' : 'Справедливо. Покажу. Ты ещё увидишь, какой я грузчик.');
         this.done('end', i === 0 ? 1 : 0);

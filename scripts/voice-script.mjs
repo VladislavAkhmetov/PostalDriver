@@ -10,6 +10,7 @@
 // forms, each its own recording; docs/voice/heard.json (what a playthrough heard, from
 // `__uaz.voice.heard` in the dev build) adds those forms when it is there.
 import { createRequire } from 'node:module';
+import { build } from 'esbuild';
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -58,7 +59,7 @@ const doors = new Map([['sosnovka', 'Нина Петровна'], ['zarechye', '
 /** Who speaks a file's lines when nothing else says (the first morning is the grandfather's lesson). */
 const FILE_SPEAKER = { 'src/game/FirstMorning.ts': 'Картатай' };
 /** Speaker constants imported from elsewhere, and the dynamic ones. */
-const KNOWN = { KARTATAY: 'Картатай', 'e.rider.name': 'попутчик (по месту)', 'l.c.who': 'герой случая (по месту)' };
+const KNOWN = { ALIA: 'Алия', KARTATAY: 'Картатай', 'e.rider.name': 'попутчик (по месту)', 'l.c.who': 'герой случая (по месту)' };
 
 /**
  * The places the road's people ask for (Encounters.ts): {to} — «до Сосновки», {into} — «в Сосновку», {who} —
@@ -90,6 +91,8 @@ function add(speaker, text, kind, file, node, sf, template = false) {
 // World.ts first: who stands at which door
 const order = [...files].sort((a, b) => (b.endsWith('World.ts') ? 1 : 0) - (a.endsWith('World.ts') ? 1 : 0));
 for (const file of order) {
+  // Alia's conditional scene table is expanded below into the lines actually heard.
+  if (file === 'src/game/AliaStory.ts') continue;
   const src = readFileSync(join(ROOT, file), 'utf8');
   const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true);
   const consts = new Map();
@@ -228,6 +231,19 @@ const draftPath = join(ROOT, 'docs/voice/drafts.json');
 const drafts = new Set(existsSync(draftPath) ? Object.keys(JSON.parse(readFileSync(draftPath, 'utf8'))) : []);
 const mark = (id) => (!id || !rec.has(id) ? '' : drafts.has(id) ? 'черновик' : 'да');
 const real = (l) => mark(l.id) === 'да', draft = (l) => mark(l.id) === 'черновик';
+// Enumerate the small optional dialogue table, including short-trip combined arrivals.
+const aliaBundle = await build({entryPoints:[join(ROOT,'src/game/AliaStory.ts')],bundle:true,write:false,format:'esm',platform:'node',logLevel:'silent'});
+const alia = await import('data:text/javascript;base64,'+Buffer.from(aliaBundle.outputFiles[0].text).toString('base64'));
+const noteAlia = (speaker,text,kind) => {
+  if(!text)return; const clean=voiceText(text),id=voiceId(clean);
+  if(!lines.has(id))lines.set(id,{id,speaker,kind,text:clean,where:'src/game/AliaStory.ts',template:false,n:1});
+};
+for(const rides of [0,1,2,3,4,5]) for(const interest of [0,2]) for(const shift of ['morning','evening']) {
+  const state=alia.readAlia({rides,interest}),scene=alia.aliaScene(state,shift);
+  for(const text of [scene.pickup,scene.chatter,scene.arrival,scene.chatter+'\n\n'+scene.arrival])noteAlia('Алия',text,'say');
+  for(const answer of scene.answers){noteAlia(PLAYER,answer.text,'answer');noteAlia('Алия',answer.reply,'say');}
+  for(const letters of ['none','friendly','personal'])noteAlia(NARRATOR,alia.aliaMemory({...state,letters}),'page');
+}
 const all = [...lines.values()].sort((a, b) => a.speaker.localeCompare(b.speaker, 'ru') || a.where.localeCompare(b.where, 'en', { numeric: true }));
 // one character, one voice: the roles as the portraits know them (src/ui/portraits.ts), whatever the label
 const WHO = [...readFileSync(join(ROOT, 'src/ui/portraits.ts'), 'utf8').matchAll(/\[\/(.+?)\/, '(\w+)'\]/g)].map((m) => [new RegExp(m[1]), m[2]]);

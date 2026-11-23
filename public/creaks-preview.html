@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Выбор звуков скрипа для автомобиля — Postal Driver</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=PT+Mono&family=PT+Sans:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0d1117;
+      --card: #161b22;
+      --card-hover: #1c222b;
+      --border: #30363d;
+      --accent: #e5a00d;
+      --accent-glow: rgba(229, 160, 13, 0.25);
+      --success: #10b981;
+      --text: #e6edf3;
+      --text-dim: #8b949e;
+      --badge-bg: rgba(229, 160, 13, 0.15);
+      --badge-border: rgba(229, 160, 13, 0.35);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'PT Sans', system-ui, -apple-system, sans-serif;
+      min-height: 100vh;
+      padding: 24px 16px 64px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .container {
+      width: 100%;
+      max-width: 920px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+    header {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    }
+    h1 {
+      font-size: 22px;
+      font-weight: 700;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+    .lead {
+      color: var(--text-dim);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    .info-box {
+      margin-top: 14px;
+      background: rgba(229, 160, 13, 0.08);
+      border: 1px solid var(--badge-border);
+      border-radius: 8px;
+      padding: 12px 16px;
+      font-size: 13px;
+      color: #fde047;
+      line-height: 1.45;
+    }
+
+    .group-panel {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      transition: border-color 0.2s;
+    }
+    .group-panel:hover {
+      border-color: #484f58;
+    }
+    .group-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    .group-title-block h2 {
+      font-size: 17px;
+      color: #fff;
+      margin-bottom: 4px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .group-desc {
+      font-size: 13px;
+      color: var(--text-dim);
+      line-height: 1.4;
+      max-width: 600px;
+    }
+    .source-meta {
+      font-family: 'PT Mono', monospace;
+      font-size: 11px;
+      color: #7ee787;
+      background: rgba(126, 231, 135, 0.1);
+      padding: 3px 8px;
+      border-radius: 4px;
+      margin-top: 4px;
+      display: inline-block;
+    }
+
+    /* Simulation Bar */
+    .sim-bar {
+      background: #11141a;
+      border: 1px solid #282f3a;
+      border-radius: 10px;
+      padding: 14px 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    .sim-info {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .sim-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: #f0f6fc;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .sim-status {
+      font-size: 12px;
+      color: var(--text-dim);
+      font-family: 'PT Mono', monospace;
+    }
+    .sim-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .btn-sim {
+      background: var(--accent);
+      color: #0d1117;
+      border: none;
+      padding: 9px 18px;
+      border-radius: 7px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.15s;
+      white-space: nowrap;
+    }
+    .btn-sim:hover {
+      background: #f5b72e;
+      transform: translateY(-1px);
+    }
+    .btn-sim.running {
+      background: #ef4444;
+      color: #fff;
+    }
+
+    /* Source player strip */
+    .source-strip {
+      background: rgba(255,255,255,0.02);
+      border-top: 1px dashed #21262d;
+      border-bottom: 1px dashed #21262d;
+      padding: 10px 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 12px;
+      color: var(--text-dim);
+    }
+    .source-strip audio {
+      height: 32px;
+      max-width: 250px;
+    }
+
+    /* Grid of variations */
+    .variants-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 10px;
+    }
+    .variant-card {
+      background: #0f1318;
+      border: 1px solid #21262d;
+      border-radius: 8px;
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      transition: all 0.15s;
+      position: relative;
+    }
+    .variant-card:hover {
+      border-color: #38414e;
+      background: #131820;
+    }
+    .variant-card.flash-active {
+      border-color: var(--accent);
+      background: rgba(229, 160, 13, 0.12);
+      box-shadow: 0 0 14px var(--accent-glow);
+    }
+    .variant-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+    }
+    .variant-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: #e6edf3;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .variant-dur {
+      font-family: 'PT Mono', monospace;
+      font-size: 11px;
+      color: var(--text-dim);
+      background: rgba(255,255,255,0.05);
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+    .variant-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      justify-content: space-between;
+    }
+    .btn-play-single {
+      background: #21262d;
+      color: #e6edf3;
+      border: 1px solid #30363d;
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      transition: all 0.1s;
+      flex: 1;
+    }
+    .btn-play-single:hover {
+      background: #30363d;
+      border-color: #484f58;
+    }
+    .btn-play-single:active {
+      transform: scale(0.97);
+    }
+    .file-tag {
+      font-family: 'PT Mono', monospace;
+      font-size: 10px;
+      color: #6e7681;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 140px;
+    }
+
+    footer {
+      text-align: center;
+      font-size: 13px;
+      color: var(--text-dim);
+      padding: 16px 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>🛞 Выбор звуков скрипа в автомобиль (УАЗ / внедорожник)</h1>
+      <p class="lead">
+        Все варианты разделены по <strong>однородным наборам</strong>. Каждая группа нарезана из <strong>одной непрерывной сессии записи</strong>, благодаря чему у всех звуков в наборе абсолютно одинаковый акустический баланс, микрофон и характер материала — их можно смешивать и запускать случайно на кочках без эффекта «разнобоя».
+      </p>
+      <div class="info-box">
+        🎯 <strong>Как слушать:</strong> кликайте на любую вариацию для одиночного теста, либо запустите кнопку <strong>«🎲 Тест-драйв на кочках»</strong> вверху каждого блока — скрипы начнут проигрываться случайно с естественными микро-отклонениями высоты тона (pitch variation ±4%), имитируя реальную езду по деревенской грунтовке!
+      </div>
+    </header>
+
+    <div id="groupsContainer"></div>
+
+    <footer>
+      Postal Driver (Сельская почта) • Набор аудио-семплов кабины и ходовой части
+    </footer>
+  </div>
+
+  <script>
+    const catalog = [
+      {
+        id: 'suspension',
+        title: 'Пакет №1: Подвеска, рессоры и амортизаторы (Рекомендуется для кочек)',
+        sourceFile: './sound-samples/creaks/source_suspension.mp3',
+        sourceName: 'Car_Suspension_Creak (Freesound #86234)',
+        desc: 'Настоящее живое покачивание подвески автомобиля на амортизаторах и рессорах. Звук упругой резины втулок, листов рессор и хода штока амортизатора при преодолении ухабов.',
+        badge: '⭐ Лучший выбор для грунтовки',
+        items: [
+          { file: './sound-samples/creaks/suspension_01_soft_bounce.wav', name: 'Мягкий отбой (Soft bounce)', dur: '0.60s', tag: 'suspension_01' },
+          { file: './sound-samples/creaks/suspension_02_short_creak.wav', name: 'Короткий скрип рессоры', dur: '0.24s', tag: 'suspension_02' },
+          { file: './sound-samples/creaks/suspension_03_elastic_rub.wav', name: 'Упругое трение сайлентблока', dur: '0.30s', tag: 'suspension_03' },
+          { file: './sound-samples/creaks/suspension_04_pothole_creak.wav', name: 'Сжатие на неровности', dur: '0.55s', tag: 'suspension_04' },
+          { file: './sound-samples/creaks/suspension_05_weight_shift.wav', name: 'Крен кузова / сдвиг веса', dur: '0.57s', tag: 'suspension_05' },
+          { file: './sound-samples/creaks/suspension_06_quick_squeak.wav', name: 'Быстрый скрип на гравии', dur: '0.28s', tag: 'suspension_06' },
+          { file: './sound-samples/creaks/suspension_07_heavy_creak.wav', name: 'Глубокий отбой на глубокой яме', dur: '0.75s', tag: 'suspension_07' }
+        ]
+      },
+      {
+        id: 'pobeda',
+        title: 'Пакет №2: Советское ретро — кузов и узлы ГАЗ-М20 «Победа» 1957',
+        sourceFile: './sound-samples/creaks/source_pobeda.mp3',
+        sourceName: 'Pobeda 1957 Cabin & Mech Creaks (YleArkisto #316886)',
+        desc: 'Аутентичная студийная архивная запись салона легендарного советского авто ГАЗ-М20. Тяжелый плотный советский металл, трение сочленений кузова, рамы и механических рычагов.',
+        badge: '🏛 100% аутентичное советское авто',
+        items: [
+          { file: './sound-samples/creaks/pobeda_01_metal_strain.wav', name: 'Металлическое натяжение кузова', dur: '0.75s', tag: 'pobeda_01' },
+          { file: './sound-samples/creaks/pobeda_02_joint_creak.wav', name: 'Сухой скрип сочленения рамы', dur: '0.80s', tag: 'pobeda_02' },
+          { file: './sound-samples/creaks/pobeda_03_body_twist.wav', name: 'Скручивание кузова на диагонали', dur: '0.95s', tag: 'pobeda_03' },
+          { file: './sound-samples/creaks/pobeda_04_short_friction.wav', name: 'Короткое трение металла', dur: '0.38s', tag: 'pobeda_04' },
+          { file: './sound-samples/creaks/pobeda_05_heavy_flex.wav', name: 'Глубокий скрип кабины', dur: '0.70s', tag: 'pobeda_05' }
+        ]
+      },
+      {
+        id: 'seat',
+        title: 'Пакет №3: Пружины старого автомобильного сиденья водителя',
+        sourceFile: './sound-samples/creaks/source_seat.mp3',
+        sourceName: 'Classic Car Seat Springs (Freesound #630548)',
+        desc: 'Скрип старого водительского сиденья при подпрыгивании водителя на кочках. Пружинный блок каркаса кресла — отлично передает ощущение, что водитель сидит в старой машине.',
+        badge: '🪑 Салонный эффект присутствия',
+        items: [
+          { file: './sound-samples/creaks/seat_01_chirp.wav', name: 'Короткий скрип пружины', dur: '0.25s', tag: 'seat_01' },
+          { file: './sound-samples/creaks/seat_02_weight_shift.wav', name: 'Смещение водителя на крене', dur: '0.35s', tag: 'seat_02' },
+          { file: './sound-samples/creaks/seat_03_rebound.wav', name: 'Отбой пружин после удара', dur: '0.50s', tag: 'seat_03' },
+          { file: './sound-samples/creaks/seat_04_compression.wav', name: 'Сжатие каркаса сиденья', dur: '0.35s', tag: 'seat_04' },
+          { file: './sound-samples/creaks/seat_05_double_creak.wav', name: 'Двойной скрип блока пружин', dur: '0.50s', tag: 'seat_05' },
+          { file: './sound-samples/creaks/seat_06_roll_groan.wav', name: 'Продолжительный стон пружин', dur: '0.55s', tag: 'seat_06' },
+          { file: './sound-samples/creaks/seat_07_pothole_jolt.wav', name: 'Толчок на яме (быстрое сжатие)', dur: '0.55s', tag: 'seat_07' }
+        ]
+      },
+      {
+        id: 'metal',
+        title: 'Пакет №4: Сухой скрежет металла и рессор грузовика под нагрузкой',
+        sourceFile: './sound-samples/creaks/source_metal.mp3',
+        sourceName: 'Heavy Springs & Metal Friction (#380703)',
+        desc: 'Плотный, скрежещущий скрип металлических элементов подвески под сильной нагрузкой. Трение сухих листов рессор без смазки при сильном ходе подвески.',
+        badge: '⚙️ Жесткий металл',
+        items: [
+          { file: './sound-samples/creaks/metal_01_slow_creak.wav', name: 'Медленный протяжный скрежет', dur: '1.05s', tag: 'metal_01' },
+          { file: './sound-samples/creaks/metal_02_sharp_slip.wav', name: 'Резкий срыв металла (Stick-slip)', dur: '0.23s', tag: 'metal_02' },
+          { file: './sound-samples/creaks/metal_03_heavy_cycle.wav', name: 'Тяжелый скрип рессорного листа', dur: '0.50s', tag: 'metal_03' },
+          { file: './sound-samples/creaks/metal_04_friction_rub.wav', name: 'Трение металла о направляющие', dur: '0.50s', tag: 'metal_04' },
+          { file: './sound-samples/creaks/metal_05_quick_snap.wav', name: 'Короткий скрежет-щелчок', dur: '0.35s', tag: 'metal_05' }
+        ]
+      }
+    ];
+
+    // Web Audio Context for zero-latency playback & pitch randomization
+    let audioCtx = null;
+    const soundBuffers = new Map();
+
+    async function initAudio() {
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (audioCtx.state === 'suspended') {
+        await audioCtx.resume();
+      }
+    }
+
+    async function getBuffer(url) {
+      await initAudio();
+      if (soundBuffers.has(url)) return soundBuffers.get(url);
+      try {
+        const res = await fetch(url);
+        const arrayBuf = await res.arrayBuffer();
+        const audioBuf = await audioCtx.decodeAudioData(arrayBuf);
+        soundBuffers.set(url, audioBuf);
+        return audioBuf;
+      } catch (err) {
+        console.error('Failed to load audio buffer', url, err);
+        return null;
+      }
+    }
+
+    async function playBuffer(url, pitchRatio = 1.0, onEnded = null) {
+      await initAudio();
+      const buf = await getBuffer(url);
+      if (!buf) return;
+      const src = audioCtx.createBufferSource();
+      src.buffer = buf;
+      src.playbackRate.value = pitchRatio;
+      src.connect(audioCtx.destination);
+      if (onEnded) src.onended = onEnded;
+      src.start();
+      return src;
+    }
+
+    // Active simulation state
+    const simState = {};
+
+    function toggleSimulation(groupId) {
+      const group = catalog.find(g => g.id === groupId);
+      if (!group) return;
+
+      const btn = document.getElementById(`btn-sim-${groupId}`);
+      const statusEl = document.getElementById(`status-sim-${groupId}`);
+
+      if (simState[groupId]) {
+        // Stop
+        clearTimeout(simState[groupId]);
+        simState[groupId] = null;
+        btn.classList.remove('running');
+        btn.innerHTML = '▶ Тест-драйв на кочках';
+        statusEl.textContent = 'Остановлено';
+        return;
+      }
+
+      // Start
+      initAudio();
+      btn.classList.add('running');
+      btn.innerHTML = '⏹ Остановить тест-драйв';
+
+      function playNextBump() {
+        const item = group.items[Math.floor(Math.random() * group.items.length)];
+        const pitchJitter = 0.96 + Math.random() * 0.08; // 0.96 to 1.04
+        statusEl.innerHTML = `В яму! <strong style="color:#e5a00d;">${item.name}</strong> (pitch: ${pitchJitter.toFixed(2)}x)`;
+
+        // Flash visual card
+        const card = document.getElementById(`card-${item.tag}`);
+        if (card) {
+          card.classList.add('flash-active');
+          setTimeout(() => card.classList.remove('flash-active'), 400);
+        }
+
+        playBuffer(item.file, pitchJitter);
+
+        // Next interval between bumps: 450ms - 1100ms
+        const delay = 450 + Math.random() * 650;
+        simState[groupId] = setTimeout(playNextBump, delay);
+      }
+
+      playNextBump();
+    }
+
+    // Render groups
+    const container = document.getElementById('groupsContainer');
+
+    catalog.forEach(group => {
+      const panel = document.createElement('div');
+      panel.className = 'group-panel';
+      panel.id = `panel-${group.id}`;
+
+      panel.innerHTML = `
+        <div class="group-header">
+          <div class="group-title-block">
+            <h2>${group.title} <span class="source-meta">${group.badge}</span></h2>
+            <p class="group-desc">${group.desc}</p>
+          </div>
+        </div>
+
+        <div class="sim-bar">
+          <div class="sim-info">
+            <div class="sim-title">🎲 Симулятор рандомных кочек при езде</div>
+            <div class="sim-status" id="status-sim-${group.id}">Нажмите «Тест-драйв», чтобы услышать рандомизацию на ходу</div>
+          </div>
+          <div class="sim-actions">
+            <button class="btn-sim" id="btn-sim-${group.id}" onclick="toggleSimulation('${group.id}')">
+              ▶ Тест-драйв на кочках
+            </button>
+          </div>
+        </div>
+
+        <div class="source-strip">
+          <div>
+            📁 <strong>Полная исходная запись (Master Take):</strong> ${group.sourceName}
+          </div>
+          <audio controls preload="none" src="${group.sourceFile}"></audio>
+        </div>
+
+        <div class="variants-grid">
+          ${group.items.map(item => `
+            <div class="variant-card" id="card-${item.tag}">
+              <div class="variant-head">
+                <span class="variant-title" title="${item.name}">${item.name}</span>
+                <span class="variant-dur">${item.dur}</span>
+              </div>
+              <div class="variant-row">
+                <button class="btn-play-single" onclick="playSingle('${item.file}', '${item.tag}')">
+                  ▶ Слушать
+                </button>
+                <span class="file-tag">${item.file.split('/').pop()}</span>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      `;
+
+      container.appendChild(panel);
+    });
+
+    async function playSingle(file, tag) {
+      await initAudio();
+      const card = document.getElementById(`card-${tag}`);
+      if (card) {
+        card.classList.add('flash-active');
+        setTimeout(() => card.classList.remove('flash-active'), 350);
+      }
+      playBuffer(file, 1.0);
+    }
+  </script>
+</body>
+</html>

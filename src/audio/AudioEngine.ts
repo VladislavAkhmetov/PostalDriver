@@ -10,10 +10,42 @@ import { ChassisSounds } from './Chassis';
 import { Tape } from './Tape';
 import type { Track } from './stations';
 import { Piece, Score } from './Score';
+import { VillageAmbience } from './VillageAmbience';
+import starterUrl from '../assets/engine/starter.wav?url';
+import hornUrl from '../assets/engine/horn.mp3?url';
+import trainHornUrl from '../assets/rail/p36-whistle.mp3?url';
+import handbrakePullUrl from '../assets/cabin/handbrake_pull.mp3?url';
+import handbrakeReleaseUrl from '../assets/cabin/handbrake_release.mp3?url';
+import switchOnUrl from '../assets/cabin/switch_on.mp3?url';
+import switchOffUrl from '../assets/cabin/switch_off.mp3?url';
+import switchClickUrl from '../assets/cabin/switch_click.wav?url';
+import gearShiftUrl from '../assets/cabin/gear_shift.mp3?url';
+import gearSlideUrl from '../assets/cabin/gear_slide.wav?url';
+import wiperUrl from '../assets/cabin/wiper.wav?url';
+import wiperUpUrl from '../assets/cabin/wiper_up.wav?url';
+import wiperDownUrl from '../assets/cabin/wiper_down.wav?url';
+import windowDownUrl from '../assets/cabin/window_down.wav?url';
+import windowUpUrl from '../assets/cabin/window_up.wav?url';
+import wiperSqueak1Url from '../assets/cabin/wiper_squeak1.wav?url';
+import wiperSqueak2Url from '../assets/cabin/wiper_squeak2.wav?url';
+import susp1 from '../assets/creaks/suspension_01_soft_bounce.wav?url';
+import susp2 from '../assets/creaks/suspension_02_short_creak.wav?url';
+import susp3 from '../assets/creaks/suspension_03_elastic_rub.wav?url';
+import susp4 from '../assets/creaks/suspension_04_pothole_creak.wav?url';
+import susp5 from '../assets/creaks/suspension_05_weight_shift.wav?url';
+import susp6 from '../assets/creaks/suspension_06_quick_squeak.wav?url';
+import susp7 from '../assets/creaks/suspension_07_heavy_creak.wav?url';
+import seat1 from '../assets/creaks/seat_01_chirp.wav?url';
+import seat2 from '../assets/creaks/seat_02_weight_shift.wav?url';
+import seat3 from '../assets/creaks/seat_03_rebound.wav?url';
+import seat4 from '../assets/creaks/seat_04_compression.wav?url';
+import seat5 from '../assets/creaks/seat_05_double_creak.wav?url';
+import seat6 from '../assets/creaks/seat_06_roll_groan.wav?url';
+import seat7 from '../assets/creaks/seat_07_pothole_jolt.wav?url';
 
 interface Loop { src: AudioBufferSourceNode; gain: GainNode; filter: BiquadFilterNode }
 
-export interface AmbientState { rain: number; wind: number; village: number; forest: number; river: number; dusk: number; reception: number; wet: number }
+export interface AmbientState { rain: number; wind: number; village: number; forest: number; river: number; dusk: number; reception: number; wet: number; windowOpening?: number }
 
 /** Game audio: synthesised at runtime, with the engine's tone from real recordings. */
 export class AudioEngine {
@@ -30,6 +62,7 @@ export class AudioEngine {
   /** Recorded voices (Voice.ts): dry, straight to the master — they are in the cab, or at its window. */
   voiceBus: GainNode | null = null;
   private cabin!: BiquadFilterNode;
+  private exteriorLevel!: GainNode;
   private world!: GainNode;
   private engine: AudioWorkletNode | null = null;
   private fallback: { osc: OscillatorNode[]; gain: GainNode; filter: BiquadFilterNode } | null = null;
@@ -38,6 +71,24 @@ export class AudioEngine {
   private loops: Record<string, Loop> = {};
   private whine!: { osc: OscillatorNode; gain: GainNode };
   private buffers: Record<string, AudioBuffer> = {};
+  private starterBuffer: AudioBuffer | null = null;
+  private hornBuffer: AudioBuffer | null = null;
+  private trainHornBuffer: AudioBuffer | null = null;
+  private handbrakePullBuffer: AudioBuffer | null = null;
+  private handbrakeReleaseBuffer: AudioBuffer | null = null;
+  private switchOnBuffer: AudioBuffer | null = null;
+  private switchOffBuffer: AudioBuffer | null = null;
+  private switchClickBuffer: AudioBuffer | null = null;
+  private gearShiftBuffer: AudioBuffer | null = null;
+  private gearSlideBuffer: AudioBuffer | null = null;
+  private wiperBuffer: AudioBuffer | null = null;
+  private wiperUpBuffer: AudioBuffer | null = null;
+  private wiperDownBuffer: AudioBuffer | null = null;
+  private windowDownBuffer: AudioBuffer | null = null;
+  private windowUpBuffer: AudioBuffer | null = null;
+  private wiperSqueakBuffers: AudioBuffer[] = [];
+  private suspensionBuffers: AudioBuffer[] = [];
+  private seatBuffers: AudioBuffer[] = [];
   private rattleT = 0;
   private birdT = 2;
   private animalT = 6;
@@ -47,6 +98,7 @@ export class AudioEngine {
   private bellT = 0;
   private clackT = 0;
   private chassis: ChassisSounds | null = null;
+  villageAmbience: VillageAmbience | null = null;
 
   private ready: Promise<void> | null = null;
 
@@ -56,8 +108,20 @@ export class AudioEngine {
    */
   async unlock(): Promise<void> {
     if (!this.ready) this.ready = this.init();
-    await this.ready;
-    await this.ctx?.resume();
+    try {
+      await Promise.race([
+        this.ready,
+        new Promise((r) => setTimeout(r, 600))
+      ]);
+    } catch (e) {
+      console.warn('Audio init timed out or failed', e);
+    }
+    try {
+      await Promise.race([
+        this.ctx?.resume(),
+        new Promise((r) => setTimeout(r, 400))
+      ]);
+    } catch {}
   }
 
   /** The radio comes on with the drive (the title screen stays quiet until it has a track of its own). */
@@ -80,14 +144,16 @@ export class AudioEngine {
     this.voiceBus.connect(this.master);
     // cabin muffling for exterior sounds
     this.cabin = ctx.createBiquadFilter();
-    this.cabin.type = 'lowpass'; this.cabin.frequency.value = 2400; this.cabin.Q.value = 0.5;
+    this.cabin.type = 'lowpass'; this.cabin.frequency.value = 2600; this.cabin.Q.value = 0.5;
+    this.exteriorLevel = ctx.createGain();
+    this.exteriorLevel.gain.value = .78;
     this.world = ctx.createGain();
     this.world.gain.value = this.radioOnly ? 0 : 1;
-    this.world.connect(this.cabin).connect(this.master);
+    this.world.connect(this.cabin).connect(this.exteriorLevel).connect(this.master);
     const verb = ctx.createConvolver();
     verb.buffer = impulseResponse(ctx, 0.35, 3);
     const verbG = ctx.createGain(); verbG.gain.value = 0.18;
-    this.world.connect(verb).connect(verbG).connect(this.master);
+    this.exteriorLevel.connect(verb).connect(verbG).connect(this.master);
 
     this.buffers = {
       white: noiseBuffer(ctx, 3, 'white'),
@@ -100,23 +166,93 @@ export class AudioEngine {
     };
 
     this.engineGain = ctx.createGain();
-    this.engineGain.gain.value = this.radioOnly ? 0 : 0.8;
-    const engineTone = ctx.createBiquadFilter();
-    engineTone.type = 'lowshelf'; engineTone.frequency.value = 160; engineTone.gain.value = 3;
-    this.engineGain.connect(engineTone).connect(this.master);
+    this.engineGain.gain.value = this.radioOnly ? 0 : 0.85;
+    // Direct clean connection to master without artificial boomy low-shelf
+    this.engineGain.connect(this.master);
     try {
       const url = URL.createObjectURL(new Blob([ENGINE_WORKLET], { type: 'application/javascript' }));
       await ctx.audioWorklet.addModule(url);
       URL.revokeObjectURL(url);
       this.engine = new AudioWorkletNode(ctx, 'uaz-engine', { numberOfInputs: 0, outputChannelCount: [1] });
       this.engine.connect(this.engineGain);
-      // the engine's tone comes from real recordings; the worklet keeps tappets, carb and fan
+      // Real studio Foley recordings replace procedural engine entirely
       try {
         const es = new EngineSamples(ctx, this.engineGain);
         await es.load();
         this.samples = es;
-        this.engine.parameters.get('exh')!.value = 0;
+        // Disconnect worklet to eliminate synthetic hiss, 1750 Hz whistle and body boom
+        this.engine.disconnect();
       } catch (e) { console.warn('engine samples unavailable, using the synthesised exhaust', e); }
+      try {
+        const res = await fetch(starterUrl);
+        this.starterBuffer = await ctx.decodeAudioData(await res.arrayBuffer());
+      } catch (e) {
+        console.warn('starter sound recording unavailable, using synthesis fallback', e);
+      }
+      try {
+        const res = await fetch(hornUrl);
+        this.hornBuffer = await ctx.decodeAudioData(await res.arrayBuffer());
+      } catch (e) {
+        console.warn('horn sound recording unavailable, using synthesis fallback', e);
+      }
+      try {
+        const res = await fetch(trainHornUrl);
+        this.trainHornBuffer = await ctx.decodeAudioData(await res.arrayBuffer());
+      } catch (e) {
+        console.warn('train horn recording unavailable, using synthesis fallback', e);
+      }
+      try {
+        const loadBuf = async (url: string) => {
+          try {
+            const res = await fetch(url);
+            return await ctx.decodeAudioData(await res.arrayBuffer());
+          } catch (e) {
+            console.warn('Failed to load cabin audio buffer', url, e);
+            return null;
+          }
+        };
+        const [hbPull, hbRel, swOn, swOff, swClk, gShift, gSlide, wiper, wUp, wDown, winDown, winUp, wSq1, wSq2] = await Promise.all([
+          loadBuf(handbrakePullUrl),
+          loadBuf(handbrakeReleaseUrl),
+          loadBuf(switchOnUrl),
+          loadBuf(switchOffUrl),
+          loadBuf(switchClickUrl),
+          loadBuf(gearShiftUrl),
+          loadBuf(gearSlideUrl),
+          loadBuf(wiperUrl),
+          loadBuf(wiperUpUrl),
+          loadBuf(wiperDownUrl),
+          loadBuf(windowDownUrl),
+          loadBuf(windowUpUrl),
+          loadBuf(wiperSqueak1Url),
+          loadBuf(wiperSqueak2Url),
+        ]);
+        this.handbrakePullBuffer = hbPull;
+        this.handbrakeReleaseBuffer = hbRel;
+        this.switchOnBuffer = swOn;
+        this.switchOffBuffer = swOff;
+        this.switchClickBuffer = swClk;
+        this.gearShiftBuffer = gShift;
+        this.gearSlideBuffer = gSlide;
+        this.wiperBuffer = wiper;
+        this.wiperUpBuffer = wUp;
+        this.wiperDownBuffer = wDown;
+        this.windowDownBuffer = winDown;
+        this.windowUpBuffer = winUp;
+        this.wiperSqueakBuffers = [wSq1, wSq2].filter((b): b is AudioBuffer => b !== null);
+
+        // Load vehicle creak samples (suspension and seat)
+        const suspUrls = [susp1, susp2, susp3, susp4, susp5, susp6, susp7];
+        const seatUrls = [seat1, seat2, seat3, seat4, seat5, seat6, seat7];
+        const [suspBufs, seatBufs] = await Promise.all([
+          Promise.all(suspUrls.map(loadBuf)),
+          Promise.all(seatUrls.map(loadBuf)),
+        ]);
+        this.suspensionBuffers = suspBufs.filter((b): b is AudioBuffer => b !== null);
+        this.seatBuffers = seatBufs.filter((b): b is AudioBuffer => b !== null);
+      } catch (e) {
+        console.warn('Failed to load cabin audio assets', e);
+      }
     } catch {
       const filter = ctx.createBiquadFilter(); filter.type = 'lowpass'; filter.frequency.value = 500;
       const gain = ctx.createGain(); gain.gain.value = 0;
@@ -157,12 +293,17 @@ export class AudioEngine {
     }
 
     const osc = ctx.createOscillator(); osc.type = 'triangle';
+    const wf = ctx.createBiquadFilter(); wf.type = 'lowpass'; wf.frequency.value = 320;
     const wg = ctx.createGain(); wg.gain.value = 0;
-    osc.connect(wg).connect(this.master); osc.start();
+    osc.connect(wf).connect(wg).connect(this.master); osc.start();
     this.whine = { osc, gain: wg };
 
-    this.chassis = new ChassisSounds(ctx, this.master, this.world, this.buffers);
+    this.chassis = new ChassisSounds(ctx, this.master, this.world, this.buffers, {
+      suspension: this.suspensionBuffers,
+      seat: this.seatBuffers,
+    });
     this.tape = new Tape(ctx, this.master, this.buffers.white);
+    this.villageAmbience = new VillageAmbience(ctx, this.radioOnly ? this.master : this.world);
     this.score = new Score(ctx, this.master);
     this.score.onEnd = () => { this.piece = null; };
     if (this.piece) this.score.play(this.piece, 2.5);
@@ -178,13 +319,19 @@ export class AudioEngine {
     const t = this.ctx.currentTime;
     this.engineGain.gain.setTargetAtTime(on ? 0 : 0.8, t, 0.3);
     this.world.gain.setTargetAtTime(on ? 0 : 1, t, 0.3);
+    this.villageAmbience?.setDestination(on ? this.master : this.world);
   }
 
-  /** Music on (or `null`: off), fading over `fade` seconds. */
-  music(p: Piece | null, fade = 2): void {
+  /** Music on (or `null`: off), fading over `fade` seconds, optional `scale` (1 = full). */
+  music(p: Piece | null, fade = 2, scale = 1): void {
     this.piece = p;
     if (!this.score) return;
-    if (p) this.score.play(p, fade); else this.score.stop(fade);
+    if (p) this.score.play(p, fade, scale); else this.score.stop(fade);
+  }
+
+  /** Smoothly scale the music volume (e.g. 0.22 for quiet background in the prologue), over `fade` seconds. */
+  musicVolume(scale = 1, fade = 2): void {
+    this.score?.fadeVolume(scale, fade);
   }
   /** Music is meant to be on but the browser has not let the sound in yet. */
   get musicWaiting(): boolean { return !!this.piece && !this.score?.audible; }
@@ -197,6 +344,20 @@ export class AudioEngine {
 
   /** The title screen has no drive to update, only the radio. */
   updateRadio(dt: number): void { this.tape?.update(dt, 0.9); }
+
+  /** Village morning soundscape (birds, bee, dogs, rooster, hens, breeze) */
+  startVillage(scale = 0.42): void {
+    if (!this.villageAmbience && this.ctx) this.villageAmbience = new VillageAmbience(this.ctx, this.radioOnly ? this.master : this.world);
+    this.villageAmbience?.start(scale);
+  }
+
+  stopVillage(fade = 2): void {
+    this.villageAmbience?.stop(fade);
+  }
+
+  updateVillage(dt: number): void {
+    this.villageAmbience?.update(dt);
+  }
 
   /** First tap or key press: wake the audio context and any radio the browser refused to start. */
   gesture(): void {
@@ -254,29 +415,21 @@ export class AudioEngine {
     set(L.roof.gain.gain, amb.rain * 0.5);
     set(L.river.gain.gain, amb.river * 0.22);
     set(L.leaves.gain.gain, amb.forest * 0.025 * (0.5 + amb.wind));
-    this.cabin.frequency.setTargetAtTime(1800 + speed * 30, t, 0.2);
+    const windowOpening = clamp(amb.windowOpening ?? 0, 0, 1);
+    const closedCutoff = 2600 + Math.min(speed, 30) * 20;
+    set(this.cabin.frequency, closedCutoff + (7200 - closedCutoff) * windowOpening, .18);
+    set(this.exteriorLevel.gain, .78 + .22 * windowOpening, .18);
 
-    // gearbox, transfer case and axle whine: the UAZ howls in the low gears and in reverse
+    // gearbox, transfer case and axle whine: subtle mechanical geared rumble, not an electronic beep
     const gearR = v.gear === 0 ? 0 : Math.abs(v.rpm);
-    const howl = v.gear === -1 ? 0.04 : v.gear === 1 ? 0.03 : v.gear === 2 ? 0.02 : v.gear === 3 ? 0.01 : 0.006;
-    set(this.whine.osc.frequency, Math.max(30, gearR * 0.28 * (v.gear === -1 ? 1.4 : 1) * (v.gear === 1 ? 1.15 : 1)));
-    set(this.whine.gain.gain, on && v.gear !== 0 ? clamp(speed / 6, 0, 1) * (howl + (v.low ? 0.015 : 0) + (v.fourWD ? 0.006 : 0)) * (0.35 + v.load) : 0);
+    const howl = v.gear === -1 ? 0.02 : v.gear === 1 ? 0.015 : v.gear === 2 ? 0.01 : 0.004;
+    set(this.whine.osc.frequency, Math.max(30, gearR * 0.18 * (v.gear === -1 ? 1.4 : 1) * (v.gear === 1 ? 1.15 : 1)));
+    set(this.whine.gain.gain, on && v.gear !== 0 ? clamp(speed / 6, 0, 1) * (howl + (v.low ? 0.008 : 0) + (v.fourWD ? 0.004 : 0)) * (0.25 + v.load * 0.4) : 0);
 
     // suspension, body, wheel impacts, stones, joints, puddles and cab rattles
     this.chassis?.update(dt, v, amb.wet);
 
-    // wildlife
-    this.birdT -= dt;
-    if (this.birdT < 0) {
-      this.birdT = 1.5 + Math.random() * 6;
-      const bird = (1 - amb.rain) * (1 - amb.dusk * 0.7) * (0.3 + amb.forest * 0.7);
-      if (Math.random() < bird) this.chirp(Math.random() < 0.5 ? 'tit' : 'crow');
-    }
-    this.animalT -= dt;
-    if (this.animalT < 0) {
-      this.animalT = 5 + Math.random() * 9;
-      if (amb.village > 0.3 && Math.random() < amb.village) this.animal(Math.random() < 0.5 ? 'dog' : Math.random() < 0.5 ? 'rooster' : 'cow');
-    }
+    // thunder
     while (this.thunderQ.length && this.thunderQ[0] <= t) { this.thunderQ.shift(); this.thunderNow(); }
     this.tape?.update(dt, amb.reception);
   }
@@ -319,10 +472,19 @@ export class AudioEngine {
     if (rl.horn > 0) this.trainHorn(rl.horn);
   }
 
-  /** Two-tone diesel "tifon": a long blast and a short one. */
+  /** A real Soviet locomotive whistle (P36, recorded in Moscow). The oscillators are the fallback. */
   private trainHorn(v: number): void {
     const ctx = this.ctx!;
     const t = ctx.currentTime;
+    if (this.trainHornBuffer) {
+      const src = ctx.createBufferSource();
+      src.buffer = this.trainHornBuffer;
+      const g = ctx.createGain();
+      g.gain.value = 0.7 * v;
+      src.connect(g).connect(this.world);
+      src.start(t);
+      return;
+    }
     for (const [at, dur] of [[0, 1.5], [1.8, 0.7]]) {
       for (const f of [311, 370]) {
         const o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.value = f;
@@ -407,12 +569,12 @@ export class AudioEngine {
     this.burst('white', 'bandpass', 2400, 2, 0.04, 0.08, this.world, 1, end + 0.05);
   }
 
-  /** Glass jars knocking together in the back: the parcels taking a beating. */
+  /** Glass jars / cargo rattle in the back: physical acoustic impact without synthetic sine beeps. */
   clink(): void {
     if (!this.ctx) return;
     const t = this.ctx.currentTime;
-    [[3150, 0], [4020, 0.07], [2780, 0.16]].forEach(([f, d]) => this.tone('sine', f, 0.05, 0.001, 0.22, this.master, t + d, f * 0.98));
-    this.burst('white', 'highpass', 5000, 0.8, 0.06, 0.05, this.master, 1, t + 0.02);
+    this.burst('white', 'bandpass', 3200, 3, 0.04, 0.035, this.master, 1, t);
+    this.burst('brown', 'lowpass', 500, 0.8, 0.045, 0.04, this.master, 1, t);
   }
 
   private boom: { gain: GainNode; bus: BiquadFilterNode; next: number; i: number } | null = null;
@@ -535,43 +697,113 @@ export class AudioEngine {
     return o;
   }
 
-  private horn: { oscs: OscillatorNode[]; gain: GainNode } | null = null;
+  private horn: { src: AudioBufferSourceNode; gain: GainNode } | { oscs: OscillatorNode[]; gain: GainNode } | null = null;
   hornOn(): void {
     const ctx = this.ctx;
     if (!ctx || this.horn) return;
+    const t = ctx.currentTime;
     const gain = ctx.createGain(); gain.gain.value = 0;
-    const bpf = ctx.createBiquadFilter(); bpf.type = 'bandpass'; bpf.frequency.value = 900; bpf.Q.value = 1.2;
+
+    // Real recorded vintage mechanical horn with seamless sustain loop ("БИ-И-ИП")
+    if (this.hornBuffer) {
+      const src = ctx.createBufferSource();
+      src.buffer = this.hornBuffer;
+      src.loop = true;
+      // The take is silent until the diaphragm speaks at 0.26 s. Starting at 0
+      // (and looping back through 0.15) played that pause before every blast.
+      src.loopStart = 0.3401;
+      src.loopEnd = 1.6511;
+
+      src.connect(gain).connect(this.master);
+      gain.gain.setValueAtTime(0.001, t);
+      gain.gain.linearRampToValueAtTime(1.35, t + 0.015);
+      src.start(t, 0.2569);
+      this.horn = { src, gain };
+      return;
+    }
+
+    // Resonant bandpass tuned to the horn housing and radiator grille (fallback)
+    const bpf = ctx.createBiquadFilter(); bpf.type = 'bandpass'; bpf.frequency.value = 980; bpf.Q.value = 2.0;
+    const highShelf = ctx.createBiquadFilter(); highShelf.type = 'highshelf'; highShelf.frequency.value = 3400; highShelf.gain.value = -6;
+
+    // Diaphragm non-linear saturation
     const shaper = ctx.createWaveShaper();
     const c = new Float32Array(256);
-    for (let i = 0; i < 256; i++) c[i] = Math.tanh((i / 128 - 1) * 3);
+    for (let i = 0; i < 256; i++) {
+      const x = (i / 128 - 1);
+      c[i] = Math.tanh(x * 2.6) + 0.12 * Math.sin(x * Math.PI * 2);
+    }
     shaper.curve = c;
-    const oscs = [415, 520].map((f) => { const o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.value = f; o.connect(shaper); o.start(); return o; });
-    shaper.connect(bpf).connect(gain).connect(this.world);
-    gain.gain.setTargetAtTime(0.5, ctx.currentTime, 0.008);
-    this.horn = { oscs, gain };
+
+    // Single-tone ~400 Hz mono fundamental with diaphragm slap
+    const o1 = ctx.createOscillator();
+    o1.type = 'sawtooth';
+    o1.frequency.setValueAtTime(425, t);
+    o1.frequency.exponentialRampToValueAtTime(400, t + 0.02);
+
+    // Diaphragm metallic octave overtone
+    const o2 = ctx.createOscillator();
+    o2.type = 'triangle';
+    o2.frequency.setValueAtTime(800, t);
+    o2.frequency.exponentialRampToValueAtTime(796, t + 0.02);
+    const g2 = ctx.createGain();
+    g2.gain.value = 0.35;
+    o2.connect(g2);
+
+    o1.connect(shaper);
+    g2.connect(shaper);
+    shaper.connect(bpf).connect(highShelf).connect(gain).connect(this.world);
+
+    // Punchy attack
+    gain.gain.setValueAtTime(0.001, t);
+    gain.gain.exponentialRampToValueAtTime(0.55, t + 0.01);
+
+    o1.start(t);
+    o2.start(t);
+    this.horn = { oscs: [o1, o2], gain };
   }
   hornOff(): void {
     const ctx = this.ctx;
     if (!ctx || !this.horn) return;
     const h = this.horn;
-    h.gain.gain.setTargetAtTime(0, ctx.currentTime, 0.02);
-    h.oscs.forEach((o) => o.stop(ctx.currentTime + 0.2));
+    const t = ctx.currentTime;
+    h.gain.gain.setValueAtTime(h.gain.gain.value, t);
+    h.gain.gain.exponentialRampToValueAtTime(0.001, t + 0.03);
+    if ('src' in h) {
+      h.src.stop(t + 0.04);
+    } else {
+      h.oscs.forEach((o) => o.stop(t + 0.04));
+    }
     this.horn = null;
   }
 
   /**
-   * The UMZ-451 being cranked: the solenoid's clack and the bendix meshing, then
-   * the starter motor's geared whine sagging every time a cylinder comes up on
-   * compression (two per revolution of a four-cylinder four-stroke) with a chuff
-   * of air through carb and exhaust, the crank speeding up as it spins; a few
-   * ragged first firings and the starter lets go as the engine takes over.
-   * Returns how long it cranks, so the engine catches on the last chuff.
+   * The UMZ-451 engine starting: real starter recording (whine, compression strokes,
+   * fuel catch and rev up into idle). Returns duration in seconds so vehicle physics
+   * and ignition key animation match the audio.
    */
   starter(): number {
     const ctx = this.ctx;
-    if (!ctx) return 1.5;
+    if (!ctx) return 1.65;
     const t0 = ctx.currentTime + 0.02;
-    const dur = 1.3 + Math.random() * 0.7;
+
+    if (this.starterBuffer) {
+      const src = ctx.createBufferSource();
+      src.buffer = this.starterBuffer;
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0.95, t0);
+      // Smoothly cross-fade starter tail into the continuous running engine between 3.4s and 3.9s
+      gain.gain.setValueAtTime(0.95, t0 + 3.4);
+      gain.gain.linearRampToValueAtTime(0, t0 + 3.9);
+      src.connect(gain).connect(this.master);
+      src.start(t0);
+      src.stop(t0 + 4.0);
+      // Return 3.4s so the vehicle catches and engine audio blends at the exact peak moment
+      return 3.4;
+    }
+
+    // Synthesis fallback if the audio buffer has not loaded yet
+    const dur = 1.65;
     this.burst('white', 'highpass', 3000, 0.8, 0.22, 0.025, this.master, 1, t0);
     this.tone('sine', 140, 0.22, 0.002, 0.07, this.master, t0, 70);
     this.burst('white', 'bandpass', 1500, 3, 0.1, 0.06, this.master, 1, t0 + 0.05);
@@ -591,7 +823,6 @@ export class AudioEngine {
       const k = Math.min(1, (at - ts) / 0.6);
       const rpm = 95 + 105 * k;
       const period = 30 / rpm;
-      // the motor's note rises as it spins up; each compression drags it down
       const f = 150 + 130 * k;
       m.frequency.setValueAtTime(f, at);
       m.frequency.linearRampToValueAtTime(f * 0.7, at + period * 0.45);
@@ -606,7 +837,6 @@ export class AudioEngine {
       this.tone('sine', 50, 0.15, 0.012, period * 0.45, this.master, at + period * 0.42, 38);
       at += period;
     }
-    // it catches: ragged first firings, then the starter disengages and winds down
     for (const [dt, v] of [[0.3, 0.35], [0.17, 0.5], [0.07, 0.6]]) this.burst('brown', 'lowpass', 600, 0.8, v, 0.07, this.master, 1, end - dt);
     m.frequency.setTargetAtTime(55, end, 0.09);
     m2.frequency.setTargetAtTime(110, end, 0.09);
@@ -616,20 +846,75 @@ export class AudioEngine {
     return end - t0;
   }
 
+  playSample(buf: AudioBuffer | null, dest: AudioNode = this.master, gain = 1, rate = 1, time?: number): AudioBufferSourceNode | null {
+    if (!this.ctx || !buf) return null;
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+    src.playbackRate.value = rate;
+    const g = this.ctx.createGain();
+    g.gain.value = gain;
+    src.connect(g).connect(dest);
+    src.start(time ?? this.ctx.currentTime);
+    return src;
+  }
+
   clunk(v = 0.6): void {
     if (!this.ctx) return;
+    if (this.gearShiftBuffer) {
+      this.playSample(this.gearShiftBuffer, this.master, 0.7 * v, 0.95 + Math.random() * 0.1);
+      return;
+    }
     this.tone('sine', 120, 0.2 * v, 0.002, 0.08, this.master, undefined, 60);
     this.burst('white', 'bandpass', 1800, 2, 0.12 * v, 0.04);
   }
-  click(v = 0.5): void { if (this.ctx) this.burst('white', 'highpass', 3500, 0.7, 0.18 * v, 0.02); }
+
+  click(v = 0.5, on?: boolean): void {
+    if (!this.ctx) return;
+    if (on === true && this.switchOnBuffer) {
+      this.playSample(this.switchOnBuffer, this.master, 0.7 * v, 0.98 + Math.random() * 0.04);
+      return;
+    }
+    if (on === false && this.switchOffBuffer) {
+      this.playSample(this.switchOffBuffer, this.master, 0.7 * v, 0.98 + Math.random() * 0.04);
+      return;
+    }
+    if (this.switchClickBuffer) {
+      this.playSample(this.switchClickBuffer, this.master, 0.6 * v, 0.95 + Math.random() * 0.1);
+      return;
+    }
+    this.burst('white', 'highpass', 3500, 0.7, 0.18 * v, 0.02);
+  }
+
   ratchet(on: boolean): void {
     if (!this.ctx) return;
-    const t = this.ctx.currentTime;
-    for (let i = 0; i < (on ? 6 : 2); i++) this.burst('white', 'bandpass', 2600, 4, 0.12, 0.015, this.master, 1, t + i * 0.035);
-    this.clunk(on ? 0.3 : 0.5);
+    if (on) {
+      if (this.handbrakePullBuffer) {
+        this.playSample(this.handbrakePullBuffer, this.master, 0.85, 0.98 + Math.random() * 0.04);
+        return;
+      }
+      const t = this.ctx.currentTime;
+      for (let i = 0; i < 6; i++) this.burst('white', 'bandpass', 2600, 4, 0.12, 0.015, this.master, 1, t + i * 0.035);
+      this.clunk(0.3);
+    } else {
+      if (this.handbrakeReleaseBuffer) {
+        this.playSample(this.handbrakeReleaseBuffer, this.master, 0.85, 0.98 + Math.random() * 0.04);
+        return;
+      }
+      const t = this.ctx.currentTime;
+      for (let i = 0; i < 2; i++) this.burst('white', 'bandpass', 2600, 4, 0.12, 0.015, this.master, 1, t + i * 0.035);
+      this.clunk(0.5);
+    }
   }
+
   gearShift(grind = false): void {
     if (!this.ctx) return;
+    if (this.gearShiftBuffer) {
+      const t = this.ctx.currentTime;
+      // Authentic tactile 4x4 manual gearbox shift: clean mechanical gate click and lock
+      this.playSample(this.gearShiftBuffer, this.master, 1.15, 0.98 + Math.random() * 0.04, t);
+      if (grind) this.burst('white', 'bandpass', 2200, 6, 0.08, 0.25);
+      return;
+    }
     this.clunk(0.5);
     if (grind) this.burst('white', 'bandpass', 2200, 6, 0.08, 0.25);
   }
@@ -638,6 +923,21 @@ export class AudioEngine {
     const t = this.ctx.currentTime;
     const n = 2 + Math.floor(Math.random() * 3);
     for (let i = 0; i < n; i++) this.burst('white', 'bandpass', 1200 + Math.random() * 2500, 5, 0.05 * v, 0.03, this.master, 1, t + i * 0.025 + Math.random() * 0.02);
+  }
+  bumpCreak(s: number): void {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    const k = clamp(s, 0.35, 1.2);
+    // Suspension creak on road bump / pothole
+    if (this.suspensionBuffers.length > 0) {
+      const sBuf = this.suspensionBuffers[Math.floor(Math.random() * this.suspensionBuffers.length)];
+      this.playSample(sBuf, this.master, 0.65 * k, 0.96 + Math.random() * 0.08, t);
+    }
+    // Driver seat compression creak (softer than suspension, distinct and cozy)
+    if (this.seatBuffers.length > 0) {
+      const stBuf = this.seatBuffers[Math.floor(Math.random() * this.seatBuffers.length)];
+      this.playSample(stBuf, this.master, 0.35 * k, 0.97 + Math.random() * 0.06, t + 0.035);
+    }
   }
   impact(v: number): void {
     if (!this.ctx) return;
@@ -651,10 +951,33 @@ export class AudioEngine {
     this.burst('white', 'bandpass', 700, 3, 0.18 * v, 0.06, this.world);
   }
   splash(v: number): void { if (this.ctx) this.burst('white', 'lowpass', 1600, 0.6, 0.35 * clamp(v, 0, 1), 0.6, this.world, 0.7); }
-  wiper(): void {
+  windowWind(down = true): void {
     if (!this.ctx) return;
-    this.burst('pink', 'bandpass', 2400, 3, 0.05, 0.18);
-    this.tone('square', 90, 0.015, 0.01, 0.06);
+    const buf = down ? this.windowDownBuffer : this.windowUpBuffer;
+    if (buf) {
+      this.playSample(buf, this.master, 0.72, 0.98 + Math.random() * 0.04);
+    } else {
+      this.burst('pink', 'bandpass', 1800, 2, 0.04, 1.55);
+    }
+  }
+  wiper(dir = 1): void {
+    if (!this.ctx) return;
+    const isUp = dir > 0;
+    const buf = isUp ? (this.wiperUpBuffer || this.wiperBuffer) : (this.wiperDownBuffer || this.wiperBuffer);
+    if (buf) {
+      this.playSample(buf, this.master, 0.5, 0.98 + Math.random() * 0.04);
+    } else {
+      this.burst('pink', 'bandpass', 2400, 3, 0.03, 0.18);
+      this.tone('square', 90, 0.01, 0.01, 0.06);
+    }
+    // Occasional realistic rubber squeak strictly in tempo (~25% chance per stroke)
+    if (this.wiperSqueakBuffers.length > 0 && Math.random() < 0.25) {
+      const sqBuf = this.wiperSqueakBuffers[Math.floor(Math.random() * this.wiperSqueakBuffers.length)];
+      setTimeout(() => {
+        if (!this.ctx) return;
+        this.playSample(sqBuf, this.master, 0.34, 0.96 + Math.random() * 0.08);
+      }, 110);
+    }
   }
   stamp(): void { if (this.ctx) { this.tone('sine', 180, 0.35, 0.001, 0.07, this.master, undefined, 90); this.burst('brown', 'lowpass', 900, 0.6, 0.4, 0.06); } }
   /** The small noises of a cigarette: pack rustle, the lighter's wheel and flame, a draw, a breath out, a butt in the tin. */
@@ -664,29 +987,29 @@ export class AudioEngine {
     const t = ctx.currentTime;
     switch (k) {
       case 'pack':
-        this.burst('white', 'bandpass', 3200, 1.2, 0.05, 0.12, this.world, 0.7);
-        this.burst('white', 'highpass', 5200, 0.8, 0.03, 0.07, this.world, 1, t + 0.06);
+        this.burst('white', 'bandpass', 3200, 1.2, 0.05, 0.12, this.master, 0.7);
+        this.burst('white', 'highpass', 5200, 0.8, 0.03, 0.07, this.master, 1, t + 0.06);
         break;
       case 'flick':
         // the wheel scrapes the flint, the gas lights with a soft whoomp
-        this.burst('white', 'bandpass', 4200, 4, 0.1, 0.05, this.world);
-        this.tone('square', 2400, 0.03, 0.001, 0.015, this.world, t + 0.02, 1800);
+        this.burst('white', 'bandpass', 4200, 4, 0.1, 0.05, this.master);
+        this.tone('square', 2400, 0.03, 0.001, 0.015, this.master, t + 0.02, 1800);
         break;
       case 'flame':
-        this.burst('pink', 'bandpass', 900, 1.2, 0.07, 0.24, this.world, 1, t);
-        this.burst('white', 'highpass', 6000, 0.7, 0.025, 1.6, this.world, 1, t + 0.1);
+        this.burst('pink', 'bandpass', 900, 1.2, 0.07, 0.24, this.master, 1, t);
+        this.burst('white', 'highpass', 6000, 0.7, 0.025, 1.6, this.master, 1, t + 0.1);
         break;
       case 'puff':
         // an intake of breath through the cigarette, and the crackle of the leaf
-        this.burst('pink', 'bandpass', 700, 1.5, 0.09, 0.4, this.world, 0.8, t);
-        for (let i = 0; i < 5; i++) this.burst('white', 'bandpass', 3800, 6, 0.035, 0.012, this.world, 1, t + 0.08 + i * 0.07 + Math.random() * 0.03);
+        this.burst('pink', 'bandpass', 700, 1.5, 0.09, 0.4, this.master, 0.8, t);
+        for (let i = 0; i < 5; i++) this.burst('white', 'bandpass', 3800, 6, 0.035, 0.012, this.master, 1, t + 0.08 + i * 0.07 + Math.random() * 0.03);
         break;
       case 'exhale':
-        this.burst('pink', 'lowpass', 1200, 0.5, 0.085, 1.1, this.world, 0.7, t + 0.05);
+        this.burst('pink', 'lowpass', 1200, 0.5, 0.085, 1.1, this.master, 0.7, t + 0.05);
         break;
       case 'stub':
-        this.burst('white', 'bandpass', 1500, 2, 0.06, 0.1, this.world);
-        this.burst('white', 'highpass', 4800, 0.8, 0.03, 0.25, this.world, 1, t + 0.04);
+        this.burst('white', 'bandpass', 1500, 2, 0.06, 0.1, this.master);
+        this.burst('white', 'highpass', 4800, 0.8, 0.03, 0.25, this.master, 1, t + 0.04);
         break;
     }
   }
@@ -717,12 +1040,13 @@ export class AudioEngine {
     }
   }
 
-  paper(): void { if (this.ctx) this.burst('white', 'highpass', 2500, 0.5, 0.08, 0.18, this.master, 0.6); }
+  paper(): void {
+    if (!this.ctx) return;
+    this.burst('pink', 'bandpass', 1200, 1.2, 0.035, 0.1, this.master, 0.5);
+  }
   type(): void { if (this.ctx) this.burst('white', 'bandpass', 2800, 3, 0.05, 0.015); }
   chime(): void {
-    if (!this.ctx) return;
-    const t = this.ctx.currentTime;
-    [784, 988, 1175].forEach((f, i) => this.tone('sine', f, 0.07, 0.005, 0.7, this.master, t + i * 0.12));
+    // Procedural arcade chime removed; deliveries are confirmed with tactile audio.stamp()
   }
   thunder(delay: number): void {
     if (!this.ctx) return;
@@ -731,25 +1055,11 @@ export class AudioEngine {
   }
   private thunderNow(): void {
     const t = this.ctx!.currentTime;
-    for (let i = 0; i < 4; i++) this.burst('brown', 'lowpass', 160 + Math.random() * 200, 0.6, 0.6 - i * 0.1, 1.5 + Math.random() * 1.5, this.master, 0.6, t + i * (0.15 + Math.random() * 0.4));
-    this.burst('white', 'lowpass', 900, 0.5, 0.15, 0.4, this.master, 1, t);
+    for (let i = 0; i < 4; i++) this.burst('brown', 'lowpass', 160 + Math.random() * 200, 0.6, 0.6 - i * 0.1, 1.5 + Math.random() * 1.5, this.world, 0.6, t + i * (0.15 + Math.random() * 0.4));
+    this.burst('white', 'lowpass', 900, 0.5, 0.15, 0.4, this.world, 1, t);
   }
-  private chirp(kind: 'tit' | 'crow'): void {
-    const ctx = this.ctx!;
-    const t = ctx.currentTime;
-    const pan = ctx.createStereoPanner(); pan.pan.value = Math.random() * 1.6 - 0.8;
-    pan.connect(this.world);
-    if (kind === 'tit') {
-      for (let i = 0; i < 3; i++) {
-        this.tone('sine', 4200, 0.04, 0.005, 0.08, pan, t + i * 0.28, 3800);
-        this.tone('sine', 3100, 0.035, 0.005, 0.1, pan, t + i * 0.28 + 0.1, 3000);
-      }
-    } else {
-      for (let i = 0; i < 2 + Math.floor(Math.random() * 2); i++) {
-        const o = this.tone('sawtooth', 560, 0.05, 0.02, 0.25, pan, t + i * 0.45, 420);
-        o.detune.value = Math.random() * 100;
-      }
-    }
+  private chirp(_kind: 'tit' | 'crow'): void {
+    this.villageAmbience?.playBird();
   }
   /** Bees loose in the cab, 0 (none) … 1 (a cloud of them): a buzz that wanders in pitch and loudness. */
   buzz(level: number): void {
@@ -776,22 +1086,7 @@ export class AudioEngine {
   private bees: { g: GainNode; oscs: OscillatorNode[] } | null = null;
 
   animal(kind: 'dog' | 'rooster' | 'cow' | 'sheep'): void {
-    const ctx = this.ctx!;
-    const t = ctx.currentTime;
-    const pan = ctx.createStereoPanner(); pan.pan.value = Math.random() * 1.6 - 0.8;
-    const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 1400;
-    f.connect(pan).connect(this.world);
-    if (kind === 'dog') for (let i = 0; i < 2 + Math.floor(Math.random() * 3); i++) {
-      this.tone('sawtooth', 380, 0.06, 0.01, 0.11, f, t + i * 0.32, 240);
-      this.burst('white', 'bandpass', 700, 2, 0.04, 0.08, f, 1, t + i * 0.32);
-    } else if (kind === 'rooster') {
-      let at = 0;
-      for (const [fr, d] of [[520, 0.15], [780, 0.2], [700, 0.5]]) { this.tone('sawtooth', fr, 0.035, 0.03, d, f, t + at, fr * 0.9); at += d; }
-    } else if (kind === 'sheep') {
-      // «бе-е-е»: a shaky bleat in three pulses
-      for (let i = 0; i < 3; i++) this.tone('sawtooth', 330 - i * 12, 0.06, 0.03, 0.2, f, t + i * 0.17, 300 - i * 12);
-    } else {
-      this.tone('sawtooth', 140, 0.08, 0.3, 1.2, f, t, 110);
-    }
+    if (kind === 'dog') this.villageAmbience?.triggerDogs();
+    else if (kind === 'rooster') this.villageAmbience?.playRooster();
   }
 }

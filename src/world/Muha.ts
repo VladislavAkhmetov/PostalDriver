@@ -10,6 +10,8 @@ import { lam, mesh, Person } from './People';
  * the first time it rolls up he waves. Local forward is +Z, as for every Human.
  */
 export class Muha extends Person {
+  /** A scene directs the look target, clips and drags instead of the roadside idle. */
+  staged = false;
   /** The player's van (world space), set by the world every frame. */
   readonly van = new THREE.Vector3(1e9, 0, 1e9);
   private yaw = 0;
@@ -19,20 +21,24 @@ export class Muha extends Person {
   private nextDrag = 4 + Math.random() * 6;
   private greeted = false;
   private readonly tip = new THREE.Object3D();
+  private readonly cigarette = new THREE.Group();
+  private readonly lips = new THREE.Object3D();
   private readonly ember: THREE.Mesh;
-  private readonly wisps: { s: THREE.Sprite; age: number }[] = [];
+  private readonly wisps: { s: THREE.Sprite; age: number; breath: boolean }[] = [];
+  private breathT = 0;
+  private breathEmit = 0;
   private wispT = 0;
   private glow = 0.3;
 
-  constructor() {
+  constructor(private smokingHand: 'L' | 'R' = 'R') {
     super('muha', {});
     // he hails the van with both arms (the Waving clip), not a hand raised
     this.waveClip = true;
     const h = this.human;
     // a cigarette between the fingers of the right hand, pointing forward in the T-pose (palms down)
-    const at = h.bindAt('FingersR');
-    const cig = new THREE.Group();
-    cig.position.set(at.x - 0.01, at.y - 0.012, at.z + 0.01);
+    const at = h.bindAt(`Fingers${smokingHand}`);
+    const cig = this.cigarette;
+    cig.position.set(at.x + (smokingHand === 'L' ? 0.01 : -0.01), at.y - 0.012, at.z + 0.01);
     cig.rotation.x = Math.PI / 2;
     cig.add(mesh(new THREE.CylinderGeometry(0.0042, 0.0042, 0.022, 6), lam('#c9a05e'), 0, 0.011, 0));
     cig.add(mesh(new THREE.CylinderGeometry(0.0042, 0.0042, 0.045, 6), lam('#f0ece0'), 0, 0.0445, 0));
@@ -40,7 +46,12 @@ export class Muha extends Person {
     cig.add(this.ember);
     this.tip.position.set(0, 0.07, 0);
     cig.add(this.tip);
-    h.attach('FingersR', cig);
+    h.attach(`Palm${smokingHand}`, cig);
+    // A mesh-measured mouth anchor follows the head, including conversational nods.
+    const headTop = h.extent(['Head'], h.bindAt('Head').y, 3).max.y;
+    const mouthY = headTop - 0.145, mouthZ = h.probe(0, mouthY);
+    this.lips.position.set(0, mouthY, Number.isFinite(mouthZ) ? mouthZ + 0.004 : 0.12);
+    h.attach('Head', this.lips);
     // a thread of smoke, in the group's own frame (he stands still)
     const c = document.createElement('canvas');
     c.width = c.height = 32;
@@ -49,12 +60,20 @@ export class Muha extends Person {
     grd.addColorStop(0, 'rgba(255,255,255,0.5)'); grd.addColorStop(1, 'rgba(255,255,255,0)');
     g.fillStyle = grd; g.fillRect(0, 0, 32, 32);
     const tex = new THREE.CanvasTexture(c);
-    for (let i = 0; i < 14; i++) {
+    for (let i = 0; i < 22; i++) {
       const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, opacity: 0, color: '#cfd3d6' }));
       s.visible = false;
       h.group.add(s);
-      this.wisps.push({ s, age: 9 });
+      this.wisps.push({ s, age: 9, breath: false });
     }
+  }
+
+  draw(): void { this.dragT = 2.8; }
+
+  resetStage(): void {
+    this.wave = this.dragT = this.dragW = this.yaw = this.pitch = this.breathT = 0;
+    for (const w of this.wisps) w.s.visible = false;
+    this.act('Idle', 3600);
   }
 
   update(dt: number, t: number): void {
@@ -62,11 +81,12 @@ export class Muha extends Person {
     const local = h.group.worldToLocal(this.van.clone());
     const dist = Math.hypot(local.x, local.z);
     // the first time the van rolls up he waves it over
-    if (!this.greeted && dist < 14) { this.greeted = true; this.wave = 2.4; }
+    if (!this.staged && !this.greeted && dist < 14) { this.greeted = true; this.wave = 2.4; }
     if (dist > 40) this.greeted = false;
     // a draw now and then, never while waving
     this.nextDrag -= dt;
-    if (this.nextDrag <= 0 && this.wave <= 0 && !this.busy) { this.dragT = 1.8; this.nextDrag = 8 + Math.random() * 7; }
+    if (!this.staged && this.nextDrag <= 0 && this.wave <= 0 && !this.busy) { this.dragT = 1.8; this.nextDrag = 8 + Math.random() * 7; }
+    if (this.dragT > 0.3 && this.dragT - dt <= 0.3) this.breathT = 0.9;
     this.dragT = Math.max(0, this.dragT - dt);
     this.dragW = damp(this.dragW, this.dragT > 0.3 ? 1 : 0, 5, dt);
     this.glow = damp(this.glow, this.dragT > 0.3 && this.dragT < 1.4 ? 1 : 0.3, 8, dt);
@@ -77,9 +97,17 @@ export class Muha extends Person {
     this.pitch = damp(this.pitch, near ? clamp(Math.atan2(local.y - 1.5, Math.max(1, dist)), -0.3, 0.2) : 0, 3, dt);
     h.look(this.yaw, this.pitch);
     if (this.dragW > 0.01) {
-      // the right hand up to the lips, elbow out and down
-      const m = h.at('Head').add(_o.set(-0.025, 0.02, 0.12));
-      h.reach('R', m, _p.set(-1, -0.8, 0.2), this.dragW);
+      // Match the filter to the lips, not the wrist: the cigarette remains a bone-bound prop.
+      const hand = this.smokingHand;
+      const fingers = new THREE.Vector3(hand === 'L' ? -1 : 1, 0, 0);
+      const normal = new THREE.Vector3(0, 1, 0);
+      h.orientPalm(hand, fingers, normal, this.dragW);
+      const mouth = this.lips.getWorldPosition(new THREE.Vector3());
+      const wrist = h.bone(`Palm${hand}`).getWorldPosition(new THREE.Vector3());
+      const filter = this.cigarette.getWorldPosition(new THREE.Vector3());
+      const target = mouth.sub(filter.sub(wrist));
+      h.reach(hand, h.group.worldToLocal(target), _p.set(hand === 'L' ? 1 : -1, -0.8, 0.2), this.dragW);
+      h.orientPalm(hand, fingers, normal, this.dragW);
     }
     (this.ember.material as THREE.MeshBasicMaterial).color.setRGB(1, 0.28 + 0.3 * this.glow, 0.08 + 0.1 * this.glow);
     this.ember.scale.setScalar(0.8 + this.glow * 0.5);
@@ -92,7 +120,18 @@ export class Muha extends Person {
         this.tip.getWorldPosition(w.s.position);
         h.group.worldToLocal(w.s.position);
         w.age = 0;
+        w.breath = false;
         w.s.visible = true;
+      }
+    }
+    this.breathT = Math.max(0, this.breathT - dt);
+    this.breathEmit -= dt;
+    if (this.breathT > 0 && this.breathEmit <= 0) {
+      this.breathEmit = 0.15;
+      const w = this.wisps.find(w => !w.s.visible);
+      if (w) {
+        this.lips.getWorldPosition(w.s.position); h.group.worldToLocal(w.s.position);
+        w.age = 0; w.breath = true; w.s.visible = true;
       }
     }
     for (const w of this.wisps) {
@@ -101,8 +140,9 @@ export class Muha extends Person {
       const k = w.age / 2.4;
       if (k >= 1) { w.s.visible = false; continue; }
       w.s.position.y += dt * 0.12;
+      if (w.breath) w.s.position.z += dt * 0.28;
       w.s.position.x += Math.sin(w.age * 3 + t) * dt * 0.03;
-      w.s.scale.setScalar(0.02 + k * 0.12);
+      w.s.scale.setScalar(w.breath ? 0.045 + k * 0.3 : 0.02 + k * 0.12);
       (w.s.material as THREE.SpriteMaterial).opacity = 0.32 * Math.min(1, k * 6) * (1 - k);
     }
   }

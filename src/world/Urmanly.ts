@@ -14,6 +14,46 @@ import { boxCollider, Collider, fence, Place, T } from './Props';
 /** Material keys of one paint scheme (World makes one set per FOLK_SCHEMES entry). */
 export interface FolkMats { gate: string; win: string; winLit: string; gable: string; base: string; trim: string }
 
+/** Rafail's new house: two brick floors and an attic, no interior or new mechanics. */
+export function brickMansion(b: Bucket, p: Place, cols: Collider[]): void {
+  const w = 11, d = 10, base = .65, wall = 6.2;
+  b.add('concrete', boxGeo(w + .5, 3, d + .5), T(p, 0, base - 1.5, 0), '#99938a');
+  b.add('brickRed', boxGeo(w, wall, d, 2), T(p, 0, base + wall / 2, 0));
+  for (const y of [base, base + 3.1, base + wall])
+    b.add('concrete', boxGeo(w + .18, .16, d + .18), T(p, 0, y, 0), '#dfcfb7');
+  const roof = gableRoof(w, d, 3.5, .55);
+  b.add('metalRoof', roof.roof, T(p, 0, base + wall, 0), '#633b36');
+  b.add('brickRed', roof.gables, T(p, 0, base + wall, 0));
+  for (const y of [base + 1.65, base + 4.65]) {
+    for (const x of [-3.6, 0, 3.6]) {
+      if (x === 0 && y < 3) continue;
+      b.add('winWhite', planeGeo(1.7, 2.1), T(p, x, y, d / 2 + .04));
+    }
+    for (const side of [-1, 1]) for (const z of [-2.8, 1.8])
+      b.add('winWhite', planeGeo(1.6, 2), T(p, side * (w / 2 + .04), y, z, 0, side * Math.PI / 2));
+  }
+  b.add('door', planeGeo(1.5, 2.4), T(p, 0, base + 1.2, d / 2 + .05));
+  for (let step = 0; step < 3; step++)
+    b.add('concrete', boxGeo(2.6, .22, 1.8 - step * .45), T(p, 0, .11 + step * .22, d / 2 + .8 - step * .22), '#b8afa0');
+  b.add('metalRoof', boxGeo(2.9, .12, 1.9), T(p, 0, base + 2.65, d / 2 + .65, .12), '#633b36');
+  b.add('winWhite', planeGeo(1.6, 1.8), T(p, 0, base + wall + 1.1, d / 2 + .05));
+  b.add('brickRed', boxGeo(.8, 2, .8), T(p, -2.8, base + wall + 2.2, -2));
+  cols.push(boxCollider(p, 0, 0, w + .5, d + .5), boxCollider(p, 0, d / 2 + .8, 2.6, 1.8));
+}
+
+/** Oversized solid metal gates, local +z facing the street. */
+export function mansionGate(b: Bucket, p: Place, cols: Collider[]): void {
+  for (const x of [-3.7, 3.7]) {
+    b.add('brickRed', boxGeo(.65, 3.5, .65), T(p, x, 1.55, 0));
+    b.add('concrete', boxGeo(.85, .18, .85), T(p, x, 3.38, 0), '#d4c4aa');
+  }
+  for (const x of [-1.8, 1.8]) {
+    b.add('flat', boxGeo(3.55, 2.8, .12), T(p, x, 1.5, 0), '#293c34');
+    b.add('flat', boxGeo(3.3, .08, .08), T(p, x, 2.45, .09), '#b6a57b');
+  }
+  cols.push(boxCollider(p, 0, 0, 8.1, .7));
+}
+
 const LOGS = ['#a89a86', '#9a8a76', '#b8a48a', '#8e7e6a', '#a3917a'];
 const PAINTED = ['#86a8c8', '#9cb88a', '#d6c48e', '#c8d0c0'];
 const IRON = ['#4f7a4a', '#9a3a2c', '#45688c', '#3e6a5a', '#7a2e26'];
@@ -48,7 +88,10 @@ export interface HouseOpts {
 export function folkHouse(b: Bucket, p: Place, r: RNG, m: FolkMats, cols: Collider[], o: HouseOpts): { w: number; d: number } {
   const w = o.w ?? rand(r, 6.4, 7.2), d = o.d ?? rand(r, 7.6, 9), hw = rand(r, 2.7, 3.0), base = 0.6;
   const painted = !o.abandoned && r() < 0.22;
-  b.add('concrete', boxGeo(w + 0.3, 1.0, d + 0.3), T(p, 0, base - 0.5, 0), o.abandoned ? '#8a867c' : '#a49e90');
+  // Deep concrete foundation plinth extending 2.4m down into the earth (no gaps under any terrain slope)
+  b.add('concrete', boxGeo(w + 0.36, 2.4, d + 0.36), T(p, 0, base - 1.2, 0), o.abandoned ? '#8a867c' : '#948e82');
+  // Rustic zavalinka skirting along the base of the log walls
+  b.add('boards', boxGeo(w + 0.54, 0.44, d + 0.54), T(p, 0, base - 0.22, 0), o.abandoned ? '#726452' : '#645442');
   b.add(painted ? 'boards' : 'logs', boxGeo(w, hw, d, 2), T(p, 0, base + hw / 2, 0), painted ? pick(r, PAINTED) : o.abandoned ? '#8a7e6e' : pick(r, LOGS));
   if (!painted) for (const sx of [-1, 1]) for (const sz of [-1, 1]) b.add('woodEnds', boxGeo(0.34, hw, 0.34, 0.6), T(p, sx * (w / 2 + 0.07), base + hw / 2, sz * (d / 2 + 0.07)), '#b0a084');
   // the frieze under the eaves in the carving's white; a board-clad house has white corner boards too
@@ -85,15 +128,26 @@ export function folkHouse(b: Bucket, p: Place, r: RNG, m: FolkMats, cols: Collid
   }
   // the veranda on the yard side: boarded below, a band of small panes, a lean-to roof; the porch at its front
   const vw = 2.5, vd = d * 0.55, vz = -d * 0.12, vx = o.yard * (w / 2 + vw / 2);
+  // Deep concrete foundation under veranda down to -1.8m
+  b.add('concrete', boxGeo(vw + 0.3, 2.4, vd + 0.3), T(p, vx, base - 1.2, vz), o.abandoned ? '#8a867c' : '#948e82');
+  b.add('boards', boxGeo(vw + 0.48, 0.44, vd + 0.48), T(p, vx, base - 0.22, vz), o.abandoned ? '#726452' : '#645442');
   b.add('boards', boxGeo(vw, 2.5, vd, 1), T(p, vx, base + 1.05, vz), o.abandoned ? '#7e7464' : '#d8d0b8');
   if (!o.abandoned) {
     for (let k = 0; k < 4; k++) b.add('winWhite', planeGeo(vd / 4 - 0.12, 0.8), T(p, vx + o.yard * (vw / 2 + 0.02), base + 1.6, vz - vd / 2 + (k + 0.5) * (vd / 4), 0, o.yard * Math.PI / 2));
     b.add('flat', boxGeo(0.06, 0.1, vd + 0.1), T(p, vx + o.yard * (vw / 2 + 0.03), base + 2.05, vz), m.base);
   }
   b.add('slate', boxGeo(vw + 0.6, 0.06, vd + 0.6), T(p, vx + o.yard * 0.15, base + 2.45, vz, 0, 0, -o.yard * 0.22), '#a0a098');
-  b.add('boards', boxGeo(1.3, 0.55, 1.2), T(p, vx, base - 0.3, vz + vd / 2 + 0.6), '#9a8a70');
+  // Porch foundation and multi-tier steps reaching ground level
+  b.add('concrete', boxGeo(1.4, 2.2, 1.6), T(p, vx, base - 1.1, vz + vd / 2 + 0.75), '#8a8478');
+  b.add('boards', boxGeo(1.36, 0.3, 1.0), T(p, vx, base - 0.15, vz + vd / 2 + 0.55), '#8a7a60');
+  b.add('boards', boxGeo(1.36, 0.22, 0.5), T(p, vx, base - 0.34, vz + vd / 2 + 1.15), '#827258');
+  b.add('boards', boxGeo(1.42, 0.22, 0.5), T(p, vx, base - 0.52, vz + vd / 2 + 1.5), '#74644e');
+  // Porch roof and pillars
   b.add('flat', boxGeo(1.6, 0.06, 1.5), T(p, vx, base + 2.1, vz + vd / 2 + 0.7, 0.2, 0, 0), m.base);
   for (const sx of [-0.7, 0.7]) b.add('flat', boxGeo(0.08, 2.2, 0.08), T(p, vx + sx, base + 1.0, vz + vd / 2 + 1.3), m.trim);
+  // Porch railing
+  b.add('flat', boxGeo(0.06, 0.08, 1.3), T(p, vx + o.yard * 0.7, base + 0.75, vz + vd / 2 + 0.7), m.trim);
+  for (let bi = 0; bi < 3; bi++) b.add('flat', boxGeo(0.04, 0.7, 0.04), T(p, vx + o.yard * 0.7, base + 0.38, vz + vd / 2 + 0.35 + bi * 0.38), m.trim);
   cols.push(boxCollider(p, 0, 0, w + 0.4, d + 0.4), boxCollider(p, vx, vz + 0.6, vw, vd + 1.4));
   return { w, d };
 }
@@ -102,17 +156,60 @@ export function folkHouse(b: Bucket, p: Place, r: RNG, m: FolkMats, cols: Collid
  * Broad Bashkir yard gates (капка) facing local +z: a wicket and two leaves in one painted face,
  * thick posts, and a little iron roof over them all.
  */
-export function folkGate(b: Bucket, p: Place, m: FolkMats, cols: Collider[]): void {
-  b.add(m.gate, planeGeo(4.6, 2.1), T(p, 0, 1.15, 0.05));
-  b.add('boards', boxGeo(4.6, 2.1, 0.08, 1), T(p, 0, 1.15, 0), '#8a7a62');
-  for (const x of [-2.42, -1.3, 2.42]) {
+export function folkGate(b: Bucket, p: Place, m: FolkMats, cols: Collider[], open = false): void {
+  if (open) {
+    // Static open leaves, folded into the yard. Visual and collision openings agree.
+    for (const side of [-1, 1]) {
+      b.add(m.gate, planeGeo(2.3, 2.1), T(p, side * 2.3, 1.15, -1.15, 0, side * Math.PI / 2));
+      b.add('boards', boxGeo(.08, 2.1, 2.3, 1), T(p, side * 2.3, 1.15, -1.15), '#8a7a62');
+      cols.push(boxCollider(p, side * 2.3, -1.15, .2, 2.3));
+    }
+  } else {
+    b.add(m.gate, planeGeo(4.6, 2.1), T(p, 0, 1.15, 0.05));
+    b.add('boards', boxGeo(4.6, 2.1, 0.08, 1), T(p, 0, 1.15, 0), '#8a7a62');
+    cols.push(boxCollider(p, 0, 0, 5.1, 0.4));
+  }
+  for (const x of open ? [-2.42, 2.42] : [-2.42, -1.3, 2.42]) {
     b.add('flat', boxGeo(0.24, 2.9, 0.24), T(p, x, 1.45, 0), m.base);
     b.add('flat', boxGeo(0.3, 0.12, 0.3), T(p, x, 2.92, 0), m.trim);
+    if (open) cols.push(boxCollider(p, x, 0, .3, .3));
   }
   b.add('flat', boxGeo(5.2, 0.16, 0.3), T(p, 0, 2.62, 0), m.trim);
   for (const s of [-1, 1]) b.add('metalRoof', boxGeo(5.6, 0.05, 0.62), T(p, 0, 3.08, s * 0.26, s * 0.6, 0, 0), '#4f7a4a');
   b.add('flat', boxGeo(5.6, 0.08, 0.08), T(p, 0, 3.25, 0), m.trim);
-  cols.push(boxCollider(p, 0, 0, 5.1, 0.4));
+}
+
+/** Mityai's sidecar bike: exposed wheels, tank and bars read from a passing cab. */
+export function neighbourMotorcycle(b: Bucket, p: Place, cols: Collider[]): void {
+  for (const x of [-.85, .85]) {
+    b.add('flat', new THREE.TorusGeometry(.34, .09, 6, 14), T(p, x, .43, 0), '#242522');
+    b.add('flat', new THREE.CylinderGeometry(.22, .22, .06, 10), T(p, x, .43, 0, Math.PI / 2), '#8b8980');
+  }
+  b.add('flat', boxGeo(1.65, .12, .16), T(p, 0, .53, 0), '#44463b');
+  b.add('flat', boxGeo(.55, .38, .42), T(p, .15, .98, 0), '#883c2e');
+  b.add('flat', boxGeo(.65, .15, .4), T(p, -.42, 1.05, 0), '#292822');
+  b.add('flat', boxGeo(.4, .35, .35), T(p, -.05, .64, 0), '#777970');
+  b.add('flat', boxGeo(.08, .85, .1), T(p, .78, .8, 0, 0, 0, .15), '#676b61');
+  b.add('flat', boxGeo(.08, .08, .72), T(p, .65, 1.24, 0), '#777970');
+  b.add('flat', boxGeo(1.2, .45, .65), T(p, -.15, .65, .75), '#4f624b');
+  b.add('flat', boxGeo(.48, .12, .46), T(p, -.4, .89, .75), '#302f28');
+  b.add('flat', new THREE.TorusGeometry(.3, .09, 6, 14), T(p, -.3, .39, 1.1), '#242522');
+  cols.push(boxCollider(p, 0, .45, 2.6, 1.9));
+}
+
+/** Rinat's unfinished cot: pale timber and a clear row of slats, no animation. */
+export function neighbourCot(b: Bucket, p: Place, cols: Collider[]): void {
+  b.add('boards', boxGeo(1.55, .12, .85), T(p, 0, .52, 0), '#d7bd8c');
+  for (const x of [-.72, .72]) for (const z of [-.37, .37])
+    b.add('boards', boxGeo(.09, 1.3, .09), T(p, x, .7, z), '#e0c99e');
+  for (const z of [-.37, .37]) {
+    b.add('boards', boxGeo(1.55, .09, .09), T(p, 0, 1.3, z), '#e0c99e');
+    for (let x = -.55; x <= .56; x += .22)
+      b.add('boards', boxGeo(.045, .72, .045), T(p, x, .91, z), '#e0c99e');
+  }
+  for (const x of [-.72, .72]) b.add('boards', boxGeo(.08, .6, .8), T(p, x, .96, 0), '#d7bd8c');
+  b.add('boards', boxGeo(.8, .06, .15), T(p, 1.05, .08, .05, 0, .3), '#bda575');
+  cols.push(boxCollider(p, 0, 0, 1.65, .95));
 }
 
 /** The bathhouse at the bottom of the garden: a squat log box, a tiny window, a stovepipe. */

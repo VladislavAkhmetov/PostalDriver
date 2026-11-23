@@ -1,4 +1,4 @@
-# UAZ-452 «буханка»
+# Урман-452 (почтовый вездеход) / Urman-452
 
 "UAZ-452 Utility Van Lowpoly" by **Mehozavr** — https://opengameart.org/content/uaz-452-utility-van-lowpoly
 License: **CC0 1.0** (public domain dedication).

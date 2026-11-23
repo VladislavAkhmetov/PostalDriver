@@ -16,6 +16,7 @@ export class Score {
   private gain: GainNode;
   private want: Piece | null = null;
   private held = false;
+  private scale = 1;
   /** The piece has played to its end (not when faded out). */
   onEnd: ((p: Piece) => void) | null = null;
 
@@ -35,24 +36,44 @@ export class Score {
   get piece(): Piece | null { return this.want; }
   /** Actually sounding. */
   get audible(): boolean { return !!this.want && !this.el.paused && this.ctx.state === 'running'; }
+  /** Current gain value. */
+  get volume(): number { return this.gain.gain.value; }
 
-  play(p: Piece, fadeIn = 2): void {
-    if (this.want === p) return;
+  play(p: Piece, fadeIn = 2, scale = 1): void {
+    this.scale = scale;
+    if (this.want === p) {
+      this.fadeVolume(scale, fadeIn);
+      return;
+    }
     const m = MUSIC[p];
     this.want = p;
     const t = this.ctx.currentTime;
     this.gain.gain.cancelScheduledValues(t);
     this.gain.gain.setValueAtTime(0, t);
-    this.gain.gain.linearRampToValueAtTime(m.volume, t + fadeIn);
+    this.gain.gain.linearRampToValueAtTime(m.volume * this.scale, t + fadeIn);
     this.el.loop = m.loop;
     this.el.src = m.url;
     this.start();
+  }
+
+  /** Smoothly transition the current music to a new volume scale (e.g. 0.38 for quiet background). */
+  fadeVolume(scale = 1, fade = 2): void {
+    this.scale = scale;
+    if (!this.want) return;
+    const m = MUSIC[this.want];
+    const target = m.volume * scale;
+    const t = this.ctx.currentTime;
+    const g = this.gain.gain;
+    g.cancelScheduledValues(t);
+    g.setValueAtTime(g.value, t);
+    g.linearRampToValueAtTime(target, t + fade);
   }
 
   /** Fade out whatever is on. */
   stop(fade = 1.5): void {
     if (!this.want) return;
     this.want = null;
+    this.scale = 1;
     const t = this.ctx.currentTime, g = this.gain.gain;
     g.cancelScheduledValues(t);
     g.setValueAtTime(g.value, t);

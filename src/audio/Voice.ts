@@ -91,10 +91,11 @@ export class Voice {
   async say(speaker: string, text: string, kind: VoiceKind = 'say'): Promise<number> {
     const l = this.note(speaker, text, kind);
     this.stop();
+    const generation = this.generation;
     if (!l.has) return 0;
     const ctx = this.ctx(), out = this.out();
     const buf = await this.buffer(text);
-    if (!buf || !ctx || !out) return 0;
+    if (!buf || !ctx || !out || generation !== this.generation) return 0;
     if (!this.gain) { this.gain = ctx.createGain(); this.gain.connect(out); }
     this.gain.gain.value = this.volume;
     const src = ctx.createBufferSource();
@@ -107,7 +108,9 @@ export class Voice {
     return buf.duration;
   }
 
+  private generation = 0;
   stop(): void {
+    ++this.generation;
     if (!this.current) return;
     const c = this.current;
     this.current = null;

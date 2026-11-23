@@ -1,81 +1,106 @@
 import { clamp } from '../core/math';
-import lowUrl from '../assets/engine/engine_low.wav?url';
-import midUrl from '../assets/engine/engine_mid.wav?url';
-import hi1Url from '../assets/engine/engine_hi1.wav?url';
-import hi2Url from '../assets/engine/engine_hi2.wav?url';
+import studioIdleUrl from '../assets/engine/engine_studio_idle.wav?url';
 
 /**
- * The engine's voice from real recordings (src/assets/engine/CREDITS.md): four seamless loops
- * of a petrol four-cylinder at different speeds. Each plays at a rate that follows the
- * revs, and they cross-fade with rpm so the tone stays natural over the whole range. The
- * synthesised tappets, carburettor hiss and fan are mixed on top by the worklet.
+ * Authentic studio-recorded engine voice:
+ * Sourced directly from the same professional Foley recording session as the vehicle's
+ * struggle starter ('starter.wav').
  *
- * `ref` is the crank speed each loop was recorded at: a four-cylinder fires rpm / 30 times a
- * second, and the loops' pulse rates were measured (21.4, 31.5, 64.9, 76 Hz).
+ * Signal processing tuned for authentic vehicle feel:
+ * - High-Pass Filter (HPF) at 170 Hz (Q = 0.7) to eliminate all boomy low-end drone.
+ * - Dynamic Low-Pass Filter (1700 Hz base, opening up to ~3200 Hz with RPM & throttle).
+ * - Gentle, natural pitch modulation (clamped to [0.86 .. 1.28]), avoiding cartoonish
+ *   chipmunk speedups or violent digital shifts between gears.
+ * - Internal RPM damping to ensure gear changes sound smooth and mechanical.
+ * - Subtle organic carburetor idle wobble (never mechanically static).
+ * - Dynamic source management ensuring reliable playback on any browser state.
  */
-const LAYERS = [
-  { url: lowUrl, ref: 642 },
-  { url: midUrl, ref: 945 },
-  { url: hi1Url, ref: 1947 },
-  { url: hi2Url, ref: 2280 },
-];
-
-interface Voice { src: AudioBufferSourceNode; gain: GainNode; ref: number }
-
 export class EngineSamples {
   ready = false;
-  private voices: Voice[] = [];
+  private src: AudioBufferSourceNode | null = null;
+  private buffer: AudioBuffer | null = null;
+  private hpf: BiquadFilterNode;
   private tone: BiquadFilterNode;
   private out: GainNode;
   private hunt = 0;
+  private smoothRpm = 800;
 
   constructor(private ctx: AudioContext, dest: AudioNode) {
     this.out = ctx.createGain();
     this.out.gain.value = 0;
+
+    // High-pass filter tuned to 170 Hz (Max crisp/dry, eliminating all low-end drone)
+    this.hpf = ctx.createBiquadFilter();
+    this.hpf.type = 'highpass';
+    this.hpf.frequency.value = 170;
+    this.hpf.Q.value = 0.7;
+
+    // Low-pass tone filter (smooth natural highs without synthetic whistle or hiss)
     this.tone = ctx.createBiquadFilter();
-    this.tone.type = 'lowpass'; this.tone.frequency.value = 1400; this.tone.Q.value = 0.6;
-    this.out.connect(this.tone).connect(dest);
+    this.tone.type = 'lowpass';
+    this.tone.frequency.value = 2200;
+    this.tone.Q.value = 0.55;
+
+    // Signal chain: out -> HPF (170Hz) -> Lowpass -> master engine gain
+    this.out.connect(this.hpf).connect(this.tone).connect(dest);
   }
 
   async load(): Promise<void> {
-    const bufs = await Promise.all(LAYERS.map(async (l) => this.ctx.decodeAudioData(await (await fetch(l.url)).arrayBuffer())));
-    LAYERS.forEach((l, i) => {
-      const src = this.ctx.createBufferSource();
-      src.buffer = bufs[i]; src.loop = true;
-      const gain = this.ctx.createGain();
-      gain.gain.value = 0;
-      src.connect(gain).connect(this.out);
-      src.start(0, Math.random() * bufs[i].duration);
-      this.voices.push({ src, gain, ref: l.ref });
-    });
+    const res = await fetch(studioIdleUrl);
+    this.buffer = await this.ctx.decodeAudioData(await res.arrayBuffer());
     this.ready = true;
   }
 
   update(dt: number, rpm: number, load: number, thr: number, on: number): void {
-    if (!this.ready) return;
+    if (!this.ready || !this.buffer) return;
     const t = this.ctx.currentTime;
+
+    if (on <= 0) {
+      this.out.gain.setTargetAtTime(0, t, 0.08);
+      this.hunt = 0;
+      this.smoothRpm = 800;
+      if (this.src) {
+        const s = this.src;
+        this.src = null;
+        setTimeout(() => { try { s.stop(); } catch(e){} }, 120);
+      }
+      return;
+    }
+
+    // Ensure audio buffer source is active when running
+    if (!this.src) {
+      const src = this.ctx.createBufferSource();
+      src.buffer = this.buffer;
+      src.loop = true;
+      src.connect(this.out);
+      src.start(t, Math.random() * this.buffer.duration);
+      this.src = src;
+    }
+
     this.hunt += dt;
-    // the carburettor never settles at idle: a slow wobble in the pitch
-    const idle = clamp(1 - (rpm - 750) / 900, 0, 1);
-    const wob = 1 + idle * (0.012 * Math.sin(this.hunt * 5) + 0.006 * Math.sin(this.hunt * 13.1));
-    const r = Math.max(rpm, 200) * wob;
-    let norm = 0;
-    const w = this.voices.map((v) => {
-      const d = Math.log(r / v.ref);
-      // bell in log-rpm; the ends stay open so the lowest and highest loops cover the extremes
-      const lo = v === this.voices[0] && d < 0, hi = v === this.voices[this.voices.length - 1] && d > 0;
-      const g = lo || hi ? 1 : Math.max(0, 1 - Math.abs(d) / 0.62) ** 1.5;
-      norm += g * g;
-      return g;
-    });
-    const k = 1 / Math.sqrt(Math.max(norm, 1e-4));
-    this.voices.forEach((v, i) => {
-      v.gain.gain.setTargetAtTime(w[i] * k, t, 0.05);
-      v.src.playbackRate.setTargetAtTime(clamp(r / v.ref, 0.5, 2.4), t, 0.04);
-    });
+
+    // Smooth RPM feeding the audio engine to prevent digital pitch snaps during gear changes
+    this.smoothRpm += (rpm - this.smoothRpm) * Math.min(1, dt * 5.5);
+
+    // Subtle carburetor idle wobble (only active around idle)
+    const idle = clamp(1 - (this.smoothRpm - 750) / 900, 0, 1);
+    const wob = 1 + idle * (0.006 * Math.sin(this.hunt * 4.2) + 0.003 * Math.sin(this.hunt * 10.8));
+    const r = Math.max(this.smoothRpm, 400) * wob;
+
+    // Compressed natural pitch curve:
+    // User requirement: "не менять так сильно тон"
+    // Reference 1350 RPM = 1.0; gentle range [0.86 .. 1.28] across the whole powerband.
+    const rpmNorm = (r - 1350) / 1350;
+    const rate = clamp(1.0 + Math.sign(rpmNorm) * Math.pow(Math.abs(rpmNorm), 0.75) * 0.28, 0.86, 1.28);
+    this.src.playbackRate.setTargetAtTime(rate, t, 0.06);
+
+    // Dynamic lowpass filter communicates engine revving and throttle breathing
     const pull = Math.max(load, thr * 0.8);
-    // off the throttle the engine is duller; pulling hard it opens up
-    this.tone.frequency.setTargetAtTime(900 + 4200 * pull + rpm * 0.35, t, 0.1);
-    this.out.gain.setTargetAtTime(on * (0.42 + 0.5 * load), t, 0.12);
+    const targetCutoff = 1700 + (this.smoothRpm - 750) * 0.35 + pull * 550;
+    this.tone.frequency.setTargetAtTime(clamp(targetCutoff, 1400, 3200), t, 0.08);
+
+    // Full, present engine volume matching the preview audition
+    const targetGain = on * (0.82 + 0.25 * pull);
+    this.out.gain.setTargetAtTime(targetGain, t, 0.1);
   }
 }

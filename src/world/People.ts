@@ -5,11 +5,14 @@ import { clamp, damp } from '../core/math';
 import manUrl from '../assets/people/man.glb?url';
 import womanUrl from '../assets/people/woman.glb?url';
 import dressUrl from '../assets/people/woman-dress.glb?url';
-import timurUrl from '../assets/people/timur.glb?url';
+import timurUrl from '../assets/people/timur-mitten.glb?url';
 import gaiUrl from '../assets/people/gai-mx.glb?url';
 import heroUrl from '../assets/people/hero-mx.glb?url';
 import muhaUrl from '../assets/people/muha-mx.glb?url';
 import kartatayUrl from '../assets/people/kartatay-mx.glb?url';
+import zinaidaUrl from '../assets/people/zinaida-mx.glb?url';
+import olosayUrl from '../assets/people/olosay-mx.glb?url';
+import gulnaraUrl from '../assets/people/gulnara-mx.glb?url';
 import mixamoClipsUrl from '../assets/people/mixamo-clips.glb?url';
 
 /**
@@ -23,28 +26,33 @@ import mixamoClipsUrl from '../assets/people/mixamo-clips.glb?url';
  * Local forward is +Z, feet at the origin, sizes in metres.
  */
 /**
- * Textured, modelled characters. `timur` the hero as the driver sees himself (arms and legs, on the
- * BaseHuman skeleton with its finger bones, which close round the wheel). On Mixamo's skeleton with
+ * Textured, modelled characters. `timur` is the first-person driver, on the Mixamo skeleton with
+ * extra bones for the mitten grip. On Mixamo's skeleton with
  * the Mixamo clips (scripts/models/mixamo-people.mjs): `hero` — Timur seen from outside, in a cap and
  * a tracksuit jacket; `gai` sergeant Kuzmin of the GAI post; `muha` his friend from before the army;
- * `kartatay` the grandfather (cap, moustache, an old jacket over a patterned sweater, boots).
+ * `kartatay` the grandfather (cap, moustache, an old jacket over a patterned sweater, boots);
+ * `zinaida` the postmaster, with her own idle animation; `olosay` is Timur's grandmother (өләсәй);
+ * `gulnara` is his mother (әсәй), seen inside hospital reception during patient deliveries.
  */
-export type Body = 'man' | 'woman' | 'dress' | 'gai' | 'timur' | 'hero' | 'muha' | 'kartatay';
+export type Body = 'man' | 'woman' | 'dress' | 'gai' | 'timur' | 'hero' | 'muha' | 'kartatay' | 'zinaida' | 'olosay' | 'gulnara';
 
-const URLS: Record<Body, string> = { man: manUrl, woman: womanUrl, dress: dressUrl, gai: gaiUrl, timur: timurUrl, hero: heroUrl, muha: muhaUrl, kartatay: kartatayUrl };
+const URLS: Record<Body, string> = { man: manUrl, woman: womanUrl, dress: dressUrl, gai: gaiUrl, timur: timurUrl, hero: heroUrl, muha: muhaUrl, kartatay: kartatayUrl, zinaida: zinaidaUrl, olosay: olosayUrl, gulnara: gulnaraUrl };
 // the officer, Timur and the grandfather are measured to the top of their caps (he is 72 and stoops a little)
-const HEIGHT: Record<Body, number> = { man: 1.78, woman: 1.64, dress: 1.6, gai: 1.86, timur: 1.8, hero: 1.8, muha: 1.76, kartatay: 1.72 };
+const HEIGHT: Record<Body, number> = { man: 1.78, woman: 1.64, dress: 1.6, gai: 1.86, timur: 1.8, hero: 1.8, muha: 1.76, kartatay: 1.72, zinaida: 1.64, olosay: 1.56, gulnara: 1.64 };
 /** The bodies on Mixamo's skeleton: they share one set of clips (mixamo-clips.glb). */
-const MIXAMO: ReadonlySet<Body> = new Set<Body>(['gai', 'hero', 'muha', 'kartatay']);
+const MIXAMO: ReadonlySet<Body> = new Set<Body>(['gai', 'timur', 'hero', 'muha', 'kartatay', 'zinaida', 'olosay', 'gulnara']);
 /**
  * BaseHuman's bone names (which the procedural layer, the props and the scenes use) on Mixamo's
- * skeleton. It has no finger bones: the fingers' place is made up from the hand (see Human).
+ * skeleton. Only the driver has the optional mitten bones.
  */
 const ALIAS: Record<string, string> = {
   Hips: 'Hips', Abdomen: 'Spine', Torso: 'Spine2', Neck: 'Neck', Head: 'Head',
   ShoulderL: 'LeftShoulder', UpperArmL: 'LeftArm', LowerArmL: 'LeftForeArm', PalmL: 'LeftHand',
   ShoulderR: 'RightShoulder', UpperArmR: 'RightArm', LowerArmR: 'RightForeArm', PalmR: 'RightHand',
   UpperLegL: 'LeftUpLeg', LowerLegL: 'LeftLeg', FootL: 'LeftFoot', UpperLegR: 'RightUpLeg', LowerLegR: 'RightLeg', FootR: 'RightFoot',
+  MiddleHandL: 'LeftMittenKnuckle', FingersL: 'LeftMittenFingers', Thumb1L: 'LeftMittenThumb1', Thumb2L: 'LeftMittenThumb2',
+  MiddleHandR: 'RightMittenKnuckle', FingersR: 'RightMittenFingers', Thumb1R: 'RightMittenThumb1', Thumb2R: 'RightMittenThumb2',
+  ToeL: 'LeftToeBase', ToeR: 'RightToeBase',
 };
 const FROM_MIXAMO = new Map(Object.entries(ALIAS).map(([k, v]) => [`mixamorig${v}`, k]));
 /** Clips a body plays under another clip's name: the grandfather walks as an old man does. */
@@ -91,7 +99,8 @@ export function loadPeople(): Promise<void> {
         const sc = await shared;
         let srcHips: Record<string, number> = {};
         sc.scene.traverse((o) => { if (o.userData.clipHips) srcHips = o.userData.clipHips; });
-        clips = fitClips(sc.animations, srcHips, b, g.scene.getObjectByName('mixamorigHips')!.position.y);
+        const sharedClips = fitClips(sc.animations, srcHips, b, g.scene.getObjectByName('mixamorigHips')!.position.y);
+        clips = { ...sharedClips, ...clips };
       }
       g.scene.updateMatrixWorld(true);
       const meshes: MeshInfo[] = [];
@@ -151,7 +160,7 @@ const _e = new THREE.Vector3(), _h = new THREE.Vector3(), _s = new THREE.Vector3
 const _q = new THREE.Quaternion(), _qp = new THREE.Quaternion(), _qd = new THREE.Quaternion();
 const UP = new THREE.Vector3(0, 1, 0);
 const ARM = /Arm|Palm|Hand|Finger|Thumb/;
-const DRIVEN = ['Torso', 'Neck', 'Head', 'UpperArmL', 'LowerArmL', 'UpperArmR', 'LowerArmR'];
+const DRIVEN = ['Torso', 'Neck', 'Head', 'UpperArmL', 'LowerArmL', 'UpperArmR', 'LowerArmR', 'PalmL', 'PalmR'];
 /** BaseHuman's Sitting clip, last frame: the hips against the feet, file units (down and back). */
 const BH_SIT_Y = 1.1, BH_SIT_Z = -0.6;
 
@@ -213,7 +222,7 @@ export class Human {
     // Mixamo's bones answer to BaseHuman's names too (the fingers: the hand)
     if (this.mixamo) {
       for (const [k, v] of Object.entries(ALIAS)) if (this.bones[`mixamorig${v}`]) this.bones[k] = this.bones[`mixamorig${v}`];
-      for (const s of ['L', 'R']) this.bones[`Fingers${s}`] = this.bones[`Palm${s}`];
+      for (const s of ['L', 'R']) this.bones[`Fingers${s}`] ??= this.bones[`Palm${s}`];
     }
     this.mixer = new THREE.AnimationMixer(this.model);
     for (const n of DRIVEN) if (this.bones[n]) this.driven.push([this.bones[n], this.bones[n].quaternion.clone()]);
@@ -233,6 +242,7 @@ export class Human {
       for (const [k, v] of Object.entries(ALIAS)) if (this.bind[`mixamorig${v}`]) this.bind[k] = this.bind[`mixamorig${v}`];
       // where the fingers would be: on along the forearm's line, past the wrist
       for (const s of ['L', 'R']) {
+        if (this.bind[`Fingers${s}`]) continue;
         const palm = this.bind[`Palm${s}`], lo = this.bind[`LowerArm${s}`];
         if (!palm || !lo) continue;
         const p = new THREE.Vector3().setFromMatrixPosition(palm), d = p.clone().sub(new THREE.Vector3().setFromMatrixPosition(lo)).normalize();
@@ -449,6 +459,23 @@ export class Human {
     this.spin('Head', UP, yaw * 0.4);
     this.spin('Neck', ax, pitch * 0.4);
     this.spin('Head', ax, pitch * 0.6);
+  }
+
+  /** Orient a mitten using its bind-pose longitudinal axis and palm surface, in group space. */
+  orientPalm(side: Side, fingers: THREE.Vector3, normal: THREE.Vector3, weight = 1): void {
+    const bind = this.bindFrame(`Palm${side}`);
+    if (!bind) return;
+    const f = this.bindAt(`Fingers${side}`).sub(this.bindAt(`Palm${side}`)).normalize();
+    const n = new THREE.Vector3(0, -1, 0).addScaledVector(f, f.y).normalize();
+    const from = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(f, n, new THREE.Vector3().crossVectors(f, n)));
+    const dir = fingers.clone().normalize(), up = normal.clone().addScaledVector(dir, -normal.dot(dir)).normalize();
+    const to = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(dir, up, new THREE.Vector3().crossVectors(dir, up)));
+    const bindQ = new THREE.Quaternion(); bind.decompose(new THREE.Vector3(), bindQ, new THREE.Vector3());
+    const desired = this.group.getWorldQuaternion(new THREE.Quaternion()).multiply(to).multiply(from.invert()).multiply(bindQ);
+    const bone = this.bone(`Palm${side}`);
+    desired.premultiply(bone.parent!.getWorldQuaternion(new THREE.Quaternion()).invert());
+    bone.quaternion.slerp(desired, weight);
+    bone.updateMatrixWorld(true);
   }
 
   /**

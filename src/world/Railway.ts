@@ -35,6 +35,8 @@ export class Railway {
   private active = false;
   private cooldown = 6;
   private hornDone = false;
+  /** The locomotive has already signalled while passing this stretch of a settlement. */
+  private bySettlement = false;
   /** 0 open … 1 closed. */
   private boomK = 0;
   private warn = false;
@@ -78,6 +80,36 @@ export class Railway {
     this.raw = raw;
     this.levelCrossings();
     this.lampMat = new THREE.MeshLambertMaterial({ vertexColors: true, emissive: '#fff0c0', emissiveIntensity: 0 });
+  }
+
+  /**
+   * Streets of the town, the villages and the hamlets. The line passes Urmanly about 130 m from its
+   * street; the other settlements stay further off, so a horn there is the one the freight gives
+   * while going by a populated place.
+   */
+  private settlementDist(x: number, z: number): number {
+    const g = this.ground;
+    const m = g.marks;
+    const spans: { road: { frame: (s: number) => { x: number; z: number }; length: number }; a: number; b: number }[] = [
+      { road: g.main, a: 0, b: m.town + 300 },
+      { road: g.main, a: m.junction - 300, b: m.junction - 95 },
+      { road: g.main, a: m.junction + 330, b: m.junction + 420 },
+      { road: g.main, a: m.bridge + 205, b: m.bridge + 330 },
+      { road: g.main, a: m.sosStart, b: m.sosEnd },
+      { road: g.main, a: m.zarStart, b: m.zarEnd },
+      { road: g.homeRoad, a: g.homeMarks.village, b: g.homeRoad.length },
+      { road: g.stub, a: g.branch.kaiStart, b: g.branch.end },
+    ];
+    let best = 1e9;
+    for (const s of spans) {
+      const end = Math.min(s.b, s.road.length - 0.05);
+      for (let u = s.a; u <= end; u += 25) {
+        const f = s.road.frame(u);
+        const d = Math.hypot(f.x - x, f.z - z);
+        if (d < best) best = d;
+      }
+    }
+    return best;
   }
 
   /**
@@ -392,7 +424,11 @@ export class Railway {
     consist[1].group.userData.flip = true;
     this.cars = consist;
     this.trainLen = off;
-    for (let i = 0; i < consist.length; i++) this.trainCols.push({ x: 1e9, z: 1e9, r: 9, hw: 1.6, hd: consist[i].len / 2, rot: 0, box: true });
+    for (let i = 0; i < consist.length; i++) {
+      const hd = consist[i].len / 2 + 0.45;
+      const hw = 1.6;
+      this.trainCols.push({ x: 1e9, z: 1e9, r: Math.hypot(hw, hd) + 0.5, hw, hd, rot: 0, box: true, vx: 0, vz: 0 });
+    }
   }
 
   /** Booms and train cars that can block the player; registered once as dynamic colliders. */
@@ -415,6 +451,7 @@ export class Railway {
       this.head = -this.dir * lead;
       this.active = true;
       this.hornDone = false;
+      this.bySettlement = false;
     }
     let tail = 0;
     if (this.active) {
@@ -427,6 +464,13 @@ export class Railway {
     const tailTo = this.active ? -this.dir * tail : -1e9;
     this.warn = this.active && headTo < 330 && tailTo > -25;
     if (this.active && !this.hornDone && headTo < 420) { this.hornDone = true; this.hornQ = 1; }
+    // One blast as the locomotive draws alongside a settlement. Only Urmanly sits this close to the line.
+    if (this.active) {
+      const [sx, sz] = this.at(this.head);
+      const sd = this.settlementDist(sx, sz);
+      if (sd < 175) { if (!this.bySettlement) { this.bySettlement = true; this.hornQ = 1; } }
+      else if (sd > 250) this.bySettlement = false;
+    } else this.bySettlement = false;
     const lamps = this.warn && Math.floor(t * 1.6) % 2 === 0;
     this.redMats.forEach((m, i) => m.color.set(this.warn && (lamps ? i % 2 === 0 : i % 2 === 1) ? '#ff3a22' : '#3a1010'));
     const moon = !this.warn && Math.floor(t * 1.0) % 2 === 0;
@@ -450,11 +494,20 @@ export class Railway {
     }
     // place the cars
     const yaw = Math.atan2(this.dx * this.dir, this.dz * this.dir);
+    const tvx = this.dx * this.dir * TRAIN_V;
+    const tvz = this.dz * this.dir * TRAIN_V;
     let near = 1e9;
     this.cars.forEach((c, i) => {
       const u = this.head - this.dir * c.off;
       const col = this.trainCols[i];
-      if (!this.active || Math.abs(u) > U) { c.group.visible = false; col.x = 1e9; col.z = 1e9; return; }
+      if (!this.active || Math.abs(u) > U) {
+        c.group.visible = false;
+        col.x = 1e9;
+        col.z = 1e9;
+        col.vx = 0;
+        col.vz = 0;
+        return;
+      }
       const [x, z] = this.at(u);
       const y = this.heightAt(u);
       const pitch = -Math.atan2(this.heightAt(u + this.dir * 4) - this.heightAt(u - this.dir * 4), 8);
@@ -464,16 +517,29 @@ export class Railway {
       c.group.rotation.set(flip ? -pitch : pitch, yaw + (flip ? Math.PI : 0), 0, 'YXZ');
       const d = Math.hypot(px - x, pz - z);
       near = Math.min(near, d);
-      if (Math.abs(u) < 40) { col.x = x; col.z = z; col.rot = yaw; } else { col.x = 1e9; col.z = 1e9; }
+      if (d < 85) {
+        col.x = x;
+        col.z = z;
+        col.rot = yaw;
+        col.vx = tvx;
+        col.vz = tvz;
+      } else {
+        col.x = 1e9;
+        col.z = 1e9;
+        col.vx = 0;
+        col.vz = 0;
+      }
     });
     this.lampMat.emissiveIntensity = 0.6 + dark * 1.2;
     const horn = this.hornQ;
     this.hornQ = 0;
+    const [lx, lz] = this.active ? this.at(this.head) : [this.cx, this.cz];
+    const locoD = Math.hypot(px - lx, pz - lz);
     return {
       bell: this.boomK > 0 || this.warn ? clamp(1 - Math.hypot(ox, oz) / 260, 0, 1) : 0,
       train: this.active ? clamp(1 - near / 420, 0, 1) : 0,
       clack: TRAIN_V / 14,
-      horn: horn ? clamp(1 - Math.abs(headTo) / 1200, 0.2, 1) : 0,
+      horn: horn ? clamp(1 - locoD / 900, 0.18, 1) : 0,
     };
   }
 }

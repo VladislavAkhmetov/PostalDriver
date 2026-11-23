@@ -1,70 +1,126 @@
-/**
- * Number plates of Bashkortostan as they were in 1997: the new Russian plates of 1993
- * (ГОСТ Р 50577-93, region 02), the blue militia ones, and the Soviet plates of 1977
- * that many older cars still wore («а 12-34 БА», Bashkir ASSR series).
- * Only the twelve letters that read the same in Latin are used on the new plates.
- */
+import * as THREE from 'three';
+import { mulberry32 } from '../core/math';
+import { makeCanvas, toTex } from '../core/textures';
+
+/** Registration profiles for the 1998 Bashkortostan setting. */
+export type PlateUse = 'car' | 'olderCar' | 'fleet' | 'heavy' | 'patrol' | 'tractor';
+export type Plate =
+  | { kind: 'russian'; main: string; region: string }
+  | { kind: 'sovietPrivate'; main: string }
+  | { kind: 'sovietFleet' | 'sovietHeavy' | 'sovietSpecial'; digits: string; series: string }
+  | { kind: 'tractor'; digits: string; series: string; region: string };
+
 const LAT = 'АВЕКМНОРСТУХ';
-/** Lower-case series letters of the Soviet plates. */
-const SER = 'абвгдежклмнопрстуфхцчш';
-/** Soviet region letters of the Bashkir ASSR. */
-const BASH = ['БА', 'БШ'];
+const SOVIET = 'АБВГДЕЖКЛМНОПРСТУФХЦЧШ';
+const REGION = '02';
+const LOCAL_SERIES = 'БА';
 
-export type PlateKind = 'new' | 'militia' | 'soviet';
+export const POST_PLATE = { kind: 'russian', main: 'М 417 ВН', region: REGION } satisfies Plate;
+export const KOSMICH_PLATE = { kind: 'russian', main: 'К 109 УМ', region: REGION } satisfies Plate;
+export const MUHA_PLATE = { kind: 'russian', main: 'Е 247 КХ', region: REGION } satisfies Plate;
 
-const rng = (seed: number) => {
-  let s = (Math.abs(Math.floor(seed)) * 9301 + 49297) % 233280;
-  return () => ((s = (s * 9301 + 49297) % 233280) / 233280);
-};
-
-export interface Plate { kind: PlateKind; main: string; region: string }
-
-export function plateFor(seed: number, kind: PlateKind): Plate {
-  const r = rng(seed);
-  const L = () => LAT[Math.floor(r() * LAT.length)];
-  const d = (n: number) => String(Math.floor(r() * 10 ** n)).padStart(n, '0');
-  if (kind === 'militia') return { kind, main: `${L()} ${d(4)}`, region: '02' };
-  if (kind === 'soviet') {
-    const n = d(4);
-    return { kind, main: `${SER[Math.floor(r() * SER.length)]} ${n.slice(0, 2)}-${n.slice(2)}`, region: BASH[Math.floor(r() * BASH.length)] };
+export function plateFor(seed: number, use: PlateUse): Plate {
+  const r = mulberry32(seed);
+  const letter = (alphabet: string) => alphabet[Math.floor(r() * alphabet.length)];
+  const number = (max: number, places: number) => String(1 + Math.floor(r() * max)).padStart(places, '0');
+  const old = r();
+  if (use === 'tractor') {
+    return { kind: 'tractor', digits: number(9999, 4), series: letter(LAT) + letter(LAT), region: REGION };
   }
-  const num = String(Math.floor(r() * 999) + 1).padStart(3, '0');
-  return { kind, main: `${L()} ${num} ${L()}${L()}`, region: '02' };
+  if (use === 'patrol') return { kind: 'sovietSpecial', digits: number(9999, 4), series: 'БАМ' };
+  if (use === 'olderCar' && old < 0.45) {
+    return { kind: 'sovietPrivate', main: `${letter(SOVIET).toLowerCase()} ${number(9999, 4)} ${LOCAL_SERIES}` };
+  }
+  if ((use === 'heavy' || use === 'fleet') && old < 0.65) {
+    return { kind: use === 'heavy' ? 'sovietHeavy' : 'sovietFleet', digits: number(9999, 4), series: LOCAL_SERIES + letter(SOVIET) };
+  }
+  const main = `${letter(LAT)} ${number(999, 3)} ${letter(LAT)}${letter(LAT)}`;
+  // Story vehicles keep their assigned numbers.
+  return main === POST_PLATE.main || main === KOSMICH_PLATE.main || main === MUHA_PLATE.main ? plateFor(seed + 1, use) : { kind: 'russian', main, region: REGION };
 }
 
-/** Old cars still on Soviet plates in 1997: about a third of them. */
-export const plateKindFor = (seed: number, old: boolean): PlateKind => (old && rng(seed * 7 + 3)() < 0.45 ? 'soviet' : 'new');
+/** Physical size in metres. The rear of a Soviet heavy vehicle uses the same digits and series. */
+export function plateSize(p: Plate, rear = false): [number, number] {
+  if (p.kind === 'tractor') return [0.288, 0.206];
+  if (p.kind === 'sovietHeavy' && rear) return [0.288, 0.226];
+  return [0.52, 0.112];
+}
 
-const FONT = (px: number) => `bold ${px}px "PT Sans Narrow", "Arial Narrow", sans-serif`;
-
-/** Draw a plate into a canvas `w`×`h` (about 4.6 : 1). */
-export function drawPlate(g: CanvasRenderingContext2D, p: Plate, w: number, h: number): void {
-  const blue = p.kind === 'militia';
-  const ink = blue ? '#f4f4ee' : '#141414';
-  g.fillStyle = blue ? '#1d3f8a' : '#f2f0e8';
+function drawPlate(g: CanvasRenderingContext2D, p: Plate, w: number, h: number, rear: boolean): void {
+  const ink = '#171715';
+  g.fillStyle = p.kind === 'russian' || p.kind === 'tractor' ? '#f2f0e8' : '#e5e1d6';
   g.fillRect(0, 0, w, h);
-  g.strokeStyle = ink; g.lineWidth = Math.max(1, h / 14); g.strokeRect(1, 1, w - 2, h - 2);
-  g.fillStyle = ink; g.textBaseline = 'middle'; g.textAlign = 'center';
-  const fit = (text: string, cx: number, cy: number, maxW: number, px: number) => {
-    g.font = FONT(px);
-    const k = Math.min(1, maxW / g.measureText(text).width);
-    g.save(); g.translate(cx, cy); g.scale(k, 1); g.fillText(text, 0, 0); g.restore();
+  const stroke = Math.max(1, h * 0.045);
+  g.strokeStyle = ink;
+  g.lineWidth = stroke;
+  g.beginPath();
+  g.roundRect(stroke, stroke, w - 2 * stroke, h - 2 * stroke, h * 0.08);
+  g.stroke();
+  g.fillStyle = ink;
+  g.textBaseline = 'middle';
+  g.textAlign = 'center';
+
+  const fit = (text: string, x: number, y: number, maxW: number, size: number) => {
+    g.font = `bold ${size}px Arial, sans-serif`;
+    g.fillText(text, x, y, maxW);
   };
-  if (p.kind === 'soviet') {
-    // one field: the series and number, then the region letters
-    fit(`${p.main} ${p.region}`, w / 2, h * 0.54, w - h * 0.5, h * 0.78);
+  if (p.kind === 'tractor') {
+    fit(p.digits, w / 2, h * 0.29, w * 0.85, h * 0.38);
+    fit(p.series, w * 0.33, h * 0.73, w * 0.45, h * 0.33);
+    fit(p.region, w * 0.75, h * 0.73, w * 0.28, h * 0.29);
     return;
   }
-  // number field, and the region field on the right: code over «RUS» and the flag
+  if (p.kind === 'sovietHeavy' && rear) {
+    fit(p.digits, w / 2, h * 0.29, w * 0.85, h * 0.38);
+    fit(p.series, w / 2, h * 0.73, w * 0.85, h * 0.38);
+    return;
+  }
+  if (p.kind !== 'russian') {
+    const text = p.kind === 'sovietPrivate' ? p.main : p.kind === 'sovietSpecial'
+      ? `${p.series} ${p.digits}` : `${p.digits} ${p.series}`;
+    fit(text, w / 2, h * 0.55, w - h * 0.42, h * 0.85);
+    return;
+  }
+
   const split = w * 0.77;
-  fit(p.main, split / 2 + h * 0.05, h * 0.55, split - h * 0.45, h * 0.8);
-  g.fillRect(split, h * 0.1, Math.max(1, h / 18), h * 0.8);
-  const rx = split + (w - split) / 2;
-  fit(p.region, rx, h * 0.36, (w - split) * 0.8, h * 0.5);
-  fit('RUS', rx - (w - split) * 0.12, h * 0.78, (w - split) * 0.5, h * 0.24);
-  const fx = rx + (w - split) * 0.12, fy = h * 0.68, fw = (w - split) * 0.24, fh = h * 0.2;
-  g.fillStyle = '#ffffff'; g.fillRect(fx, fy, fw, fh / 3);
-  g.fillStyle = '#2048a8'; g.fillRect(fx, fy + fh / 3, fw, fh / 3);
-  g.fillStyle = '#c82820'; g.fillRect(fx, fy + (2 * fh) / 3, fw, fh / 3);
-  g.strokeStyle = ink; g.lineWidth = 0.5; g.strokeRect(fx, fy, fw, fh);
+  fit(p.main, split / 2, h * 0.55, split - h * 0.32, h * 0.84);
+  g.fillRect(split, h * 0.06, stroke, h * 0.88);
+  const field = w - split;
+  const cx = split + field / 2;
+  fit(p.region, cx, h * 0.34, field * 0.8, h * 0.53);
+  fit('RUS', split + field * 0.34, h * 0.77, field * 0.49, h * 0.24);
+  for (const [i, color] of ['#fff', '#2048a8', '#c82820'].entries()) {
+    g.fillStyle = color;
+    g.fillRect(split + field * 0.61, h * (0.65 + i * 0.075), field * 0.26, h * 0.075);
+  }
+}
+
+const materials = new Map<string, THREE.MeshLambertMaterial>();
+
+/** Shared paint and typography for all vehicle meshes and fitted plates. */
+export function plateMaterial(p: Plate, rear = false): THREE.MeshLambertMaterial {
+  const twoRows = p.kind === 'sovietHeavy' && rear;
+  const key = JSON.stringify([p, twoRows]);
+  let material = materials.get(key);
+  if (!material) {
+    const [width, height] = plateSize(p, rear);
+    const w = Math.round(width * 400), h = Math.round(height * 400);
+    const canvas = makeCanvas(w, h);
+    drawPlate(canvas.getContext('2d')!, p, w, h, rear);
+    material = new THREE.MeshLambertMaterial({
+      map: toTex(canvas, { repeat: false }),
+      polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+    });
+    material.name = 'RegistrationPlate';
+    materials.set(key, material);
+  }
+  return material;
+}
+
+export function addPlate(group: THREE.Object3D, p: Plate, position: THREE.Vector3, rear = false): void {
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(...plateSize(p, rear)), plateMaterial(p, rear));
+  mesh.name = rear ? 'PlateRear' : 'PlateFront';
+  mesh.position.copy(position);
+  if (rear) mesh.rotation.y = Math.PI;
+  group.add(mesh);
 }

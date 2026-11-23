@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { drawPlate, plateFor, plateKindFor } from './Plates';
+import { addPlate, plateFor, type PlateUse } from './Plates';
 import { headlights } from './Headlights';
 import type { VehicleModel } from './Vehicles';
 import vazObj from '../assets/soviet/vaz.obj?raw';
@@ -20,8 +20,8 @@ import tAmb from '../assets/soviet/buhanka_skoraya_albedo.png?url';
 
 /**
  * Pixel-art Soviet traffic on MadMedicSoft's CC0 models (src/assets/soviet/CREDITS.md):
- * VAZ "Zhiguli" 2101/2105/2106, the UAZ-469 "Bobik", the LiAZ-677 bus and an
- * ambulance "bukhanka". Each model is one mesh with a 128×64 (bus 256²) atlas,
+ * "Kopeyka" (2101), "Pyatyorka" (2105), "Shestyorka" (2106), the "Bobik" off-roader (469),
+ * the "Lunokhod" bus (677) and an ambulance van. Each model is one mesh with a 128×64 (bus 256²) atlas,
  * so the paint variant is just a texture. Local forward is +Z, wheels on y = 0.
  */
 export type SovietKind = 'vaz2101' | 'vaz2105' | 'vaz2106' | 'bobik' | 'liaz' | 'ambulance';
@@ -161,28 +161,17 @@ const mat = (url: string) => {
   return m;
 };
 
-export function buildSoviet(kind: SovietKind, variant: string): VehicleModel {
-  return assemble(kind, kind, variant);
-}
-
 let plateSeq = 0;
-const plateMats = new Map<number, THREE.MeshLambertMaterial>();
-/** A plate material from a small pool. */
-function plateMat(n: number): THREE.MeshLambertMaterial {
-  const k = n < 0 ? -1 : n % 10;
-  let m = plateMats.get(k);
-  if (!m) {
-    const c = document.createElement('canvas'); c.width = 128; c.height = 28;
-    const seed = k * 53 + 17;
-    drawPlate(c.getContext('2d')!, plateFor(seed, k < 0 ? 'militia' : plateKindFor(seed, true)), 128, 28);
-    const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.magFilter = THREE.NearestFilter;
-    m = new THREE.MeshLambertMaterial({ map: t });
-    plateMats.set(k, m);
-  }
-  return m;
+const PLATE_USE: Record<SovietKind, PlateUse> = {
+  vaz2101: 'olderCar', vaz2105: 'olderCar', vaz2106: 'olderCar', bobik: 'olderCar',
+  liaz: 'heavy', ambulance: 'fleet',
+};
+
+export function buildSoviet(kind: SovietKind, variant: string, seed = plateSeq++ % 32): VehicleModel {
+  return assemble(kind, kind, variant, seed);
 }
 
-function assemble(key: SpecKey, kind: VehicleModel['kind'], variant: string): VehicleModel & { height: number } {
+function assemble(key: SpecKey, kind: VehicleModel['kind'], variant: string, seed: number): VehicleModel & { height: number } {
   const spec = SPEC[key];
   const tpl = templates.get(spec.obj);
   if (!tpl) throw new Error('loadSoviet() must finish before building these cars');
@@ -217,13 +206,10 @@ function assemble(key: SpecKey, kind: VehicleModel['kind'], variant: string): Ve
     lens.rotation.y = Math.PI;
     group.add(lens);
   }
-  // number plates front and back, under the lamps: a 1997 mix of Soviet and new plates
-  const pm = plateMat(plateSeq++);
+  const registration = plateFor(seed * 53 + Object.keys(SPEC).indexOf(key) + 17, PLATE_USE[key]);
   for (const back of [false, true]) {
-    const p = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 0.11), pm);
-    p.position.set(0, Math.max(0.28, h * spec.lampY - 0.1), back ? -L / 2 - 0.016 : L / 2 + 0.016);
-    if (back) p.rotation.y = Math.PI;
-    group.add(p);
+    addPlate(group, registration,
+      new THREE.Vector3(0, Math.max(0.28, h * spec.lampY - 0.1), back ? -L / 2 - 0.016 : L / 2 + 0.016), back);
   }
   const lights = headlights(group,
     [new THREE.Vector3(w * 0.36, h * spec.lampY, L / 2 - 0.05), new THREE.Vector3(-w * 0.36, h * spec.lampY, L / 2 - 0.05)],

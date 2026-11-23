@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Выбор гудка для старого авто (Клаксон)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=PT+Mono&family=PT+Sans:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #101318;
+      --card: #181d24;
+      --border: #28303d;
+      --accent: #f59e0b;
+      --text: #e2e8f0;
+      --text-dim: #94a3b8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'PT Sans', system-ui, sans-serif;
+      min-height: 100vh;
+      padding: 24px 16px 48px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .container {
+      width: 100%;
+      max-width: 820px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    header {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+    }
+    h1 { font-size: 20px; margin-bottom: 6px; }
+    p { color: var(--text-dim); font-size: 14px; line-height: 1.4; }
+    .hint {
+      background: rgba(245, 158, 11, 0.1);
+      border: 1px solid rgba(245, 158, 11, 0.3);
+      padding: 12px 16px;
+      border-radius: 8px;
+      color: #fde68a;
+      font-size: 13px;
+    }
+    .horn-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      transition: border-color 0.15s;
+    }
+    .horn-card:hover { border-color: var(--accent); }
+    .horn-card.active-card { border-color: #10b981; }
+    .card-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+    }
+    .horn-info h3 { font-size: 16px; margin-bottom: 4px; color: #fff; }
+    .horn-info p { font-size: 13px; color: var(--text-dim); }
+    .badge {
+      display: inline-block;
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-weight: 700;
+      background: rgba(245, 158, 11, 0.15);
+      color: #f59e0b;
+      margin-left: 6px;
+    }
+    .card-bottom {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      border-top: 1px solid rgba(255,255,255,0.06);
+      padding-top: 12px;
+    }
+    audio {
+      height: 36px;
+      max-width: 260px;
+    }
+    .btn-honk {
+      background: #f59e0b;
+      color: #0f172a;
+      border: none;
+      padding: 12px 28px;
+      border-radius: 8px;
+      font-weight: 700;
+      font-size: 14px;
+      cursor: pointer;
+      user-select: none;
+      box-shadow: 0 2px 8px rgba(245, 158, 11, 0.3);
+      transition: all 0.1s;
+    }
+    .btn-honk:active, .btn-honk.active {
+      background: #10b981;
+      color: #fff;
+      transform: scale(0.96);
+      box-shadow: 0 0 16px rgba(16, 185, 129, 0.5);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>📯 Прослушивание клаксонов для старого автомобиля</h1>
+      <p>Ищем классический ретро-гудок без европейского современного двухтонального «па-пам» и без синтетики. Ровный, монотонный, вибрирующий механический «БИ-И-ИП».</p>
+      <div style="margin-top: 10px;" class="hint">
+        💡 <strong>Зажмите кнопку «📯 Зажать и гудеть»</strong> мышью или пальцем, чтобы гудеть как на руле («БИ-И-И-И-ИП») со звуковой зацикловкой, либо включите плеер для прослушивания исходной записи целиком!
+      </div>
+    </header>
+
+    <div id="hornsList"></div>
+  </div>
+
+  <script>
+    window.horns = [
+      {
+        id: 'long_car_signal_beep',
+        name: 'Вариант 1: «Классический длинный клаксон (БИИИИП)»',
+        badge: '⭐ Рекомендуемый монотонный',
+        desc: 'Прямой, уверенный, монотонный клаксон старого авто без переливов. Чистый аналоговый электромагнитный гудок.',
+        url: '/sound-samples/long_car_signal_beep.mp3',
+        loopStart: 0.2,
+        loopEnd: 2.8
+      },
+      {
+        id: 'car_signal_beep',
+        name: 'Вариант 2: «Ретро клаксон советского типа (Плотный БИП)»',
+        badge: 'Мембранный С302/С56',
+        desc: 'Характерный вибрирующий мембранный звук С302/С56, глуховатый и плотный.',
+        url: '/sound-samples/car_signal_beep.mp3',
+        loopStart: 0.15,
+        loopEnd: 1.6
+      },
+      {
+        id: 'poyekhali_horn1',
+        name: 'Вариант 3: «Поехали — Запись советского клаксона (Horn 1)»',
+        badge: 'С натуры 4х4',
+        desc: 'Живая запись клаксона старого советского внедорожника. Плотный мембранный зуммер.',
+        url: '/sound-samples/239031_3146873-lq.mp3',
+        loopStart: 0.8,
+        loopEnd: 1.2
+      },
+      {
+        id: 'vintage_horn_beep',
+        name: 'Вариант 4: «Винтажный клаксон (ГАЗ/УАЗ)»',
+        badge: 'Старый грузовик/буханка',
+        desc: 'Классический звук грузовика/буханки, плотное механическое звучание с хрипотцой.',
+        url: '/sound-samples/vintage_horn_beep.mp3',
+        loopStart: 0.15,
+        loopEnd: 0.85
+      },
+      {
+        id: 'car_horn_base',
+        name: 'Вариант 5: «Сухой монотонный сигнал»',
+        badge: 'Минималистичный',
+        desc: 'Простой сухой гудок старого типа без эха.',
+        url: '/sound-samples/car_horn_base.mp3',
+        loopStart: 1.0,
+        loopEnd: 1.8
+      },
+      {
+        id: 'krissy_horn',
+        name: 'Вариант 6: «Классический гудок 1970-х»',
+        badge: 'Американская/европейская классика',
+        desc: 'Запись натурального автомобильного клаксона без синтетики.',
+        url: '/sound-samples/125520_2273305-lq.mp3',
+        loopStart: 0.2,
+        loopEnd: 1.2
+      }
+    ];
+
+    let ctx = null;
+    function getCtx() {
+      if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+      if (ctx.state === 'suspended') ctx.resume();
+      return ctx;
+    }
+
+    const buffers = {};
+    async function getBuf(url) {
+      if (buffers[url]) return buffers[url];
+      const c = getCtx();
+      const res = await fetch(url);
+      const b = await c.decodeAudioData(await res.arrayBuffer());
+      buffers[url] = b;
+      return b;
+    }
+    window.getBuf = getBuf;
+
+    let activeSource = null;
+    let activeGain = null;
+
+    async function startHonk(h, btn) {
+      getCtx();
+      stopHonk();
+      btn.classList.add('active');
+      const buf = await getBuf(h.url);
+      const c = getCtx();
+      const src = c.createBufferSource();
+      src.buffer = buf;
+      src.loop = true;
+      src.loopStart = h.loopStart;
+      src.loopEnd = Math.min(buf.duration - 0.05, h.loopEnd);
+
+      const gain = c.createGain();
+      gain.gain.setValueAtTime(0.001, c.currentTime);
+      gain.gain.linearRampToValueAtTime(0.9, c.currentTime + 0.015);
+      src.connect(gain).connect(c.destination);
+      src.start();
+
+      activeSource = src;
+      activeGain = gain;
+    }
+
+    function stopHonk() {
+      if (activeGain && ctx) {
+        const t = ctx.currentTime;
+        activeGain.gain.setValueAtTime(activeGain.gain.value, t);
+        activeGain.gain.linearRampToValueAtTime(0.001, t + 0.03);
+      }
+      if (activeSource && ctx) {
+        const s = activeSource;
+        setTimeout(() => { try { s.stop(); } catch(e){} }, 40);
+        activeSource = null;
+      }
+      document.querySelectorAll('.btn-honk').forEach(b => b.classList.remove('active'));
+    }
+
+    const container = document.getElementById('hornsList');
+    window.horns.forEach(h => {
+      const card = document.createElement('div');
+      card.className = 'horn-card';
+      card.innerHTML = `
+        <div class="card-top">
+          <div class="horn-info">
+            <h3>${h.name} <span class="badge">${h.badge}</span></h3>
+            <p>${h.desc}</p>
+          </div>
+        </div>
+        <div class="card-bottom">
+          <audio controls src="${h.url}"></audio>
+          <button class="btn-honk" id="btn-${h.id}">📯 Зажать и гудеть</button>
+        </div>
+      `;
+      const btn = card.querySelector('.btn-honk');
+      btn.addEventListener('mousedown', () => startHonk(h, btn));
+      btn.addEventListener('mouseup', () => stopHonk());
+      btn.addEventListener('mouseleave', () => stopHonk());
+      btn.addEventListener('touchstart', (e) => { e.preventDefault(); startHonk(h, btn); });
+      btn.addEventListener('touchend', (e) => { e.preventDefault(); stopHonk(); });
+
+      container.appendChild(card);
+    });
+
+    window.addEventListener('mouseup', stopHonk);
+  </script>
+</body>
+</html>

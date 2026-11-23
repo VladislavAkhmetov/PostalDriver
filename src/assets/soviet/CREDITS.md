@@ -4,8 +4,8 @@
 https://opengameart.org/content/pack-of-extremly-low-poly-soviet-vehicles-in-pixel-art-style
 License: **CC0 1.0** (public domain).
 
-Used here: VAZ-2101 / 2105 / 2106 (`vaz.obj` with three paint textures each), UAZ-469 «Бобик»
-(`bobik.obj`), LiAZ-677 bus (`bus.obj`) and the ambulance «буханка» (`ambulance.obj`, the
+Used here: «Копейка» (2101), «Пятёрка» (2105), «Шестёрка» (2106) (`vaz.obj` with three paint textures each), «Бобик» (469)
+(`bobik.obj`), «Луноход» (ЛиАЗ-677, `bus.obj`) and the ambulance van (`ambulance.obj`, the
 author's fixed-left-side version). Files are unmodified apart from names.
 
 Wheels are cut out of the meshes at load time and replaced by round spinning tyres (Soviet.ts).

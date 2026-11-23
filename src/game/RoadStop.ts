@@ -9,12 +9,13 @@ import type { Stop, World } from '../world/World';
 import type { Vehicle } from '../vehicle/Vehicle';
 import { destTo } from './Career';
 import type { Mission } from './Mission';
+import { TANK_L } from './Fuel';
 
 /**
  * «Тормозят на дороге» (docs/design.md): once in the service, on a quiet stretch ahead, an
  * aubergine «пятёрка» with tinted glass stands half across the lane, a cassette thumping, and two
  * men by it wave the van down — Brityi in a leather jacket and his mate in a tracksuit.
- *  - Stop, and it is one of three: «выручи на бензин» (give / haggle / refuse — then the radio is
+ *  - Stop, and it is one of three: «поделись бензином» (siphon / haggle / refuse — then the radio is
  *    "confiscated"), «дёрни на буксире» (a fade to black, then «скажи, что от Бритого»), «подкинь
  *    пацана» (a nervous lad with a bag, to the next village — he bolts if the GAI waves the van down).
  *  - Drive round them, and they come after the van, flashing and hooting, until a village («Атас!»),
@@ -167,7 +168,7 @@ export class RoadStop {
     }
     if (this.state === 'talk') { if (d > 35) { h.closeChoice(); this.state = 'wait'; } return; }
     this.still = d < 22 && kmh < 2 ? this.still + dt : 0;
-    if (this.still > 0.8 && !h.choiceOpen()) { this.state = 'talk'; this.talk(); return; }
+    if (this.still > 0.8 && !h.choiceOpen()) { this.state = 'talk'; this.talk(v); return; }
     // gone round them: they come after the van
     const sv = this.ground.main.nearestS(v.x, v.z);
     if (sv > this.s0 + 12 && d < 60) this.startChase(sv);
@@ -175,7 +176,7 @@ export class RoadStop {
 
   // ------------------------------------------------------------ stopping for them
 
-  private talk(): void {
+  private talk(v: Vehicle): void {
     const h = this.hooks;
     const after = () => { this.s.done = true; this.s.day = this.day; this.state = 'parked'; this.removeMen(); };
     if (this.kind === 'kid' && h.seatTaken?.()) this.kind = 'fuel';
@@ -185,18 +186,26 @@ export class RoadStop {
       if (!this.dest) this.kind = 'fuel';
     }
     if (this.kind === 'fuel') {
-      h.choice(BRITYI, 'Здорово, почта. Слышь, выручи на бензин — сам видишь, обсохли. Тридцатку, а? Мы ж не звери, мы попросить.', ['Держи тридцать', 'Пятнадцать — больше нет', 'Нету, мужики'], (i) => {
-        if (i === 0) {
-          this.mission.extra('Бритый · «на бензин»', -30000, 0);
-          this.s.outcome = 'gave'; this.s.friend = true;
-          h.say(BRITYI, 'Красава. Если что — скажешь, от Бритого. Тебя в районе никто не тронет.');
-        } else if (i === 1) {
-          this.mission.extra('Бритый · «на бензин», поторговались', -15000, 0);
-          this.s.outcome = 'haggled';
-          h.say(BRITYI, 'Жмот ты, почта. Ладно, давай пятнашку. Живи.');
+      // Keep at least two litres for the mail; don't offer fuel the player doesn't have.
+      const amounts = [5, 2].filter(litres => v.fuel * TANK_L >= litres + 2);
+      const options: string[] = amounts.map(litres => litres === 5 ? 'Слить им 5 литров из бака' : 'Только 2 литра — мне ещё почту везти');
+      const low = amounts.length === 0;
+      options.push(low ? 'У самого на донышке. Посмотри на прибор' : 'Бензин почтовый. Не дам');
+      h.choice(BRITYI, 'Здорово, почта. Обсохли мы. Слей пяток литров, а? Канистра и шланг есть. Мы ж не звери, мы попросить.', options, (i) => {
+        const litres = amounts[i];
+        if (litres !== undefined) {
+          v.fuel = Math.max(0, v.fuel - litres / TANK_L);
+          this.mission.extra(`Бритый · поделился бензином, ${litres} л`, 0, 0);
+          this.mission.addTime(120);
+          this.s.outcome = litres === 5 ? 'gave' : 'haggled'; this.s.friend = litres === 5;
+          h.say(BRITYI, litres === 5 ? 'Красава. Если что — скажешь, от Бритого. Давай канистру, Вован.' : 'Два так два. До заправки дотянем. Езжай, почта.');
+          h.toast(`Слили ${litres} л · задержались на 2 минуты`);
+        } else if (low) {
+          this.s.outcome = 'refused';
+          h.say(BRITYI, 'Да вижу, вижу. Сам скоро встанешь. Ладно, Вован, другую тормози. Почта, езжай.');
         } else {
           this.s.outcome = 'robbed';
-          h.say(BRITYI, 'Нету? А магнитола у тебя на что играет? Сымай, Вован. Конфискуем — за моральный ущерб. Езжай, почтальон, не задерживай.');
+          h.say(BRITYI, 'Почтовый? А магнитола тоже почтовая? Сымай, Вован. Конфискуем — за моральный ущерб. Езжай, почтальон, не задерживай.');
           setTimeout(() => { h.takeRadio(); h.toast('Магнитолу сняли · радио молчит до конца дня'); }, 1800);
         }
         after();
@@ -204,10 +213,10 @@ export class RoadStop {
     } else if (this.kind === 'tow') {
       h.choice(BRITYI, 'Почта! Дёрни на буксире, а? Аккумулятор сел, а эта баклажанина с толкача не заводится. Трос есть, мы не жадные.', ['Давай трос', 'Некогда, мужики'], (i) => {
         if (i === 0) {
-          h.blackout('Буксир', 'Трос — за фаркоп, рывок, ещё рывок. «Пятёрка» чихнула, выплюнула сизое облако и завелась. Бритый хлопает буханку по крыше.', 2.6, () => {
+          h.blackout('Буксир', 'Трос — за фаркоп, рывок, ещё рывок. «Пятёрка» чихнула, выплюнула сизое облако и завелась. Бритый хлопает вездеход по крыше.', 2.6, () => {
             this.mission.addTime(300);
-            this.mission.extra('Бритый · «за буксир»', 20000, 0);
-          }, () => h.say(BRITYI, 'Спасибо, почта. На пиво — держи. Скажешь, что от Бритого, — нигде не тронут.'), 'Завелась');
+            this.mission.extra('Бритый · помог завести машину', 0, 0);
+          }, () => h.say(BRITYI, 'Спасибо, почта. Выручил. Скажешь, что от Бритого, — нигде не тронут.'), 'Завелась');
           this.s.outcome = 'towed'; this.s.friend = true;
         } else {
           this.s.outcome = 'refused';
@@ -245,8 +254,8 @@ export class RoadStop {
     }
     const d = Math.hypot(dest.pos.x - v.x, dest.pos.z - v.z);
     if (d < 32 && kmh < 2.5) {
-      h.say(KID, 'Всё, приехали. Спасибо, дядя. На вот — Бритый велел. И это… ты меня не видел.');
-      this.mission.extra(`Попутчик · пацан от Бритого ${destTo(dest.id, 'gen')}`, 25000, 0);
+      h.say(KID, 'Всё, приехали. Спасибо, дядя. Бритому скажу, что довёз. И это… ты меня не видел.');
+      this.mission.extra(`Попутчик · пацан от Бритого ${destTo(dest.id, 'gen')}`, 0, 0);
       this.state = 'parked';
       return;
     }
@@ -297,7 +306,7 @@ export class RoadStop {
     // where it ends: people about, the lowland's mud, the van off the main road, or they tire of it
     const village = this.world.hamlets.some(([a]) => sv > a - 30 && sv < a + 60) || (sv > m.sosStart - 30 && sv < m.sosStart + 60) || Math.abs(sv - this.world.gai.sPost) < 160;
     if (village) return this.stopChase('Атас!.. «Пятёрка» резко тормозит, разворачивается через обочину и уходит назад. Сквозь музыку слышно: «Менты, Вован, менты!»');
-    if (this.sCar > m.mud - 15) return this.stopChase('«Пятёрка» влетела в низину и села по пороги. Сзади — вой мотора, мат и брызги грязи. Буханка с передним мостом идёт дальше.');
+    if (this.sCar > m.mud - 15) return this.stopChase('«Пятёрка» влетела в низину и села по пороги. Сзади — вой мотора, мат и брызги грязи. Вездеход с передним мостом идёт дальше.');
     if (this.offRoadT > 6) return this.stopChase('Свернул с большака — «пятёрка» постояла на перекрёстке, побибикала и уехала.');
     if (this.chaseT > 110) return this.stopChase('Бритому надоело: «пятёрка» мигнула напоследок и отстала.');
   }
@@ -311,7 +320,7 @@ export class RoadStop {
     if (this.maxKmh > 75) {
       const top = Math.round(this.maxKmh / 5) * 5;
       setTimeout(() => {
-        h.say('Сержант Кузьмин, ГАИ (по рации в сельсовете)', `Почта, ты чего по району под ${top} гоняешь? Мне уже из двух деревень звонили. Сорок тысяч — заедешь, заплатишь.`);
+        h.say('Сержант Кузьмин, ГАИ (по рации в сельсовете)', `Почта, ты чего по району под ${top} гоняешь? Мне уже из двух деревень звонили. Заедешь на пост — оформим протокол.`);
         h.fine(40000, 'превышение скорости');
       }, 6000);
     }

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { drawPlate, plateFor } from './Plates';
+import { plateFor, plateMaterial, plateSize } from './Plates';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { makeCanvas, toTex } from '../core/textures';
 import type { VehicleModel } from './Vehicles';
@@ -9,12 +9,15 @@ import compactUrl from '../assets/cars/compact.glb?url';
 import suvUrl from '../assets/cars/suv.glb?url';
 import taxiUrl from '../assets/cars/taxi.glb?url';
 import { buildPatrol, loadPatrol } from './Patrol';
+import { loadKosmich } from './Kosmich';
+import { loadDevyatka } from './Devyatka';
+import { loadPaz } from './Paz';
 
 /**
  * Passenger traffic built on Quaternius' CC0 car pack (src/assets/cars/CREDITS.md):
  * the bodies are foreign-looking, so they carry their 90s identity in paint and
  * decals instead — recoloured per car, Russian 1993-pattern plates, the taxi's
- * chequers and roof sign, the militia's blue stripe and blue plates (Plates.ts). Decals are
+ * chequers and roof sign, and the militia's blue stripe. Decals are
  * flat quads fitted to the body by raycasting, so any model can wear any
  * livery. Local forward is +Z, wheels on y = 0, metres.
  */
@@ -38,7 +41,7 @@ export function loadCars(): Promise<void> {
     const loader = new GLTFLoader();
     const byFile = new Map<string, Promise<THREE.Object3D>>();
     // the patrol cars, a VAZ-2106 and a Niva, come prepared on their own (Patrol.ts)
-    await Promise.all([loadPatrol(), ...KINDS.filter((k) => !isPolice(k)).map(async (k) => {
+    await Promise.all([loadPatrol(), loadKosmich(), loadDevyatka(), loadPaz(), ...KINDS.filter((k) => !isPolice(k)).map(async (k) => {
       if (!byFile.has(FILES[k])) byFile.set(FILES[k], loader.loadAsync(FILES[k]).then((g) => g.scene));
       templates[k] = await byFile.get(FILES[k])!;
     })]);
@@ -66,12 +69,6 @@ export const tex = (w: number, h: number, draw: (g: CanvasRenderingContext2D) =>
 };
 
 // ---------------- liveries ----------------
-
-/** A Bashkir plate of 1997 (see Plates.ts): the new 1993 kind, blue for the militia. */
-function plateTex(seed: number, militia: boolean): THREE.Texture {
-  const p = plateFor(seed, militia ? 'militia' : 'new');
-  return tex(128, 28, (g) => drawPlate(g, p, 128, 28));
-}
 
 let checkerTex: THREE.Texture | null = null;
 const militiaTex = new Map<string, THREE.Texture>();
@@ -228,7 +225,7 @@ export function lightBar(group: THREE.Group, roof: number, z: number): THREE.Mes
 // ---------------- build ----------------
 
 export function buildCar(kind: CarKind, color: string, seed = 0, opts: { label?: string } = {}): VehicleModel {
-  if (isPolice(kind)) return buildPatrol(kind);
+  if (isPolice(kind)) return buildPatrol(kind, seed);
   const tpl = templates[kind];
   if (!tpl) throw new Error('loadCars() must finish before building cars');
   const root = tpl.clone(true);
@@ -284,9 +281,11 @@ export function buildCar(kind: CarKind, color: string, seed = 0, opts: { label?:
   group.updateMatrixWorld(true);
   // plates under the headlamps, front and back
   const plateY = Number.isFinite(heads.min.y) ? heads.min.y - 0.07 : 0.36;
-  const plate = decalMat(plateTex(seed * 131 + kind.length * 17 + color.charCodeAt(2), isPolice(kind)));
-  decal(group, body, plate, 0.44, 0.1, plateY, 0, 'z', 1);
-  decal(group, body, plate, 0.44, 0.1, plateY + 0.12, 0, 'z', -1);
+  const registration = plateFor(seed * 131 + kind.length * 17 + color.charCodeAt(2), kind === 'taxi' ? 'fleet' : 'car');
+  const plate = plateMaterial(registration);
+  const [plateWidth, plateHeight] = plateSize(registration);
+  decal(group, body, plate, plateWidth, plateHeight, plateY, 0, 'z', 1);
+  decal(group, body, plate, plateWidth, plateHeight, plateY + 0.12, 0, 'z', -1);
 
   // door liveries along the waist below the windows
   if (Number.isFinite(windows.min.z)) {

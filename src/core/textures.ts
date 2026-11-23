@@ -371,6 +371,57 @@ export function kmPost(n: number): THREE.CanvasTexture {
   }, { repeat: false });
 }
 
+/** Russian sign 2.4 "Уступите дорогу" (Give way / Yield): inverted red triangle with cream-white center. */
+export function yieldSign(): THREE.CanvasTexture {
+  return paint(64, 64, (g, w, h) => {
+    g.clearRect(0, 0, w, h);
+    g.fillStyle = '#c62a22';
+    g.beginPath(); g.moveTo(4, 5); g.lineTo(w - 4, 5); g.lineTo(w / 2, h - 4); g.closePath(); g.fill();
+    g.fillStyle = '#f4f2ea';
+    g.beginPath(); g.moveTo(12, 11); g.lineTo(w - 12, 11); g.lineTo(w / 2, h - 12); g.closePath(); g.fill();
+  }, { repeat: false });
+}
+
+/** Russian sign 2.1 "Главная дорога" (Priority road): white diamond with yellow center. */
+export function prioritySign(): THREE.CanvasTexture {
+  return paint(64, 64, (g, w, h) => {
+    g.clearRect(0, 0, w, h);
+    const cx = w / 2, cy = h / 2, r = w / 2 - 4;
+    g.fillStyle = '#f4f2ea';
+    g.beginPath(); g.moveTo(cx, cy - r); g.lineTo(cx + r, cy); g.lineTo(cx, cy + r); g.lineTo(cx - r, cy); g.closePath(); g.fill();
+    g.strokeStyle = '#1a1a1a'; g.lineWidth = 1.5; g.stroke();
+    const rIn = r - 6;
+    g.fillStyle = '#f0c228';
+    g.beginPath(); g.moveTo(cx, cy - rIn); g.lineTo(cx + rIn, cy); g.lineTo(cx, cy + rIn); g.lineTo(cx - rIn, cy); g.closePath(); g.fill();
+    g.strokeStyle = '#5a4610'; g.lineWidth = 1; g.stroke();
+  }, { repeat: false });
+}
+
+/** Russian sign 7.11 "Автозаправочная станция" (Service sign: Gas station): blue box, white inset, pump icon. */
+export function gasServiceSign(): THREE.CanvasTexture {
+  return paint(64, 80, (g, w, h) => {
+    g.fillStyle = BLUE; g.fillRect(0, 0, w, h);
+    g.strokeStyle = '#f2f2f2'; g.lineWidth = 2; g.strokeRect(2, 2, w - 4, h - 4);
+    g.fillStyle = '#f4f2ea'; g.fillRect(8, 8, w - 16, w - 16);
+    // gas pump silhouette
+    const px = 20, py = 15;
+    g.fillStyle = '#1a1a1a';
+    g.fillRect(px, py + 8, 14, 19);
+    g.fillStyle = '#f4f2ea';
+    g.fillRect(px + 2, py + 11, 10, 6);
+    // hose and nozzle
+    g.strokeStyle = '#1a1a1a'; g.lineWidth = 2.5;
+    g.beginPath();
+    g.moveTo(px + 14, py + 15);
+    g.quadraticCurveTo(px + 22, py + 15, px + 21, py + 23);
+    g.lineTo(px + 21, py + 26);
+    g.stroke();
+    g.fillStyle = '#1a1a1a';
+    g.fillRect(px + 19, py + 26, 4, 3);
+    label(g, 'АЗС', w / 2, h - 10, `bold 13px ${NARROW}`, '#ffffff');
+  }, { repeat: false });
+}
+
 export function createTextures() {
   const T = {
     grass: paint(64, 64, (g, w, h, r) => {

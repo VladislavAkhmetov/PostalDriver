@@ -6,9 +6,8 @@ import { SUNNY_START } from '../world/Atmosphere';
  * Timur's service at the Klyuchevsk post office, one working day at a time and without end (docs/design.md).
  * As on a real rural post route of the 90s there is nothing to choose from: the morning brings the day's
  * waybill — the route by the weekly timetable and what goes where. What the player chooses are the
- * requests: a sack of sugar for someone's aunt, cash in Timur's own pocket. The pay is a salary — an
- * advance on the 15th, the rest at the month's end with a bonus earned by careful, punctual days, and
- * now and then it is late. Fuel comes on the post's coupons; past them it is out of his own money.
+ * requests: a sack of sugar for someone's aunt, an old letter. Salary is a note in the journal;
+ * fuel and repairs are provided by the post office. No personal balance or savings goal.
  */
 
 export type OrderKind = 'pension' | 'letters' | 'papers' | 'parcel' | 'telegram' | 'medicine' | 'parts' | 'invoices';
@@ -26,7 +25,7 @@ export interface Order {
   fragile: boolean;
   /** Seconds of driving (engine time) it must be there by, or null for any time today. */
   due: number | null;
-  /** A request on the side: who asks (paid in cash to Timur). Official mail has none and pays nothing by itself. */
+  /** An optional neighbour's request: who asks. No player payment. */
   from?: string;
   /** An old letter from the cupboard (Letters.ts): no pay, no mark — its own line in the journal. */
   letter?: boolean;
@@ -137,14 +136,6 @@ const DESTS: Dest[] = [
 
 /** Requests Timur can take on top of the waybill. */
 export const CAPACITY = 2;
-/**
- * What Timur is saving for by July 1998 (docs/season-1998.md): the bus to Ufa, the month of entrance
- * exams in a hostel, a room and food for the first months of study, the textbooks.
- */
-export const GOAL = 1_500_000;
-/** The driver-postman's salary per month, and the share paid as the advance on the 15th. */
-export const OKLAD = 450_000;
-const ADVANCE = 0.4;
 /** Litres of fuel coupons the post gives for a working day, and how many he can hold. */
 export const TALONS_DAY = 25, TALONS_MAX = 60;
 
@@ -224,7 +215,7 @@ const MONTHS = ['января', 'февраля', 'марта', 'апреля', 
  * The season (docs/season-1998.md): the working days that are played, two to six days apart — Timur
  * works the ones in between too, off screen. From the first morning, Wednesday 6 May 1998 (two days
  * back from the army), to the last run before he leaves for Ufa, Monday 29 June; the beats of the
- * early summer on their dates — Victory Day's cards, the grandfather home, the camp's first shift,
+ * early summer on their dates — Victory Day's cards, the grandfather home on 13 June, the camp's first shift,
  * Sabantuy, the haymaking. After the season the service goes on a week at a time.
  */
 const SEASON: [number, number, number][] = [
@@ -232,15 +223,21 @@ const SEASON: [number, number, number][] = [
   [1998, 5, 4], [1998, 5, 8], [1998, 5, 11], [1998, 5, 13], [1998, 5, 16], [1998, 5, 18], [1998, 5, 22], [1998, 5, 23],
   [1998, 5, 27], [1998, 5, 29],
 ];
-/** The played day the grandfather is home from hospital in Ufa (Saturday 23 May; back the evening before). */
-export const GRANDPA_HOME = 6;
-/** Played days in the season (the last is the run before Ufa). */
+/**
+ * The played day the grandfather is home: Saturday 13 June. He left on 6 May for a month at the
+ * sanatorium (through 5 June) and a week with his sister (6–12 June); the Friday evening bus
+ * brought him back. From this morning he stays in the village.
+ */
+export const GRANDPA_HOME = 12;
+/** The first played morning he is at his sister's, the voucher over (Monday 8 June). */
+export const GRANDPA_SISTER = 10;
+/** Played days in the season (the last is the end of the temporary posting). */
 export const SEASON_DAYS = SEASON.length;
 /** The first working day, for the salary book: Timur is on the payroll from 6 May 1998. */
 const START = { y: 1998, m: 4, d: 6 };
 
-/** After the season the service picks up once the exams in Ufa are over: Monday 27 July 1998, then weekly. */
-const AFTER: [number, number, number] = [1998, 6, 27];
+/** After the shared drive on 30 June the player may continue ordinary service, then weekly. */
+const AFTER: [number, number, number] = [1998, 5, 30];
 
 /** The date of a played day (UTC midnight): from the table, then a week on each time (never a Sunday). */
 function dateFor(day: number): Date {
@@ -387,28 +384,30 @@ export function boardFor(day: number, _trust = 0): DayInfo {
   const requests: Order[] = [];
   const nReq = day === 1 ? 1 : 2 + (r() < 0.4 ? 1 : 0);
   while (requests.length < nReq && pool.length) {
-    const [d, [from, note, pay, fragile]] = pool.splice(Math.floor(r() * pool.length), 1)[0];
-    requests.push({ id: `${day}-r${requests.length}`, dest: d.id, kind: 'parcel', title: 'Просьба', note, pay, fragile, due: null, from });
+    const [d, [from, note, , fragile]] = pool.splice(Math.floor(r() * pool.length), 1)[0];
+    requests.push({ id: `${day}-r${requests.length}`, dest: d.id, kind: 'parcel', title: 'Просьба', note, pay: 0, fragile, due: null, from });
   }
   // the days of the year: cards for everyone on the route, and Zinaida's word for the day
   let note: string | null = null;
   const toAll = (key: string, title: string, what: string) => { for (const st of stops) orders.push({ id: `${day}-${key}-${st.id}`, dest: st.id, kind: 'letters', title, note: what, pay: 0, fragile: false, due: null }); };
   if (day === SEASON_DAYS) {
-    note = 'Зинаида Павловна: «Последний твой рейс перед Уфой. Люди знают — провожать будут, так что не торопись, но и не опаздывай. Вечером зайди — расчёт и характеристику дам».';
+    note = 'Зинаида Павловна: «Заканчивается твоя подмена. Урал-агай завтра обещал зайти. Вечером принеси путевой лист — и сам не забудь поесть».';
   } else if (date.m === 4 && date.d >= 7 && date.d <= 8) {
     note = 'Зинаида Павловна: «Завтра Девятое мая. Открытки ветеранам — каждому лично в руки, не в ящик. И гвоздики от сельсовета — не помни».';
     toAll('may9', 'Открытки ветеранам к 9 Мая', '«С Днём Победы!» от сельсовета и почты, с гвоздикой — ветеранам на маршруте, лично в руки.');
   } else if (date.m === 5 && date.d >= 1 && date.d <= 5) {
     note = 'Зинаида Павловна: «В «Звёздочке» опять смена — первая с девяносто второго! Михалыч звонил три раза: письма детям вези, путёвки вези, и чтоб не опоздал».';
   } else if (date.m === 5 && date.d >= 12 && date.d <= 14 && date.wd >= 4) {
-    note = 'Зинаида Павловна: «В Сосновке сегодня Сабантуй! Скачки, бег в мешках, столб с петухом. Развезёшь почту — иди гуляй».';
+    note = day === GRANDPA_HOME
+      ? 'Зинаида Павловна: «Урал-агай вернулся: месяц в санатории, неделя у Хадии. Слава богу. Передай — пусть до конца месяца отдыхает, ты справляешься. Чай у меня всегда есть. И сегодня в Сосновке Сабантуй: почту развези — и гуляй».'
+      : 'Зинаида Павловна: «В Сосновке сегодня Сабантуй! Скачки, бег в мешках, столб с петухом. Развезёшь почту — иди гуляй».';
   } else if (date.m === 5 && date.d >= 26 && date.d <= 28) {
     note = 'Зинаида Павловна: «Выпускники всю ночь гуляли — на дороге у Сосновки осторожнее, там ещё бродят с гитарой. Рассвет встречали».';
   } else if (date.m === 11 && date.d >= 22) {
-    note = 'Зинаида Павловна: «Новогодняя неделя — открытки и посылки мешками. Без опозданий — будет премия к празднику».';
+    note = 'Зинаида Павловна: «Новогодняя неделя — открытки и посылки мешками. Письма постарайся вручить до праздника».';
     toAll('ny', 'Новогодние открытки', 'Полный мешок: «С Новым годом!», «Здоровья и счастья», «Ждём в гости».');
   } else if (day === GRANDPA_HOME) {
-    note = 'Зинаида Павловна: «Урал-агай вернулся? Слава богу. Передай — пусть заходит, чай у меня всегда есть. Только пешком — я его знаю».';
+    note = 'Зинаида Павловна: «Урал-агай вернулся: месяц в санатории, неделя у Хадии. Слава богу. Передай — пусть заходит, чай у меня всегда есть. Только пешком — я его знаю».';
   }
   return { day, date: date.text, weather, forecast, route: route.name, orders, requests, season, snow: snowOf(date.m, date.d), note };
 }
@@ -460,22 +459,20 @@ export function reckon(done: Delivery[], fines: number, arrests: number, damage:
     if (d.order.fragile && d.cargo < 90) { notes.push(`побито ${Math.round(100 - d.cargo)} %`); ok = false; broke = true; if (d.cargo < 60) dTrust -= 2; }
     if (!ok) clean = false;
     if (d.order.from) {
-      // a request: paid in cash, less what broke
-      const pay = d.order.fragile && d.cargo < 90 ? d.order.pay * Math.max(0.3, d.cargo / 100) : d.order.pay;
-      lines.push([`${d.order.from} · ${destName(d.order.dest).toLowerCase()}`, Math.round(pay / 1000) * 1000, notes.join(', ') || undefined]);
+      journal.push([`${d.order.from} · ${destName(d.order.dest).toLowerCase()}`, notes.join(', ') || 'передано']);
     } else {
       journal.push([`${destName(d.order.dest)} · ${d.order.title.toLowerCase()}`, notes.join(', ') || (d.order.due !== null ? 'в срок' : 'вручено')]);
       premium += ok ? 0.3 : -1;
     }
   }
   // things that pay go to the cash; the rest (an old letter home) to the journal
-  for (const [label, money, t] of extras) {
-    if (money) lines.push([label, money]); else journal.push([label, t > 0 ? `доверие +${t}` : 'записано']);
+  for (const [label, , t] of extras) {
+    journal.push([label, 'записано']);
     dTrust += t;
   }
   if (clean && damage < 0.1 && journal.length) premium += 0.4;
-  if (fines) lines.push(['Штрафы ГАИ — из своих', -fines]);
-  if (arrests) { journal.push(['Задержание ГАИ', 'объяснительная, минус к премии']); premium -= 5; dTrust -= 2; }
+  if (fines) journal.push(['ГАИ', 'квитанция оформлена']);
+  if (arrests) { journal.push(['Задержание ГАИ', 'объяснительная']); premium -= 5; dTrust -= 2; }
   const total = lines.reduce((a, [, v]) => a + v, 0);
   const after = Math.max(0, Math.min(100, trust + dTrust));
   // the postmistress sees the whole day: the praise, and what broke, and the clock, and the militia
@@ -531,14 +528,8 @@ export function paydays(book: PayBook, day: number): { lines: [string, number, s
       continue;
     }
     book.paid.push(key);
-    if (main) {
-      const prem = Math.max(0, Math.min(30, book.premium));
-      // the first month counts from the day he started (6 May: 26 of 31 days)
-      const first = key === `${START.y}-${START.m}-B`;
-      const part = first ? (31 - START.d + 1) / 31 - ADVANCE : 1 - ADVANCE;
-      lines.push([what, Math.round((OKLAD * part + (OKLAD * prem) / 100) / 1000) * 1000, `${first ? `с ${START.d}-го, ` : ''}${prem > 0 ? `премия ${pct(prem)} %` : 'без премии'}`]);
-      book.premium = 0;
-    } else lines.push([what, Math.round((OKLAD * ADVANCE) / 1000) * 1000]);
+    notes.push([what, main ? 'расписался в ведомости, получку забрал домой' : 'аванс выдали по ведомости']);
+    if (main) book.premium = 0;
   }
   return { lines, notes };
 }

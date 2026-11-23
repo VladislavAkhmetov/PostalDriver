@@ -7,7 +7,7 @@ import type { Hands } from './Hands';
  * Smoking, as a driver of 1997 would: take the pack off the dash, bring it up to the face, pull a
  * cigarette out with the lips, put the pack back, take the lighter, bring the flame to the tip
  * and draw three short puffs to get it going, then carry on driving with it in the mouth, now and
- * then taking it out between two fingers for a long drag and a slow breath out. When it burns
+ * then taking it in the hand for a long drag and a slow breath out. When it burns
  * down it is stubbed out in the tin on the dash.
  *
  * Packs are styled after the period's brands by colour and layout only — no names or logos.
@@ -130,13 +130,19 @@ class Cigarette {
 /**
  * Smoke in the cab's own frame, so it hangs in the cab and rides with it. Wisps rather than balls:
  * each sprite is a ragged cloud turned at random and slowly spinning, thin where it leaves the tip
- * and opening out as it cools. A draft from the cracked driver's window pulls it across and out,
- * harder at speed; it thins to nothing before the windscreen, and right in front of the eyes, so it
- * never lies over the glass like mist.
+ * and opening out as it cools. With the window shut it gathers in the sight line until the
+ * road is hard to see; opening the window, or the blower, draws it out.
  */
 class CabSmoke {
   private pool: { s: THREE.Sprite; v: THREE.Vector3; age: number; life: number; s0: number; s1: number; op: number; spin: number; glass: boolean }[] = [];
   private next = 0;
+  private readonly haze: { s: THREE.Sprite; origin: THREE.Vector3; phase: number }[] = [];
+  private time = 0;
+  /** Retained smoke, separate from the short-lived ribbons at the cigarette. */
+  density = 0;
+  windowOpening = 0;
+  speed = 0;
+  ventilation = 0;
   /** Cabin-space push toward the open window, m/s. */
   readonly draft = new THREE.Vector3(-0.05, 0, 0.02);
   /** The eyes, cabin space: smoke fades out as it gets close to them. */
@@ -167,6 +173,26 @@ class CabSmoke {
       parent.add(s);
       this.pool.push({ s, v: new THREE.Vector3(), age: 9, life: 1, s0: 0.02, s1: 0.1, op: 0.3, spin: 0, glass: true });
     }
+    // Broad, sparse wisps under the roof retain the smoke after each breath fades.
+    for (let i = 0; i < 12; i++) {
+      const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: texs[i % 3], transparent: true, depthWrite: false, opacity: 0, color: '#c8cbd0', fog: false }));
+      const origin = new THREE.Vector3(-.65 + (i % 4) * .4, .88 + Math.floor(i / 4) * .1, -1.48 + (i % 3) * .28);
+      s.position.copy(origin);
+      s.scale.setScalar(.48 + (i % 3) * .12);
+      s.renderOrder = 6; s.visible = false;
+      parent.add(s);
+      this.haze.push({ s, origin, phase: i * 2.4 });
+    }
+    // Between the eyes and the windscreen, so the retained smoke sits on the road ahead.
+    for (let i = 0; i < 8; i++) {
+      const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: texs[i % 3], transparent: true, depthWrite: false, opacity: 0, color: '#c2c6cb', fog: false }));
+      const origin = new THREE.Vector3(-0.56 + (i % 4) * 0.15, 0.86 + Math.floor(i / 4) * 0.12, -1.46 - (i % 4) * 0.07);
+      s.position.copy(origin);
+      s.scale.setScalar(0.7 + (i % 3) * 0.08);
+      s.renderOrder = 6; s.visible = false;
+      parent.add(s);
+      this.haze.push({ s, origin, phase: 1.1 + i * 1.7 });
+    }
   }
 
   /** `color`: bluish for the side stream off the tip, whiter for breath; `glass: false` lets it reach the dash (the ashtray). */
@@ -184,10 +210,29 @@ class CabSmoke {
     q.s.visible = true;
   }
 
-  update(dt: number): void {
+  update(dt: number, source: number): void {
+    this.time += dt;
+    const opening = clamp(this.windowOpening, 0, 1);
+    const shut = 1 - opening;
+    const speedK = Math.min(1, Math.abs(this.speed) / 60);
+    // A shut window holds the smoke; the blower and an open pane carry it out.
+    const leak = 0.02 + this.ventilation * 0.055 + opening * (0.4 + speedK);
+    const seal = shut * (1 - this.ventilation * 0.5);
+    const target = source * (0.22 + seal * 1.55);
+    const rate = source > 0.2 && seal > 0.65 ? Math.max(leak, 0.065) : leak;
+    this.density = target + (this.density - target) * Math.exp(-rate * dt);
+    const veil = 0.1 + shut * 0.24;
+    for (const q of this.haze) {
+      const phase = this.time * .22 + q.phase;
+      q.s.position.copy(q.origin).add(_smokeDrift.set(Math.sin(phase) * .07, Math.sin(phase * .7) * .025, Math.cos(phase * .8) * .045));
+      const near = smooth(.12, .3, q.s.position.distanceTo(this.eye));
+      q.s.material.opacity = Math.min(0.58, this.density * veil * (0.8 + Math.sin(phase) * 0.2) * near);
+      q.s.visible = q.s.material.opacity > .001;
+      q.s.material.rotation = q.phase + this.time * .025;
+    }
     for (const q of this.pool) {
       if (!q.s.visible) continue;
-      q.age += dt;
+      q.age += dt * (0.26 + opening * 0.74);
       if (q.age >= q.life) { q.s.visible = false; continue; }
       const k = q.age / q.life;
       const p = q.s.position;
@@ -197,17 +242,24 @@ class CabSmoke {
       q.v.z += Math.cos(q.age * 3.7 + q.spin * 13) * 0.02 * dt;
       q.v.multiplyScalar(Math.exp(-1.1 * dt));
       q.v.y += 0.02 * dt;
+      // Closed glass and the headlining retain the smoke inside the cabin.
+      if (opening < .05) p.x = Math.max(-.85, p.x);
+      p.x = Math.min(.85, p.x);
+      p.y = Math.min(1.19, p.y);
+      p.z = clamp(p.z, -1.79, -.44);
       const m = q.s.material as THREE.SpriteMaterial;
       m.rotation += q.spin * dt;
       q.s.scale.setScalar(q.s0 + (q.s1 - q.s0) * Math.sqrt(k));
-      // gone before the windscreen and out at the window; never a haze over the eyes
+      // Local ribbons stay soft near the eyes; accumulated smoke is rendered above.
       const glass = q.glass ? 1 - smooth(-1.44, -1.58, p.z) : 1;
-      const out = 1 - smooth(-0.74, -0.86, p.x);
+      const out = 1 - opening * smooth(-0.74, -0.86, p.x);
       const near = smooth(0.05, 0.14, p.distanceTo(this.eye));
-      m.opacity = q.op * Math.min(1, k * 7) * (1 - k) * (1 - k * 0.4) * glass * out * near;
+      m.opacity = q.op * Math.min(1, k * 7) * (1 - k) * (1 - k * 0.4) * glass * out * near * (1 + shut * 0.65);
     }
   }
 }
+
+const _smokeDrift = new THREE.Vector3();
 
 /** 0 at `a`, 1 at `b` (either way round), smooth in between. */
 function smooth(a: number, b: number, x: number): number {
@@ -219,6 +271,8 @@ function smooth(a: number, b: number, x: number): number {
 const CIG_IN_MOUTH = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(0.4, -0.13, -0.9).normalize());
 /** The lips, in the head's frame (eyes at the origin, looking down -Z). */
 const MOUTH = new THREE.Vector3(0.026, -0.058, -0.056);
+// Angle of the cigarette toward the fingertips in the closed hand's frame.
+const HAND_CIG_ANGLE = 0.57;
 const SIDE_SMOKE = '#c4cad0', BREATH = '#dedcd8';
 
 type SmokeState = 'idle' | 'taking' | 'lighting' | 'smoking' | 'stubbing';
@@ -236,7 +290,7 @@ export class Smoker {
   readonly pack = new THREE.Mesh();
   readonly lighter = new THREE.Group();
   readonly ashtray = new THREE.Group();
-  private flame = new THREE.Mesh(new THREE.ConeGeometry(0.0055, 0.022, 6), new THREE.MeshBasicMaterial({ color: '#ffd27a' }));
+  private flame = new THREE.Mesh(new THREE.ConeGeometry(0.0055, 0.022, 6), new THREE.MeshBasicMaterial({ color: '#ffb23e' }));
   private flameLight = new THREE.PointLight('#ff9a4a', 0, 0.9, 2);
   private emberLight = new THREE.PointLight('#ff6a24', 0, 0.45, 2);
   private cig: Cigarette;
@@ -244,11 +298,15 @@ export class Smoker {
   private smoke: CabSmoke;
   /** The lips, in cabin space, as the head is turned now (see `follow`). */
   private readonly mouth = new THREE.Vector3();
+  private readonly mouthPalm = new THREE.Vector3();
+  private readonly mouthFingers = new THREE.Vector3();
   /** The player's head (the camera's parent); without it the mouth stays where the eyes rest. */
   private head: THREE.Object3D | null = null;
   private readonly eye: THREE.Vector3;
-  /** Speed of the van, km/h: the draft from the cracked window pulls harder. */
+  /** Speed of the van, km/h: the draft from an open window pulls harder. */
   speed = 0;
+  windowOpening = 0;
+  ventilation = 0;
   private burnT = 0;
   private burnTotal = 120;
   private glow = 0;
@@ -276,10 +334,10 @@ export class Smoker {
     this.cig.group.visible = false;
     parent.add(this.cigAnchor);
     this.smoke = new CabSmoke(parent);
-    this.placeMouth();
+    this.updateMouth();
     this.flame.visible = false;
     this.lighter.add(this.flame);
-    this.flame.position.set(0, 0.05, 0);
+    this.flame.position.set(0, 0.058, 0);
     parent.add(this.flameLight, this.emberLight);
     this.setCigarette(BRANDS[this.brand]);
   }
@@ -288,9 +346,10 @@ export class Smoker {
    * Hang the cigarette from the head rather than the cab: it turns with the look, as it would in
    * the lips, and its lit end stays in sight at the bottom of the view.
    */
-  follow(head: THREE.Object3D): void { this.head = head; this.placeMouth(); }
+  follow(head: THREE.Object3D): void { this.head = head; this.updateMouth(); }
 
-  private placeMouth(): void {
+  updateMouth(): void {
+    this.hands.setCigaretteLength(this.cig.length);
     const h = this.head;
     // the head turns further than the neck would carry the lips; reaching hands follow the lips
     if (h) _he.set(clamp(h.rotation.x, -0.9, 0.45), clamp(h.rotation.y, -1.4, 1.4), h.rotation.z * 0.5, 'YXZ');
@@ -300,6 +359,13 @@ export class Smoker {
     this.smoke.eye.copy(h ? h.position : this.eye);
     this.cigAnchor.position.copy(this.mouth);
     this.cigAnchor.quaternion.copy(_hq).multiply(CIG_IN_MOUTH);
+    const shaft = _a.set(0, 1, 0).applyQuaternion(this.cigAnchor.quaternion);
+    // Approach from the right with the fingertips across the lips, below the driver's view.
+    const across = _b.set(-1, 0.26, 0).applyQuaternion(_hq);
+    across.addScaledVector(shaft, -across.dot(shaft)).normalize();
+    const c = Math.cos(HAND_CIG_ANGLE), s = Math.sin(HAND_CIG_ANGLE);
+    this.mouthFingers.copy(across).multiplyScalar(c).addScaledVector(shaft, s);
+    this.mouthPalm.copy(shaft).multiplyScalar(-c).addScaledVector(across, s);
   }
 
   /** A point near the lips, offset in cabin space; for hand targets, so they follow the head. */
@@ -379,9 +445,7 @@ export class Smoker {
   extinguish(): void {
     if (this.state === 'smoking') {
       this.onToast?.('Туши окурок');
-      this.seq++;
       this.dragging = false;
-      if (this.cig.group.parent !== this.cigAnchor) this.cigToMouth();
       this.stubOut();
     } else if (this.state === 'stubbing') this.onToast?.('Уже тушу');
     else this.onToast?.('Нечего тушить');
@@ -436,6 +500,7 @@ export class Smoker {
       ...extra,
       // a step only counts while its own chain is the current one
       onArrive: extra.onArrive ? () => { if (this.seq === id) extra.onArrive!(); } : undefined,
+      onTimeout: extra.onTimeout ? () => { if (this.seq === id) extra.onTimeout!(); } : undefined,
       then: extra.then ? () => { if (this.seq === id) extra.then!(); } : undefined,
     });
   }
@@ -480,14 +545,17 @@ export class Smoker {
       onArrive: () => this.carryLighter(),
       then: () => {
         // flame to the tip, a little under it
-        const tip = new THREE.Vector3(), flameAt = new THREE.Vector3();
+        const tip = new THREE.Vector3();
         this.state = 'lighting';
         this.lightStart = performance.now() / 1000;
         this.go('lighter', () => {
-          this.cigTip(tip);
-          // the flame sits 7 cm out along the hand: aim the palm that far behind the tip
-          return flameAt.copy(tip).add(_b.set(0.05, -0.045, 0.06));
-        }, 2.6, new THREE.Vector3(-0.2, 0.2, 1), {
+          // The upper half of the flame touches the cigarette; the fist stays below it.
+          return this.cigTip(tip).add(_b.set(0, -0.005, 0));
+        }, 2.6, new THREE.Vector3(0, 0, 1), {
+          contact: this.flame,
+          fingers: new THREE.Vector3(0, 1, 0),
+          extent: 0,
+          follow: true,
           onArrive: () => { this.lightT = 0; this.onSfx?.('flick'); },
           then: () => {
             this.flameOff();
@@ -542,8 +610,8 @@ export class Smoker {
 
   private carryLighter(): void {
     this.lighter.removeFromParent();
-    this.lighter.rotation.set(0, 0, 0);
-    this.lighter.position.set(0, 0.04, -0.018);
+    this.lighter.rotation.set(-0.55, 0, 0);
+    this.lighter.position.set(-0.014, 0.077, -0.025);
     this.hands.rigOf('R').palm.add(this.lighter);
   }
 
@@ -584,17 +652,23 @@ export class Smoker {
     this.cig.group.removeFromParent();
     this.cig.group.position.set(0, 0, 0);
     this.cig.group.rotation.set(0, 0, 0);
+    this.cig.group.scale.setScalar(1);
     this.cigAnchor.add(this.cig.group);
     this.cig.group.visible = true;
   }
 
   private cigToHand(): void {
-    this.cig.group.removeFromParent();
-    // held across the two fingers, as it really is: the filter on the palm side (toward the lips on a
-    // draw), the lit end out past the back of the hand and a little along the fingers
-    this.cig.group.position.set(0, 0.004, -0.016);
-    this.cig.group.quaternion.setFromUnitVectors(_a.set(0, 1, 0), _b.set(0, 0.45, 1).normalize());
-    this.hands.rigOf('R').vee.add(this.cig.group);
+    this.hands.cigaretteGrip.add(this.cig.group);
+    this.cig.group.position.set(0, 0, 0);
+    this.cig.group.rotation.set(0, 0, 0);
+    this.cig.group.scale.setScalar(1 / this.hands.human.group.scale.x);
+  }
+
+  private atLips(hold: number, onArrive: () => void, then: () => void, id: number): void {
+    this.go('vcig', () => this.mouth, hold, this.mouthPalm, {
+      palm: this.mouthPalm, fingers: this.mouthFingers, contact: this.hands.cigaretteGrip, follow: true,
+      onArrive, then, onTimeout: () => this.recover(),
+    }, id);
   }
 
   private flameOff(): void {
@@ -608,33 +682,21 @@ export class Smoker {
   private drag(): void {
     this.dragging = true;
     const id = ++this.seq;
-    const DOWN = new THREE.Vector3(0, -1, -0.2);
-    const at = new THREE.Vector3();
-    const near = this.nearMouth(at, 0.05, -0.045, -0.065);
-    // between draws the wrist rests on the top of the wheel, the cigarette up between two fingers in sight
-    const away = this.nearMouth(at, 0.13, -0.19, -0.34);
-    // the hand comes up, takes the cigarette out of the lips between two fingers…
-    this.go('vcig', near, 0.28, new THREE.Vector3(-0.1, 0.4, 0.9), {
-      onArrive: () => this.cigToHand(),
-      then: () => {
-        // …back to the lips for the long draw…
-        this.go('drag', near, 1.0, new THREE.Vector3(-0.1, 0.4, 0.9), {
-          onArrive: () => { this.glowGoal = 1; this.onSfx?.('puff'); },
-          then: () => {
-            // …and away, a slow breath out, ash flicked
-            this.glowGoal = 0.35;
-            this.exhale();
-            this.go('vcig', away, 2.6, new THREE.Vector3(-0.3, -0.3, 0.9), {
-              then: () => {
-                this.go('vcig', near, 0.3, new THREE.Vector3(-0.1, 0.4, 0.9), {
-                  onArrive: () => this.cigToMouth(),
-                  then: () => { this.dragging = false; this.nextDrag = 11 + Math.random() * 9; },
-                }, id);
-              },
-            }, id);
-          },
-        }, id);
-      },
+    const away = this.nearMouth(new THREE.Vector3(), 0.16, -0.23, -0.32);
+    this.atLips(1.1, () => {
+      this.cigToHand();
+      this.glowGoal = 1;
+      this.onSfx?.('puff');
+    }, () => {
+      this.glowGoal = 0.35;
+      this.exhale();
+      this.go('vcig', away, 2.6, new THREE.Vector3(-0.94, -0.07, 0.34), {
+        fingers: new THREE.Vector3(0.10, 0.94, -0.33).normalize(),
+        then: () => this.atLips(0.3, () => this.cigToMouth(), () => {
+          this.dragging = false;
+          this.nextDrag = 11 + Math.random() * 9;
+        }, id),
+      }, id);
     }, id);
   }
 
@@ -651,31 +713,33 @@ export class Smoker {
   private stubOut(): void {
     this.state = 'stubbing';
     const id = ++this.seq;
-    const at = new THREE.Vector3(), near = this.nearMouth(at, 0.05, -0.045, -0.065);
-    this.go('vcig', near, 0.28, new THREE.Vector3(-0.1, 0.4, 0.9), {
-      onArrive: () => this.cigToHand(),
-      then: () => {
-        const ash = new THREE.Vector3().copy(this.ashPos).add(new THREE.Vector3(0, 0.05, 0.03));
-        this.go('vcig', () => at.copy(ash), 0.7, new THREE.Vector3(0, -1, 0.1), {
-          onArrive: () => {
-            this.cig.light(false); this.glow = 0; this.onSfx?.('stub');
-            // a last thread off the crushed stub, drifting back into the cab
-            for (let i = 0; i < 3; i++) this.smoke.puff(this.ashPos.clone().add(_a.set(0, 0.02 + i * 0.01, 0)), _b.set(0, 0.04, 0.03), 0.012, 0.05, 1.4, 0.16, SIDE_SMOKE, false);
-          },
-          then: () => { this.cig.group.visible = false; this.cig.group.removeFromParent(); this.cigAnchor.add(this.cig.group); this.finishStub(); },
-        }, id);
-      },
-    }, id);
+    const toAshtray = () => {
+      const ash = this.ashPos.clone().add(new THREE.Vector3(0, 0.018, 0));
+      this.go('vcig', () => ash, 0.7, new THREE.Vector3(0, 1, 0.1), {
+        fingers: new THREE.Vector3(0, 0, -1),
+        contact: this.cig.ember,
+        onTimeout: () => this.recover(),
+        onArrive: () => {
+          this.cig.light(false); this.glow = 0; this.onSfx?.('stub');
+          // a last thread off the crushed stub, drifting back into the cab
+          for (let i = 0; i < 3; i++) this.smoke.puff(this.ashPos.clone().add(_a.set(0, 0.02 + i * 0.01, 0)), _b.set(0, 0.04, 0.03), 0.012, 0.05, 1.4, 0.16, SIDE_SMOKE, false);
+        },
+        then: () => { this.cig.group.visible = false; this.cig.group.removeFromParent(); this.cigAnchor.add(this.cig.group); this.finishStub(); },
+      }, id);
+    };
+    if (this.cig.group.parent === this.hands.cigaretteGrip) toAshtray();
+    else this.atLips(0.16, () => this.cigToHand(), toAshtray, id);
   }
 
   // ---------------------------------------------------------------- per frame
 
   update(dt: number): void {
-    this.placeMouth();
-    // the cracked driver's window: a slow pull when standing, a steady stream out of it on the move
-    const pull = 0.05 + Math.min(1, Math.abs(this.speed) / 60) * 0.22;
-    this.smoke.draft.set(-pull, 0.005, 0.03 + pull * 0.15);
-    this.smoke.update(dt);
+    const pull = (0.05 + Math.min(1, Math.abs(this.speed) / 60) * 0.22) * this.windowOpening;
+    this.smoke.draft.set(-pull, 0.002, 0.005 + pull * 0.15);
+    this.smoke.windowOpening = this.windowOpening;
+    this.smoke.speed = this.speed;
+    this.smoke.ventilation = this.ventilation;
+    this.smoke.update(dt, this.state === 'smoking' ? 1 : this.cig.ember.visible ? .4 : 0);
     if (this.cigTravel) {
       const tr = this.cigTravel;
       tr.t += dt;
@@ -687,10 +751,8 @@ export class Smoker {
       if (k >= 1) { this.cigTravel = null; tr.done(); }
     }
     // the chain is the hand's own; if something else took the hand while the cigarette was in it, put it back in the lips
-    if (this.state === 'smoking' && this.dragging && this.hands.taskOf('R')?.tag !== this.tag && this.cig.group.parent !== this.cigAnchor) {
-      this.cigToMouth();
-      this.dragging = false;
-      this.seq++;
+    if (this.state === 'smoking' && this.dragging && this.hands.taskOf('R')?.tag !== this.tag) {
+      this.recover();
     }
 
     // a step chain whose hand was taken by something else (a gear change, the horn) would hang forever
@@ -710,7 +772,7 @@ export class Smoker {
       if (on) {
         this.flame.scale.set(1 + Math.sin(t * 40) * 0.12, 1 + Math.sin(t * 31) * 0.18, 1);
         this.lighter.updateWorldMatrix(true, false);
-        this.flameLight.position.set(0, 0.055, 0).applyMatrix4(this.lighter.matrixWorld).applyMatrix4(_m.copy(this.parent.matrixWorld).invert());
+        this.flameLight.position.copy(this.flame.position).applyMatrix4(this.lighter.matrixWorld).applyMatrix4(_m.copy(this.parent.matrixWorld).invert());
         this.flameLight.intensity = 0.035 + Math.sin(t * 37) * 0.006;
       } else this.flameLight.intensity = 0;
       // puffs at 0.7, 1.15, 1.6 s: the ember catches on the first

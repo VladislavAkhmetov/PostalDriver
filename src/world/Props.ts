@@ -10,6 +10,9 @@ export interface Collider {
   soft?: boolean;
   /** Mass of a movable obstacle in kg; the van shoves it instead of being stopped dead. */
   mass?: number;
+  /** World-space velocity of the obstacle (m/s) so moving obstacles impart impulse on collision. */
+  vx?: number;
+  vz?: number;
   /** A movable obstacle is told it was hit: unit normal pointing away from the van, impulse (N·s), closing speed (m/s). */
   hit?: (nx: number, nz: number, impulse: number, speed: number) => void;
 }
@@ -155,13 +158,24 @@ export function khrushchyovka(b: Bucket, p: Place, cols: Collider[]): void {
 
 export function postOffice(b: Bucket, p: Place, cols: Collider[]): void {
   const W = 16, H = 7.4, D = 10;
-  b.add('brickWhite', boxGeo(W, H, D, 2), T(p, 0, H / 2 - 0.2, 0));
+  // A real shell: the ground-floor window and entrance now serve the small interior.
+  // Keep the original footprint, upper storey and vehicle collider.
+  for (const x of [-7.85, 7.85]) b.add('brickWhite', boxGeo(.3, H, D, 2), T(p, x, H / 2 - .2, 0));
+  b.add('brickWhite', boxGeo(W, H, .3, 2), T(p, 0, H / 2 - .2, -4.85));
+  const spans = [
+    [-8, -4.25, -.2, 7.2], [-4.25, -2.55, -.2, 1.4], [-4.25, -2.55, 2.75, 7.2],
+    [-2.55, -.8, -.2, 7.2], [-.8, .8, -.2, .5], [-.8, .8, 2.8, 7.2], [.8, 8, -.2, 7.2],
+  ];
+  for (const [left, right, bottom, top] of spans) {
+    b.add('brickWhite', boxGeo(right - left, top - bottom, .3, 2), T(p, (left + right) / 2, (bottom + top) / 2, 4.85));
+  }
+  b.add('flat', boxGeo(15.4, .2, 9.4), T(p, 0, 3.5, 0), '#b8b4a8');
   b.add('flat', boxGeo(W + 0.5, 0.35, D + 0.5), T(p, 0, H - 0.05, 0), '#6a6a66');
-  b.add('pochta', planeGeo(8, 1), T(p, 0, 3.15, D / 2 + 0.04));
-  b.add('door', planeGeo(1.6, 2.3), T(p, 0, 1.25, D / 2 + 0.04));
+  b.add('pochta', planeGeo(8, 1), T(p, 0, 3.35, D / 2 + 0.04));
   b.add('concrete', boxGeo(3.4, 0.35, 1.6), T(p, 0, 0.0, D / 2 + 0.8), '#a8a49c');
-  b.add('concrete', boxGeo(3.6, 0.12, 1.8), T(p, 0, 2.7, D / 2 + 0.9), '#bcb8ae');
-  for (const x of [-6, -3.4, 3.4, 6]) {
+  b.add('concrete', boxGeo(2.4, 0.3, .8), T(p, 0, .325, D / 2 + .4), '#a8a49c');
+  b.add('concrete', boxGeo(3.6, 0.12, 1.8), T(p, 0, 2.9, D / 2 + 0.9), '#bcb8ae');
+  for (const x of [-6, 3.4, 6]) {
     b.add('bigWinLit', planeGeo(1.7, 1.7), T(p, x, 1.9, D / 2 + 0.04));
   }
   for (const x of [-6, -3.4, 0, 3.4, 6]) b.add('bigWin', planeGeo(1.7, 1.7), T(p, x, 5.2, D / 2 + 0.04));

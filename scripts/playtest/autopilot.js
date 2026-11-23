@@ -162,7 +162,7 @@ async function playDay() {
     if (u.morning) {
       // the neighbour's wife to the maternity, then on to the post door
       if (u.birth) { if (attempt('hospital')) { await placeAt(u.world.hospital.pos, 0); await settle(2500); } continue; }
-      if (it > 6 && !u.ui.boardOpen) { if (attempt('postdoor')) { await placeAt(u.world.postDoor, 0, true); await settle(2000); } }
+      if (it > 6 && !u.ui.boardOpen) { if (attempt('postdoor')) { await placeAt(u.world.postDoor, 0, true); await sleep(400); await press('KeyH', 160); await sleep(350); await press('KeyH', 160); await settle(2000); } }
       await sleep(300); continue;
     }
     if (!m || !m.stops.length) { await sleep(300); continue; }

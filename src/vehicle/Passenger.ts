@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { clamp, damp } from '../core/math';
-import { Human } from '../world/People';
+import { Human, type Body, type Outfit } from '../world/People';
 
 /** The pelvis over the seat's floor, as for the driver and the patrol crews. */
 const SEAT_HIPS_Y = 0.465;
@@ -25,14 +25,16 @@ export class Passenger {
   private yaw = 0;
   private talkT = 0;
   private t = Math.random() * 10;
+  private lean: number;
 
   /** `hips`: where his pelvis sits in the seat, cabin space. */
-  constructor(parent: THREE.Object3D, hips: THREE.Vector3) {
-    const h = this.human = new Human('kartatay');
+  constructor(parent: THREE.Object3D, hips: THREE.Vector3, options: { body?: Body; outfit?: Outfit; lean?: number; stick?: boolean } = {}) {
+    this.lean = options.lean ?? LEAN;
+    const h = this.human = new Human(options.body ?? 'kartatay', options.outfit);
     h.seat(SEAT_HIPS_Y);
     h.tick(0.01);
     // the top of his cap in the seated, leaning pose, against his pelvis
-    h.spin('Torso', X, LEAN);
+    h.spin('Torso', X, this.lean);
     h.group.updateMatrixWorld(true);
     const hp = h.at('Hips');
     const top = Passenger.top(h);
@@ -49,7 +51,7 @@ export class Passenger {
     const stick = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.018, 0.92, 6), new THREE.MeshLambertMaterial({ color: '#5a4632' }));
     stick.position.set(0, 0.42, 0.42);
     stick.rotation.x = -0.32;
-    h.group.add(stick);
+    if (options.stick ?? true) h.group.add(stick);
     h.group.visible = false;
     parent.add(h.group);
   }
@@ -83,7 +85,7 @@ export class Passenger {
     this.yaw = damp(this.yaw, want, 4, dt);
     const h = this.human;
     h.tick(dt);
-    h.spin('Torso', X, LEAN);
+    h.spin('Torso', X, this.lean);
     h.look(this.yaw, this.talkT > 0 ? -0.04 + Math.sin(this.t * 3.1) * 0.03 : 0.02);
   }
 }

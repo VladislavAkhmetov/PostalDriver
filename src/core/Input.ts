@@ -2,20 +2,21 @@ import { clamp, damp } from './math';
 
 export type Action =
   | 'start' | 'handbrake' | '4wd' | 'low' | 'gearUp' | 'gearDown' | 'gearMode' | 'lights' | 'wipers' | 'vent' | 'timeOfDay' | 'smoke' | 'stub'
-  | 'map' | 'tape' | 'tapeNext' | 'volUp' | 'volDown' | 'weather' | 'mute' | 'pause' | 'reset' | 'lookBack' | 'help';
+  | 'map' | 'tape' | 'tapeNext' | 'volUp' | 'volDown' | 'weather' | 'mute' | 'pause' | 'reset' | 'lookBack' | 'help' | 'window';
 
 /**
  * Keys grouped by job, all within reach of the left hand on WASD:
  * Q/E gears and G box mode, Z/X the two transfer-case levers, F lights, R wipers (rain),
- * Enter ignition, Space handbrake, H horn. Reset sits on Backspace, away from the gears.
- * Old bindings (I, 4, L, P) still work as quiet aliases.
+ * I is the ignition key: held in the game loop (a short hold starts, a tap stops), not a one-shot action.
+ * Space handbrake, H horn. Reset sits on Backspace, away from the gears.
+ * Old bindings (4, L, P) still work as quiet aliases.
  */
 const KEYMAP: Record<string, Action> = {
-  Enter: 'start', NumpadEnter: 'start', KeyI: 'start',
   Space: 'handbrake',
   KeyQ: 'gearDown', KeyE: 'gearUp', KeyG: 'gearMode',
   KeyZ: '4wd', Digit4: '4wd', KeyX: 'low', KeyL: 'low',
   KeyF: 'lights', KeyR: 'wipers', KeyP: 'wipers', KeyB: 'vent', KeyT: 'timeOfDay', KeyJ: 'smoke', KeyY: 'stub',
+  KeyO: 'window',
   KeyM: 'map', Tab: 'map', KeyC: 'tape', KeyN: 'tapeNext', Equal: 'volUp', NumpadAdd: 'volUp', Minus: 'volDown', NumpadSubtract: 'volDown', KeyK: 'weather', KeyU: 'mute',
   Escape: 'pause', Backspace: 'reset', F1: 'help', Slash: 'help',
 };
@@ -52,6 +53,8 @@ export class Input {
   onAction?: (a: Action) => void;
   onClick?: (x: number, y: number) => void;
   onAnyKey?: () => void;
+  /** I is down. A tap kills a running engine; a short hold starts it. */
+  ignitionDown = false;
 
   constructor(private surface: HTMLElement) {
     window.addEventListener('keydown', (e) => {
@@ -60,6 +63,7 @@ export class Input {
       if (e.code === 'Tab' || e.code === 'Space' || e.code === 'Backspace' || e.code === 'Enter' || e.code.startsWith('Arrow') || e.code === 'F1') e.preventDefault();
       if (e.repeat) return;
       this.keys.add(e.code);
+      if (e.code === 'KeyI') { this.ignitionDown = true; return; }
       if (e.code === 'KeyH') this.hornTaps++;
       const a = KEYMAP[e.code];
       if (a) this.onAction?.(a);
@@ -67,9 +71,10 @@ export class Input {
     });
     window.addEventListener('keyup', (e) => {
       this.keys.delete(e.code);
+      if (e.code === 'KeyI') this.ignitionDown = false;
       if (e.code === 'KeyV') this.lookBack = false;
     });
-    window.addEventListener('blur', () => { this.keys.clear(); this.touchGas = this.touchBrake = 0; this.touchSteer = null; this.touchHorn = false; });
+    window.addEventListener('blur', () => { this.keys.clear(); this.ignitionDown = false; this.touchGas = this.touchBrake = 0; this.touchSteer = null; this.touchHorn = false; });
 
     surface.addEventListener('pointerdown', (e) => {
       if (e.pointerType !== 'mouse') return;

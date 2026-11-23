@@ -1,13 +1,12 @@
 import './ui.css';
-import { calendar, CAPACITY, destName, destWho, GOAL, pct, type DayInfo, type Reckoning } from '../game/Career';
+import { calendar, CAPACITY, destName, destWho, type DayInfo, type Reckoning } from '../game/Career';
 import type { Ground } from '../world/Ground';
 import type { Stop } from '../world/World';
 import type { Input, Action } from '../core/Input';
 import type { RitualStep, RunStats } from '../game/Mission';
-import { needsRepair, repairCost, type Profile, type RepairKind } from '../game/Profile';
+import { needsRepair, type Profile, type RepairKind } from '../game/Profile';
 import { storyArt, type StoryImage } from './storyArt';
 import { faceFor } from './portraits';
-import { rub } from '../game/Money';
 import { LOGO_DRAW_S, logoSvg } from './logo';
 
 /** The UI theme's colours and label font as ui.css defines them (`--ui-*`), for what is drawn on canvas. */
@@ -63,7 +62,7 @@ const SETTINGS_KEY = 'uaz17.settings';
 const TOUCH_HELP: [string, string][] = [
   ['левая половина', 'руль — потяни влево / вправо'], ['Газ · Тормоз', 'чем выше нажал, тем сильнее; тормоз на месте — задний ход'],
   ['верх экрана', 'осмотреться; коснись прибора, чтобы нажать'], ['Ручник · Ключ · Сигнал', 'всегда под рукой'],
-  ['•••', 'мост, понижайка, фары, дворники, карта, радио'], ['наклон', 'руль наклоном телефона — включи в паузе'],
+  ['•••', 'зажигание, мост, понижайка, фары, дворники, карта, радио'], ['наклон', 'руль наклоном телефона — включи в паузе'],
 ];
 
 export interface RouteState {
@@ -81,9 +80,9 @@ export interface RouteState {
 /** Keyboard reference, grouped the way the keys sit around WASD. */
 const KEY_GROUPS: [string, [string, string][]][] = [
   ['Езда', [['W · ↑', 'газ'], ['S · ↓', 'тормоз; стоя на месте — задний ход'], ['A D · ← →', 'руль'], ['Пробел', 'ручник'], ['H', 'клаксон (держать)']]],
-  ['Мотор и коробка', [['Enter', 'зажигание'], ['G', 'коробка: автомат / ручная'], ['Q · E', 'передача ниже / выше (в ручном режиме)']]],
+  ['Мотор и коробка', [['I', 'завести — удерживать, заглушить — коротко'], ['G', 'коробка: автомат / ручная'], ['Q · E', 'передача ниже / выше (в ручном режиме)']]],
   ['Бездорожье — раздатка', [['Z', 'передний мост 4×4'], ['X', 'понижающая передача']]],
-  ['Кабина', [['F', 'фары'], ['R', 'дворники'], ['B', 'обдув стекла (против запотевания)'], ['J', 'закурить / затянуться'], ['Y', 'потушить сигарету'], ['клик по стеклу', 'протереть рукой'], ['C · N', 'радио: вкл. / следующая песня'], ['− · +', 'громкость радио'], ['V', 'оглянуться назад (держать)'], ['мышь', 'осмотреться; клик — по приборам']]],
+  ['Кабина', [['F', 'фары'], ['R', 'дворники'], ['B', 'обдув стекла (против запотевания)'], ['O', 'опустить / поднять боковое стекло'], ['J', 'закурить / затянуться'], ['Y', 'потушить сигарету'], ['клик по стеклу', 'протереть рукой'], ['C · N', 'радио: вкл. / следующая песня'], ['− · +', 'громкость радио'], ['V', 'оглянуться назад (держать)'], ['мышь', 'осмотреться; клик — по приборам']]],
   ['Игра', [['M · Tab', 'путевой лист и карта'], ['K', 'погода'], ['T', 'время суток (песочница)'], ['U', 'звук'], ['Backspace', 'вытащить машину на дорогу'], ['Esc', 'пауза'], ['F1', 'эта памятка']]],
 ];
 /** The few keys the title card shows. */
@@ -103,7 +102,7 @@ function policeLine(st: RunStats): string {
   const parts: string[] = [];
   if (p.arrests) parts.push(p.arrests > 1 ? `задержан ${p.arrests} раза` : 'задержан');
   if (p.escapes) parts.push(p.escapes > 1 ? `ушёл от погони ${p.escapes} раза` : 'ушёл от погони');
-  if (p.fines) parts.push(`штрафы ${rub(p.fines)}`);
+  if (p.fines) parts.push('оформлен протокол');
   else if (p.warnings) parts.push('отделался предупреждением');
   if (!parts.length) return p.checks ? 'документы в порядке' : 'не останавливали';
   return parts.join(' · ');
@@ -121,15 +120,6 @@ function postmark(date: string): string {
     <text x="60" y="65" font-size="13" text-anchor="middle" letter-spacing="1.5">${date}</text></svg>`;
 }
 
-/**
- * The money box: «… из 3 000 000 ₽» and how far to Ufa — until the exams are passed (the three million
- * went on them); after that, what is in it.
- */
-function piggy(p: Profile): string {
-  if (p.exams === 'passed') return rub(p.money);
-  const saved = Math.min(1, p.money / GOAL);
-  return `${rub(p.money)} из ${rub(GOAL)} <span class="goal"><i style="width:${(saved * 100).toFixed(1)}%"></i></span>`;
-}
 
 export class UI {
   readonly root = el('div', 'ui');
@@ -289,14 +279,14 @@ export class UI {
       // nothing played yet: one way in — the opening page, then the first morning
       item('Новая игра', `день первый · ${cal.text.toLowerCase()}`, () => this.onStart?.());
     } else {
-      item('Продолжить', resume ? `день ${p.day} · ${resume}` : `день ${p.day} · ${cal.text.toLowerCase()}<span class="tt-more"> · копилка ${rub(p.money)} из ${rub(GOAL)}</span>`, () => this.onStart?.());
+      item('Продолжить', resume ? `день ${p.day} · ${resume}` : `день ${p.day} · ${cal.text.toLowerCase()}`, () => this.onStart?.());
       if (resume) item('Начать день заново', 'утро, дома', () => this.onFreshDay?.());
       // everything from the start, onboarding included; asks once more, as it wipes the career
       const nb = item('Новая игра', 'всё сначала — с первого утра', () => {
         if (this.ttConfirm?.el !== nb) {
           this.ttConfirm = { el: nb, label: 'Новая игра' };
           nb.querySelector('.tt-label')!.textContent = 'Точно всё сначала?';
-          nb.querySelector('.tt-note')!.textContent = p.money > 0 ? `копилка ${rub(p.money)} и все дни сотрутся` : 'прогресс сотрётся · нажмите ещё раз';
+          nb.querySelector('.tt-note')!.textContent = 'прогресс сотрётся · нажмите ещё раз';
           nb.classList.add('warn');
           return;
         }
@@ -323,7 +313,7 @@ export class UI {
 
   hideTitle(): void {
     this.titleEl.classList.add('out');
-    this.hud.classList.remove('hidden');
+    if (!this.storyOpen) this.hud.classList.remove('hidden');
   }
   showTitle(): void { this.titleEl.classList.remove('out'); this.hud.classList.add('hidden'); this.paintLogo(0.5); }
 
@@ -358,7 +348,7 @@ export class UI {
       panel.appendChild(c);
       this.chips[id] = c;
     };
-    mk('engine', 'Двигатель', 'start', 'Enter', CTL_ICON.engine);
+    mk('engine', 'Двигатель', 'start', 'I', CTL_ICON.engine);
     mk('gear', 'Коробка', 'gearMode', 'G', '<b class="gear-n">1</b>');
     mk('fourWD', 'Передний мост', '4wd', 'Z', CTL_ICON.fourWD);
     mk('low', 'Понижающая', 'low', 'X', CTL_ICON.low);
@@ -445,8 +435,8 @@ export class UI {
       r.classList.toggle('ok', cls === 'ok');
     };
     const running = s.engine === 'running';
-    row('engine', running ? 'работает' : s.engine === 'off' ? 'заглушён' : 'заводится…', running ? 'ok' : s.engine === 'off' ? 'alert' : '');
-    c.engine.hidden = running;
+    const winding = s.engine === 'winding';
+    row('engine', running ? 'заглушить' : winding ? 'держите…' : s.engine === 'off' ? 'завести' : 'заводится…', running ? 'ok' : s.engine === 'off' ? 'alert' : '');
     c.gear.querySelector('.gear-n')!.textContent = s.gear;
     row('gear', s.auto ? 'автомат' : 'ручная · Q / E');
     c.gear.querySelector('.ctl-key .kbd')!.textContent = 'G';
@@ -468,9 +458,10 @@ export class UI {
     row('map', 'карта и маршрут');
     for (const [k, b] of Object.entries(this.touchBtns)) {
       if (k === 'more' || k === 'map' || k === 'horn') continue;
-      const on = k === '4wd' ? s.fourWD : k === 'low' ? s.low : k === 'handbrake' ? s.handbrake : k === 'lights' ? s.lights : k === 'wipers' ? s.wipers : false;
+      const on = k === '4wd' ? s.fourWD : k === 'low' ? s.low : k === 'handbrake' ? s.handbrake : k === 'lights' ? s.lights : k === 'wipers' ? s.wipers : k === 'ignition' ? running : false;
       b.classList.toggle('on', on);
       if (k === 'gear') b.textContent = s.engine === 'running' ? `${s.auto ? 'А' : 'Р'}·${s.gear}` : 'Ключ';
+      if (k === 'ignition') b.textContent = running ? 'Заглушить' : winding ? 'Держите…' : s.engine === 'off' ? 'Завести' : 'Заводится…';
       if (k === 'tape') b.classList.toggle('on', !!s.tape);
     }
   }
@@ -594,17 +585,57 @@ export class UI {
     if (this.choiceKeys) { window.removeEventListener('keydown', this.choiceKeys, true); this.choiceKeys = null; }
   }
 
+  /** A scene holds its subtitle until the next beat; a late voice result cannot advance it. */
+  sceneLine(speaker: string, line: string): Promise<number> | number {
+    this.clearSceneLine();
+    this.dialogueEl.innerHTML = '<span class="who"></span><p></p>';
+    this.dialogueEl.querySelector('.who')!.textContent = speaker;
+    this.dialogueEl.querySelector('p')!.textContent = line;
+    this.dialogueEl.classList.remove('out', 'has-face');
+    return this.onLine?.(speaker, line, 'say') ?? 0;
+  }
+
+  sceneChoices(options: string[], pick: (index: number) => void): void {
+    if (!this.choiceEl.isConnected) this.hud.appendChild(this.choiceEl);
+    this.choiceEl.innerHTML = '<div class="answers"></div>';
+    this.choiceEl.classList.add('scene-answers');
+    const answer = (index: number) => { if (this.paused) return; this.closeChoice(); pick(index); };
+    options.forEach((text, index) => {
+      const b = el('button', 'answer');
+      b.textContent = `${index + 1} · ${text}`;
+      b.addEventListener('click', event => { event.stopPropagation(); answer(index); });
+      this.choiceEl.firstElementChild!.appendChild(b);
+    });
+    this.choiceEl.classList.remove('out');
+    this.choiceKeys = event => {
+      const n = /^(?:Digit|Numpad)([1-9])$/.exec(event.code)?.[1];
+      if (n && +n <= options.length) { event.preventDefault(); event.stopPropagation(); answer(+n - 1); }
+    };
+    window.addEventListener('keydown', this.choiceKeys, true);
+  }
+
+  clearSceneLine(): void {
+    this.closeChoice();
+    this.choiceEl.classList.remove('scene-answers');
+    this.dlgTyping = null; this.dlgHide = 0;
+    this.dialogueEl.classList.add('out');
+  }
+
+  storyCinema(on: boolean): void {
+    this.cinema(on);
+    this.root.classList.toggle('story-cinema', on);
+    this.clearHint();
+  }
+
   /** The filling-station card: shown while the van stands in a pump bay, null hides it. */
   setFuel(v: { liters: number; talon: number; paid: number; talonsLeft: number; level: number; price: number; note: string; pumping: boolean } | null): void {
     if (!v) { this.fuelEl.classList.add('out'); return; }
     this.fuelEl.classList.remove('out');
     this.fuelEl.classList.toggle('pumping', v.pumping);
-    const own = Math.max(0, v.liters - v.talon);
-    this.fuelEl.innerHTML = `<div class="fuel-head"><b>АЗС</b><span>А-76 · ${rub(v.price)}/л</span></div>
+    this.fuelEl.innerHTML = `<div class="fuel-head"><b>АЗС</b><span>А-76 · ведомость почты</span></div>
       <div class="fuel-note">${v.note}</div>
       <div class="fuel-bar"><i style="width:${Math.round(v.level * 100)}%"></i></div>
-      <div class="fuel-row"><span>По талонам <b>${v.talon.toFixed(1)} л</b></span><span>осталось ${v.talonsLeft.toFixed(0)} л</span></div>
-      <div class="fuel-row"><span>За свои <b>${own.toFixed(1)} л</b></span><span><b>${rub(v.paid)}</b></span></div>`;
+      <div class="fuel-row"><span>Залито <b>${v.liters.toFixed(1)} л</b></span><span>по ведомости</span></div>`;
   }
 
   toast(text: string, seconds = 1.6): void {
@@ -657,17 +688,25 @@ export class UI {
 
   // ------------------------------------------------------------- overlays
   private buildOverlays(): void {
-    const sheet = el('div', 'map-sheet surface');
-    sheet.innerHTML = `<header><div><span class="eyebrow">Путевой лист · схема маршрута</span><h2>Ключевск — Заречье</h2></div><span class="kbd">M</span></header>`;
+    const sheet = el('div', 'map-sheet');
+    sheet.innerHTML = `
+      <header class="map-header">
+        <div>
+          <div class="map-meta">Путевой лист · Схема маршрута</div>
+          <h2 class="map-title">Ключевск — Заречье</h2>
+        </div>
+        <div class="map-close-hint">Закрыть <span class="map-kbd">M</span></div>
+      </header>`;
     this.mapCanvas.width = 640; this.mapCanvas.height = 400;
     sheet.appendChild(this.mapCanvas);
-    sheet.appendChild(el('div', 'foot', '<span>— асфальт &nbsp; ┅ грунт &nbsp; ≈ р. Серебрянка</span><span data-progress></span>'));
+    sheet.appendChild(el('div', 'map-foot', '<span>— асфальт &nbsp; ┄ грунт &nbsp; ≈ р. Серебрянка</span><span data-progress></span>'));
     this.mapEl.appendChild(sheet);
     this.mapEl.addEventListener('click', () => this.onAction?.('map'));
 
-    const menu = el('div', 'menu surface');
-    menu.innerHTML = '<span class="eyebrow">Остановка</span><h2>Пауза</h2>';
-    const btn = (label: string, fn: () => void) => { const b = el('button', 'btn-line', label); b.addEventListener('click', fn); menu.appendChild(b); return b; };
+    const menu = el('div', 'menu');
+    menu.innerHTML = '<div class="menu-header"><div class="menu-meta">Остановка</div><h2 class="menu-title">Пауза</h2></div><div class="menu-actions"></div>';
+    const menuActions = menu.querySelector('.menu-actions')!;
+    const btn = (label: string, fn: () => void) => { const b = el('button', 'btn-line', label); b.addEventListener('click', fn); menuActions.appendChild(b); return b; };
     btn('Продолжить рейс', () => this.onAction?.('pause'));
     btn('Вытащить на дорогу', () => { this.onAction?.('reset'); this.onAction?.('pause'); });
     this.restartBtn = btn('Начать рейс заново', () => this.onRestart?.());
@@ -678,7 +717,7 @@ export class UI {
     });
     this.tpBox = el('div', 'tp');
     this.tpBox.hidden = true;
-    menu.appendChild(this.tpBox);
+    menuActions.appendChild(this.tpBox);
     btn('Управление', () => this.toggleHelp(true));
     btn('Диспетчерская (статистика)', () => window.open('/stats.html', '_blank'));
 
@@ -775,6 +814,7 @@ export class UI {
 
   setPaused(p: boolean): void {
     this.paused = p;
+    this.root.classList.toggle('cinema-paused', p);
     this.pauseEl.classList.toggle('out', !p);
     if (!p && this.toTitleBtn) { this.toTitleBtn.classList.remove('warn'); this.toTitleBtn.textContent = 'В главное меню'; }
   }
@@ -800,28 +840,103 @@ export class UI {
     const c = document.createElement('canvas');
     c.width = W; c.height = H;
     const g = c.getContext('2d')!;
-    // drawn in the UI theme's colours (ui.css): light lines on the sheet's dark
     const th = uiTheme();
-    g.strokeStyle = th.line3; g.lineWidth = 1;
-    for (let x = 0; x < W; x += 20) { g.beginPath(); g.moveTo(x + 0.5, 0); g.lineTo(x + 0.5, H); g.stroke(); }
-    for (let y = 0; y < H; y += 20) { g.beginPath(); g.moveTo(0, y + 0.5); g.lineTo(W, y + 0.5); g.stroke(); }
-    // forest hatch
+
+    // Map background: deep, warm dark canvas matching unified theme
+    g.fillStyle = '#131417';
+    g.fillRect(0, 0, W, H);
+
+    // Subtle topographical chart border & compass direction
+    g.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+    g.lineWidth = 1;
+    g.strokeRect(10.5, 10.5, W - 21, H - 21);
+
+    g.fillStyle = th.fg4;
+    g.font = `600 11px ${th.label}`;
+    g.textAlign = 'right';
+    g.fillText('СЕВЕР →', W - 18, 26);
+
+    // Forest area: authentic woodland wash along the road with neat boundary & pine glyphs
     const m = ground.marks;
-    g.strokeStyle = th.forest; g.globalAlpha = 0.3;
-    for (const p of pts) if (p.s > m.forest && p.s < m.mud && Math.floor(p.s / 2) % 9 === 0) {
-      const [x, y] = P(p.x, p.z);
-      for (const o of [-22, -14, 14, 22]) { g.beginPath(); g.arc(x, y + o, 3, 0, Math.PI * 2); g.stroke(); }
+    const forestPts = pts.filter(p => p.s >= m.forest && p.s <= m.mud);
+    if (forestPts.length > 2) {
+      g.save();
+      const leftSide: [number, number][] = [];
+      const rightSide: [number, number][] = [];
+      const w = 24;
+      for (let i = 0; i < forestPts.length; i++) {
+        const [x, y] = P(forestPts[i].x, forestPts[i].z);
+        const pPrev = forestPts[Math.max(0, i - 1)];
+        const pNext = forestPts[Math.min(forestPts.length - 1, i + 1)];
+        const [xPrev, yPrev] = P(pPrev.x, pPrev.z);
+        const [xNext, yNext] = P(pNext.x, pNext.z);
+        let dx = xNext - xPrev;
+        let dy = yNext - yPrev;
+        const len = Math.hypot(dx, dy) || 1;
+        dx /= len;
+        dy /= len;
+        const nx = -dy;
+        const ny = dx;
+        leftSide.push([x + nx * w, y + ny * w]);
+        rightSide.push([x - nx * w, y - ny * w]);
+      }
+      g.fillStyle = 'rgba(140, 178, 120, 0.14)';
+      g.strokeStyle = 'rgba(140, 178, 120, 0.35)';
+      g.lineWidth = 1;
+      g.setLineDash([3, 4]);
+      g.beginPath();
+      leftSide.forEach(([x, y], idx) => { if (idx === 0) g.moveTo(x, y); else g.lineTo(x, y); });
+      for (let i = rightSide.length - 1; i >= 0; i--) {
+        g.lineTo(rightSide[i][0], rightSide[i][1]);
+      }
+      g.closePath();
+      g.fill();
+      g.stroke();
+      g.setLineDash([]);
+
+      // Subtle pine glyphs inside forest area
+      g.fillStyle = 'rgba(140, 178, 120, 0.55)';
+      for (let i = 4; i < forestPts.length - 4; i += 8) {
+        const [x, y] = P(forestPts[i].x, forestPts[i].z);
+        const pPrev = forestPts[Math.max(0, i - 1)];
+        const pNext = forestPts[Math.min(forestPts.length - 1, i + 1)];
+        const [xPrev, yPrev] = P(pPrev.x, pPrev.z);
+        const [xNext, yNext] = P(pNext.x, pNext.z);
+        let dx = xNext - xPrev;
+        let dy = yNext - yPrev;
+        const len = Math.hypot(dx, dy) || 1;
+        const nx = -dy / len;
+        const ny = dx / len;
+        for (const dist of [-14, 14]) {
+          const tx = x + nx * dist;
+          const ty = y + ny * dist;
+          g.beginPath();
+          g.moveTo(tx, ty - 3.5);
+          g.lineTo(tx - 2, ty + 2);
+          g.lineTo(tx + 2, ty + 2);
+          g.closePath();
+          g.fill();
+        }
+      }
+      g.restore();
     }
-    g.globalAlpha = 1;
-    // river
-    g.strokeStyle = th.water; g.lineWidth = 2.5;
+
+    // River
+    g.strokeStyle = th.water;
+    g.lineWidth = 3;
+    g.lineCap = 'round';
+    g.lineJoin = 'round';
     g.beginPath();
     ground.riverPts.forEach((r, i) => { const [x, y] = P(r.x, r.z); if (i) g.lineTo(x, y); else g.moveTo(x, y); });
     g.stroke();
-    // road by surface
+
+    // Roads by surface
     const style = (s: number) => {
       const z = ground.main.zoneAt(s).surface;
-      return z === 'asphalt' ? { c: th.fg, w: 2.5, d: [] as number[] } : z === 'wood' ? { c: th.fg2, w: 4, d: [] } : z === 'mud' ? { c: th.fg3, w: 2.5, d: [2, 3] } : { c: th.fg2, w: 1.8, d: [6, 4] };
+      return z === 'asphalt' ? { c: th.fg, w: 2.8, d: [] as number[] }
+           : z === 'wood' ? { c: th.fg2, w: 3.8, d: [] }
+           : z === 'mud' ? { c: th.fg3, w: 2.2, d: [3, 4] }
+           : { c: th.fg2, w: 2.0, d: [6, 4] };
     };
     for (let i = 1; i < pts.length; i++) {
       const st = style(pts[i].s);
@@ -830,25 +945,45 @@ export class UI {
       g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
     }
     g.setLineDash([]);
-    // the lake by the branch road, and the shikhan over the steppe
-    {
-      const L = ground.lake;
-      const [lx, ly] = P(L.x, L.z);
-      g.fillStyle = th.water; g.strokeStyle = th.water; g.lineWidth = 1.5;
-      g.beginPath(); g.arc(lx, ly, L.r * k, 0, Math.PI * 2); g.globalAlpha = 0.35; g.fill(); g.globalAlpha = 1; g.stroke();
-      const [hx, hy] = P(ground.shikhan.x, ground.shikhan.z);
-      g.strokeStyle = th.fg4; g.lineWidth = 1;
-      for (const rr of [1, 0.66, 0.33]) { g.beginPath(); g.arc(hx, hy, ground.shikhan.r * k * rr, 0, Math.PI * 2); g.stroke(); }
-    }
-    // the branch road straight on from the fork: asphalt, then gravel and the lakeside dirt
+
+    // Lake by the branch road
+    const L = ground.lake;
+    const [lx, ly] = P(L.x, L.z);
+    g.fillStyle = th.water;
+    g.strokeStyle = th.water;
+    g.lineWidth = 1.5;
+    g.beginPath();
+    g.arc(lx, ly, L.r * k, 0, Math.PI * 2);
+    g.globalAlpha = 0.28;
+    g.fill();
+    g.globalAlpha = 0.85;
+    g.stroke();
+    g.globalAlpha = 1;
+
+    // Shikhan: authentic elevation contour and peak glyph
+    const [hx, hy] = P(ground.shikhan.x, ground.shikhan.z);
+    const sr = ground.shikhan.r * k;
+    g.strokeStyle = 'rgba(243, 236, 216, 0.2)';
+    g.lineWidth = 1;
+    g.setLineDash([4, 4]);
+    g.beginPath(); g.ellipse(hx, hy, sr, sr * 0.82, 0.25, 0, Math.PI * 2); g.stroke();
+    g.beginPath(); g.ellipse(hx, hy, sr * 0.52, sr * 0.42, 0.25, 0, Math.PI * 2); g.stroke();
+    g.setLineDash([]);
+    g.fillStyle = th.fg3;
+    g.beginPath(); g.moveTo(hx, hy - 4); g.lineTo(hx - 3, hy + 3); g.lineTo(hx + 3, hy + 3); g.closePath(); g.fill();
+
+    // Branch road towards the lake
     for (let i = 1; i < ground.stub.samples.length; i++) {
       const a = ground.stub.samples[i - 1], b = ground.stub.samples[i];
       const surf = ground.stub.zoneAt(b.s).surface;
-      g.strokeStyle = surf === 'asphalt' ? th.fg : th.fg2; g.lineWidth = surf === 'asphalt' ? 2.5 : 1.8; g.setLineDash(surf === 'asphalt' ? [] : [6, 4]);
+      g.strokeStyle = surf === 'asphalt' ? th.fg : th.fg2;
+      g.lineWidth = surf === 'asphalt' ? 2.8 : 2.0;
+      g.setLineDash(surf === 'asphalt' ? [] : [6, 4]);
       const [x0, y0] = P(a.x, a.z), [x1, y1] = P(b.x, b.z);
       g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
     }
-    // back roads: thin dotted tracks
+
+    // Back roads & spurs: quiet dashed trails
     g.strokeStyle = th.fg3; g.lineWidth = 1.2; g.setLineDash([3, 4]);
     for (const road of [...ground.sideRoads, ...ground.branchSpurs, ground.homeRoad]) {
       g.beginPath();
@@ -856,8 +991,9 @@ export class UI {
       g.stroke();
     }
     g.setLineDash([]);
-    // labels
-    g.font = `600 15px ${th.label}`;
+
+    // Map labels
+    g.font = `700 15px ${th.label}`;
     g.fillStyle = th.fg;
     const label = (s: number, text: string, dy: number) => {
       const f = ground.main.frame(s);
@@ -868,37 +1004,42 @@ export class UI {
     label(40, 'Ключевск', -16);
     label(m.junction, 'развилка', 22);
     label(m.bridge, 'мост', -14);
-    g.font = `13px ${th.label}`; g.fillStyle = th.water;
+
+    g.font = `600 12px ${th.label}`; g.fillStyle = th.water;
     const r0 = ground.riverPts[Math.floor(ground.riverPts.length * 0.2)];
     if (r0) { const [x, y] = P(r0.x, r0.z); g.fillText('р. Серебрянка', x, y - 8); }
-    {
-      const L = ground.lake;
-      const [x, y] = P(L.x, L.z);
-      g.fillText('оз. Кайынкуль', x, y + L.r * k + 14);
-      g.fillStyle = th.fg3;
-      const [hx, hy] = P(ground.shikhan.x, ground.shikhan.z);
-      g.fillText('шихан', hx, hy - ground.shikhan.r * k - 4);
-      const q = ground.branchSpurs.find((r) => r.id === 'quarry');
-      if (q) { const e = q.samples[q.samples.length - 1]; const [qx, qy] = P(e.x, e.z); g.fillText('карьер', qx, qy + 14); }
-      // home: the village at the end of the forest road
-      const hr = ground.homeRoad.samples, he = hr[hr.length - 1];
-      const [ux, uy] = P(he.x, he.z);
-      g.fillStyle = th.fg2; g.font = `600 13px ${th.label}`;
-      g.fillText('Урманлы · дом', ux, uy + 16);
-    }
+
+    g.fillText('оз. Кайынкуль', lx, ly + L.r * k + 14);
+    g.fillStyle = th.fg3;
+    g.fillText('шихан', hx, hy - sr - 4);
+    const q = ground.branchSpurs.find((r) => r.id === 'quarry');
+    if (q) { const e = q.samples[q.samples.length - 1]; const [qx, qy] = P(e.x, e.z); g.fillText('карьер', qx, qy + 14); }
+    // Home village
+    const hr = ground.homeRoad.samples, he = hr[hr.length - 1];
+    const [ux, uy] = P(he.x, he.z);
+    g.fillStyle = th.fg2; g.font = `700 13px ${th.label}`;
+    g.fillText('Урманлы · дом', ux, uy + 16);
+
     this.mapBase = c;
     this.drawStops = (gg) => {
-      gg.font = `700 16px ${th.label}`;
+      gg.font = `700 15px ${th.label}`;
       for (const s of stops) {
         const [x, y] = P(s.pos.x, s.pos.z);
-        gg.fillStyle = s.done ? th.fg3 : th.fg;
-        gg.beginPath(); gg.arc(x, y, 6, 0, Math.PI * 2); gg.fill();
-        gg.textAlign = 'center';
-        gg.fillText(s.name, x, y - 13);
         if (s.done) {
-          gg.strokeStyle = th.fg3; gg.lineWidth = 1.5;
-          const w = gg.measureText(s.name).width / 2 + 4;
-          gg.beginPath(); gg.moveTo(x - w, y - 12); gg.lineTo(x + w, y - 22); gg.stroke();
+          gg.fillStyle = th.fg4;
+          gg.beginPath(); gg.arc(x, y, 4, 0, Math.PI * 2); gg.fill();
+          gg.textAlign = 'center';
+          gg.fillText(s.name, x, y - 11);
+          gg.strokeStyle = th.fg4; gg.lineWidth = 1.2;
+          const w = gg.measureText(s.name).width / 2 + 3;
+          gg.beginPath(); gg.moveTo(x - w, y - 15); gg.lineTo(x + w, y - 15); gg.stroke();
+        } else {
+          gg.fillStyle = th.fg;
+          gg.beginPath(); gg.arc(x, y, 5, 0, Math.PI * 2); gg.fill();
+          gg.strokeStyle = 'rgba(243, 236, 216, 0.35)'; gg.lineWidth = 1.5;
+          gg.beginPath(); gg.arc(x, y, 8, 0, Math.PI * 2); gg.stroke();
+          gg.textAlign = 'center';
+          gg.fillText(s.name, x, y - 13);
         }
       }
     };
@@ -907,10 +1048,14 @@ export class UI {
   private drawStops: ((g: CanvasRenderingContext2D) => void) | null = null;
   private P: ((x: number, z: number) => [number, number]) | null = null;
 
-  setMap(open: boolean, car?: { x: number; z: number; yaw: number }, progress?: string): void {
+  setMap(open: boolean, car?: { x: number; z: number; yaw: number }, progress?: string, routeTitle?: string): void {
     this.mapOpen = open;
     this.mapEl.classList.toggle('out', !open);
     if (!open || !this.mapBase || !this.P) return;
+    if (routeTitle) {
+      const titleEl = this.mapEl.querySelector('.map-title');
+      if (titleEl) titleEl.textContent = routeTitle.replace(/^[^:]+:\s*/, '');
+    }
     const g = this.mapCanvas.getContext('2d')!;
     g.clearRect(0, 0, this.mapCanvas.width, this.mapCanvas.height);
     g.drawImage(this.mapBase, 0, 0);
@@ -929,7 +1074,10 @@ export class UI {
     if (p && progress) p.textContent = progress;
   }
 
-  hideEnd(): void { this.endEl.classList.add('out'); }
+  hideEnd(): void {
+    this.endEl.classList.add('out');
+    this.hud.classList.remove('hidden');
+  }
 
   private cineEl = el('div', 'cine out');
   /**
@@ -953,43 +1101,122 @@ export class UI {
   /** Morning at the post office: pick up to CAPACITY of the day's orders, then go. */
   showBoard(info: DayInfo, p: Profile, extra: { newPlace: string | null; note?: string | null; onRepair: (kind: RepairKind) => void; onGo: (ids: string[]) => void }): void {
     if (!this.boardEl.isConnected) this.root.appendChild(this.boardEl);
+    this.hud.classList.add('hidden');
     const picked = new Set<string>();
-    const card = el('div', 'end board surface');
-    const due = (s: number) => `срочно · ${Math.round(s / 60)} мин`;
+    const card = el('div', 'end board');
+    const due = (s: number) => `срочно (${Math.round(s / 60)} мин)`;
     // the waybill: grouped by stop, in the order of the route
     const stops: string[] = [];
     for (const o of info.orders) if (!stops.includes(o.dest)) stops.push(o.dest);
-    const waybill = stops.map((d) => `<li><span class="wb-stop">${destName(d)} <i>${destWho(d)}</i></span><span class="wb-what">${info.orders.filter((o) => o.dest === d).map((o) => `${o.title}${o.fragile ? ' <em class="frag">стекло</em>' : ''}${o.due !== null ? ` <em class="urg">${due(o.due)}</em>` : ''}`).join(' · ')}</span></li>`).join('');
-    card.innerHTML = `<span class="eyebrow">Отделение связи Ключевск · день ${info.day}</span><h2>${info.date}</h2>
-      <p class="forecast">${info.forecast}${extra.newPlace ? `<br><span class="news">Новое на маршруте: «${extra.newPlace}» — поворот по указателю у дороги.</span>` : ''}${extra.note ? `<br><span class="news">${extra.note}</span>` : ''}</p>
-      <div class="wb"><div class="wb-head"><span class="eyebrow">Путевой лист</span><span class="wb-route">${info.route}</span></div><ol class="wb-list">${waybill}</ol></div>
-      <div class="req-head"><span class="eyebrow">Просьбы</span><span class="req-hint">неофициально, наличными · не больше ${CAPACITY}</span></div>
-      <div class="orders"></div>
-      <dl class="fields board-status"></dl>
-      <div class="title-actions"></div>`;
+    const waybill = stops.map((d, idx) => {
+      const destOrders = info.orders.filter((o) => o.dest === d);
+      const itemsHtml = destOrders.map((o) => {
+        const badges: string[] = [];
+        if (o.fragile) badges.push('<span class="tag-frag">стекло</span>');
+        if (o.due !== null) badges.push(`<span class="tag-urg">${due(o.due)}</span>`);
+        const cleanTitle = o.title.replace(/\s*—\s*стекло/i, '');
+        return `<span class="wb-cargo-item">${cleanTitle}${badges.length ? ' ' + badges.join(' ') : ''}</span>`;
+      }).join(' · ');
+      const who = destWho(d);
+      return `<li class="wb-row">
+        <span class="wb-num">${idx + 1}</span>
+        <div class="wb-info">
+          <div class="wb-dest-line">
+            <span class="wb-dest-name">${destName(d)}</span>
+            ${who ? `<span class="wb-dest-who">— ${who}</span>` : ''}
+          </div>
+          <div class="wb-cargo-line">${itemsHtml}</div>
+        </div>
+      </li>`;
+    }).join('');
+
+    card.innerHTML = `
+      <div class="board-header">
+        <div class="board-meta">Отделение связи Ключевск · День ${info.day}</div>
+        <h1 class="board-title">${info.date}</h1>
+        <p class="board-forecast">${info.forecast}${extra.newPlace ? `<br><span class="board-news">На маршруте: «${extra.newPlace}» — поворот по указателю.</span>` : ''}${extra.note ? `<br><span class="board-news">${extra.note}</span>` : ''}</p>
+      </div>
+
+      <div class="board-section">
+        <div class="board-sec-head">
+          <span class="board-sec-title">Путевой лист</span>
+          <span class="board-sec-sub">${info.route}</span>
+        </div>
+        <ol class="wb-stops">${waybill}</ol>
+      </div>
+
+      <div class="board-section">
+        <div class="board-sec-head">
+          <span class="board-sec-title">Попутные просьбы</span>
+          <span class="board-sec-sub">до ${CAPACITY} ${info.requests.length ? 'заказов' : ''}</span>
+        </div>
+        <div class="orders"></div>
+      </div>
+
+      <div class="board-footer">
+        <div class="board-car-warn" style="display:none"></div>
+        <div class="board-bottom-bar">
+          <div class="board-fuel-info"></div>
+          <div class="board-actions"></div>
+        </div>
+      </div>`;
+
     const list = card.querySelector('.orders')!;
-    const status = card.querySelector('.board-status')!;
-    const actions = card.querySelector('.title-actions')!;
-    const go = el('button', 'btn-primary', 'В рейс <span class="kbd">Enter</span>') as HTMLButtonElement;
+    const carWarn = card.querySelector('.board-car-warn') as HTMLElement;
+    const fuelInfo = card.querySelector('.board-fuel-info') as HTMLElement;
+    const actions = card.querySelector('.board-actions')!;
+    const go = el('button', 'board-btn-go', 'В рейс <span class="board-kbd">Enter</span>') as HTMLButtonElement;
     const buttons: HTMLButtonElement[] = [];
+
     const refresh = () => {
       buttons.forEach((b, i) => {
         const on = picked.has(info.requests[i].id);
         b.classList.toggle('picked', on);
         b.disabled = !on && picked.size >= CAPACITY;
       });
-      status.innerHTML = `<dt>Копилка</dt><dd>${piggy(p)}</dd><dt>Талоны</dt><dd>${p.talons.toFixed(0)} л на бензин</dd><dt>Бак</dt><dd>${Math.round(p.fuel * 100)} %${p.fuel < 0.45 ? ' · заправься по пути (АЗС за посёлком)' : ''}</dd><dt>Машина</dt><dd>${carLine(p)}</dd><dt>Премия</dt><dd>${pct(Math.max(0, p.pay.premium))} % за месяц</dd>`;
+
+      if (needsRepair(p)) {
+        carWarn.style.display = 'block';
+        carWarn.innerHTML = `⚠️ Машина требует ремонта: ${carLine(p)}`;
+      } else {
+        carWarn.style.display = 'none';
+        carWarn.innerHTML = '';
+      }
+
+      fuelInfo.innerHTML = `<span>Бак: <b>${Math.round(p.fuel * 100)} %</b></span><span class="sep">·</span><span>Талоны: <b>${p.talons.toFixed(0)} л</b></span>${p.fuel < 0.45 ? '<span class="fuel-alert">мало бензина, заправься по пути</span>' : ''}`;
+
       actions.innerHTML = '';
       for (const b of repairButtons(p, 'btn-line', (kind) => { extra.onRepair(kind); refresh(); })) actions.appendChild(b);
       actions.appendChild(go);
     };
-    if (!info.requests.length) list.innerHTML = '<p class="req-none">Сегодня никто ни о чём не просит.</p>';
+
+    if (!info.requests.length) {
+      list.innerHTML = '<p class="req-none">Сегодня никто ни о чём не просит.</p>';
+    }
+
     info.requests.forEach((o, i) => {
-      const b = el('button', 'order', `<span class="o-n">${i + 1}</span><span class="o-main"><span class="o-dest">${o.from} <i>→ ${destName(o.dest)}</i></span><span class="o-note">${o.note}</span>${o.fragile ? '<span class="o-what"><em class="frag">стекло</em></span>' : ''}</span><span class="o-pay">${o.pay ? rub(o.pay) : 'за спасибо'}</span>`) as HTMLButtonElement;
-      b.addEventListener('click', () => { if (picked.has(o.id)) picked.delete(o.id); else if (picked.size < CAPACITY) picked.add(o.id); refresh(); b.blur(); });
+      const b = el(
+        'button',
+        'order',
+        `<span class="order-n">${i + 1}</span>` +
+        `<div class="order-content">` +
+          `<div class="order-header">` +
+            `<span class="order-route">${o.from} <span class="order-arrow">→</span> ${destName(o.dest)}</span>` +
+            `<span class="order-pay">${o.letter ? 'старое письмо' : 'по пути'}</span>` +
+          `</div>` +
+          `<div class="order-desc">${o.note}${o.fragile ? ' <span class="tag-frag">стекло</span>' : ''}</div>` +
+        `</div>`
+      ) as HTMLButtonElement;
+      b.addEventListener('click', () => {
+        if (picked.has(o.id)) picked.delete(o.id);
+        else if (picked.size < CAPACITY) picked.add(o.id);
+        refresh();
+        b.blur();
+      });
       buttons.push(b);
       list.appendChild(b);
     });
+
     const start = () => { this.hideBoard(); extra.onGo([...picked]); };
     go.addEventListener('click', start);
     refresh();
@@ -1010,41 +1237,37 @@ export class UI {
 
   hideBoard(): void {
     this.boardEl.classList.add('out');
+    this.hud.classList.remove('hidden');
     if (this.boardKeys) { window.removeEventListener('keydown', this.boardKeys, true); this.boardKeys = null; }
   }
 
-  /** Evening: the day's journal, the bonus, the cash, paydays and the money box. */
-  showEvening(info: DayInfo, st: RunStats, rec: Reckoning, p: Profile, extra: { onRepair: (kind: RepairKind) => void; onNext: () => void; pay: { lines: [string, number, string?][]; notes: [string, string][] }; premium: number }): void {
-    const words: Record<number, string> = { 5: 'Отлично', 4: 'Хорошо', 3: 'Удовл.', 2: 'Неуд.' };
+  /** Evening: deliveries, small stories, salary notes and the van's condition. */
+  showEvening(info: DayInfo, st: RunStats, rec: Reckoning, p: Profile, extra: { onRepair: (kind: RepairKind) => void; onNext: () => void; onHome?: () => void; pay: { lines: [string, number, string?][]; notes: [string, string][] }; premium: number }): void {
+    this.hud.classList.add('hidden');
     const mm = Math.floor(st.time / 60), ss = Math.floor(st.time % 60).toString().padStart(2, '0');
     this.endEl.innerHTML = '';
     const card = el('div', 'end surface');
-    const money = (v: number) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${rub(Math.abs(v))}`;
-    const row = ([l, v, note]: [string, number, string?]) => `<dt>${l}${note ? `<small>${note}</small>` : ''}</dt><dd class="${v < 0 ? 'minus' : ''}">${money(v)}</dd>`;
     const journal = [...rec.journal, ...extra.pay.notes].map(([l, n]) => `<dt>${l}</dt><dd>${n}</dd>`).join('');
-    const cash = [...rec.lines, ...extra.pay.lines];
-    const total = cash.reduce((a, [, v]) => a + v, 0);
-    const dp = rec.premium;
-    const dt = rec.trustAfter - rec.trustBefore;
     card.innerHTML = `<span class="eyebrow">Вечер · день ${info.day} · ${info.date}</span><h2>Журнал</h2>
-      <span class="stamp thump grade g${st.grade}">${st.grade}<small>${words[st.grade]}</small></span>
       <p>Зинаида Павловна: ${rec.word}${st.remarks.length ? `<br><span class="remarks">Замечания: ${st.remarks.join(', ')}.</span>` : ''}</p>
-      <dl class="fields">${journal}<dt>Премия за месяц</dt><dd>${pct(extra.premium)} %${dp ? ` (${dp > 0 ? '+' : '−'}${pct(Math.abs(dp))})` : ''}</dd></dl>
-      ${cash.length ? `<dl class="fields payout">${cash.map(row).join('')}<dt>Итого за день</dt><dd><b>${money(total)}</b></dd></dl>` : ''}
-      <dl class="fields"><dt>Копилка</dt><dd>${piggy(p)}</dd>
-      <dt>Доверие</dt><dd>${rec.trustBefore} → <b>${rec.trustAfter}</b>${dt ? ` (${dt > 0 ? '+' : ''}${dt})` : ''}</dd>
-      <dt>В пути</dt><dd>${mm} мин ${ss} с · ${(st.distance / 1000).toFixed(1).replace('.', ',')} км</dd>
+      <dl class="fields">${journal}</dl>
+      <dl class="fields"><dt>В пути</dt><dd>${mm} мин ${ss} с · ${(st.distance / 1000).toFixed(1).replace('.', ',')} км</dd>
       <dt>ГАИ</dt><dd>${policeLine(st)}</dd>
-      <dt>Машина</dt><dd class="car-line">${carLine(p)} · бак ${Math.round(p.fuel * 100)} % · талоны ${p.talons.toFixed(0)} л</dd></dl>`;
+      <dt>Машина</dt><dd class="car-line">${carLine(p)} · бак ${Math.round(p.fuel * 100)} %</dd></dl>`;
     const actions = el('div', 'title-actions');
     const fixes = repairButtons(p, 'btn-ghost', (kind) => {
       extra.onRepair(kind);
       for (const b of fixes) { b.disabled = true; }
       fixes[kind === 'grandpa' ? 0 : 1].textContent = 'Починили';
       const line = card.querySelector('.car-line');
-      if (line) line.innerHTML = `${carLine(p)} · бак ${Math.round(p.fuel * 100)} % · талоны ${p.talons.toFixed(0)} л`;
+      if (line) line.innerHTML = `${carLine(p)} · бак ${Math.round(p.fuel * 100)} %`;
     });
     for (const b of fixes) actions.appendChild(b);
+    if (extra.onHome) {
+      const home = el('button', 'btn-ghost', 'Доехать домой');
+      home.addEventListener('click', () => { this.hideEnd(); extra.onHome?.(); });
+      actions.appendChild(home);
+    }
     const next = el('button', 'btn-primary', 'Следующий день');
     next.addEventListener('click', () => { this.hideEnd(); extra.onNext(); });
     actions.appendChild(next);
@@ -1064,6 +1287,7 @@ export class UI {
    * the answers. Enter takes the first answer, 1…3 any; `skip` adds a quiet way past it all.
    */
   storyPage(eyebrow: string, text: string, opts: { title?: string; speaker?: string; options?: string[]; pick?: (i: number) => void; skip?: () => void; image?: StoryImage; step?: [number, number] } = {}): void {
+    this.hud.classList.add('hidden');
     const s = this.storyEl;
     if (!s.isConnected) this.root.appendChild(s);
     const options = opts.options ?? ['Дальше'];
@@ -1115,6 +1339,9 @@ export class UI {
   hideStory(): void {
     this.storyEl.classList.add('out');
     if (this.storyKeys) { window.removeEventListener('keydown', this.storyKeys, true); this.storyKeys = null; }
+    if (this.titleEl.classList.contains('out')) {
+      this.hud.classList.remove('hidden');
+    }
   }
 
   /** A fade to black with a card; `skip`: a tap, Enter or Space ends it early (the week between days). */
@@ -1176,10 +1403,12 @@ export class UI {
     more.classList.add('more');
     more.setAttribute('aria-label', 'Ещё органы управления');
     more.addEventListener('pointerdown', (e) => { e.preventDefault(); drawer.classList.toggle('open'); more.classList.toggle('on', drawer.classList.contains('open')); });
+    tb('ignition', 'Завести', 'start', drawer);
     tb('4wd', 'Мост 4×4', '4wd', drawer);
     tb('low', 'Понижайка', 'low', drawer);
     tb('lights', 'Фары', 'lights', drawer);
     tb('wipers', 'Дворники', 'wipers', drawer);
+    tb('window', 'Стекло', 'window', drawer);
     tb('map', 'Карта', 'map', drawer);
     tb('tape', 'Радио', 'tape', drawer);
     tb('volDown', 'Тише', 'volDown', drawer);
@@ -1256,20 +1485,20 @@ export class UI {
   }
 }
 
-/** The van's state in a line: how whole it is, which way it pulls, whether the radiator leaks, and what the parts cost. */
+/** The van's state in a line: how whole it is, which way it pulls, whether the radiator leaks, and whether it needs repair. */
 function carLine(p: Profile): string {
   const bits = [`${Math.round((1 - p.damage) * 100)} %`];
   if ((p.wear?.steer ?? 0) > 0.12) bits.push(`тянет ${p.wear!.pull < 0 ? 'влево' : 'вправо'}`);
   if ((p.wear?.rad ?? 0) > 0.1) bits.push('течёт радиатор');
-  if (needsRepair(p)) bits.push(`запчасти ${rub(repairCost(p))}`);
+  if (needsRepair(p)) bits.push('нужен ремонт');
   return bits.join(' · ');
 }
 
 /** The two ways to get the van mended: alone in the grandfather's garage, parts only, or at Kolka's workshop, parts and labour. */
 function repairButtons(p: Profile, cls: string, pick: (kind: RepairKind) => void): HTMLButtonElement[] {
-  if (!needsRepair(p) || p.money <= 0) return [];
+  if (!needsRepair(p)) return [];
   const mk = (kind: RepairKind, label: string) => {
-    const b = el('button', cls, `${label} · ${rub(Math.min(repairCost(p, kind), p.money))}`) as HTMLButtonElement;
+    const b = el('button', cls, label) as HTMLButtonElement;
     b.addEventListener('click', () => pick(kind));
     return b;
   };

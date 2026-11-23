@@ -146,6 +146,8 @@ export class Atmosphere {
   }
 
   /** Cycle fixed times of day (sandbox); null = follow the route. */
+  setClock(hour: number | null): void { this.clockHour = hour; }
+
   cycleClock(): string {
     const hours = [6, 12, 18.5, 23.5];
     const names = ['Рассвет', 'День', 'Закат', 'Ночь'];

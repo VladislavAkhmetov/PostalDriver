@@ -1,0 +1,206 @@
+[
+  {
+    "groupId": "suspension",
+    "groupTitle": "Вариант 1: Подвеска и амортизаторы (Car Suspension & Leaf Springs)",
+    "sourceName": "Car_Suspension_Creak (Freesound #86234)",
+    "sourceFile": "temp_creak_candidates/86234.mp3",
+    "description": "Однородная запись покачивания реальной подвески автомобиля. Скрип сайлентблоков, рессор и амортизаторов на кочках.",
+    "slices": [
+      {
+        "file": "sound-samples/creaks/suspension_01_soft_bounce.wav",
+        "name": "suspension_01_soft_bounce.wav",
+        "title": "Мягкий отбой (Soft bounce)",
+        "duration": 0.6,
+        "size": 52964
+      },
+      {
+        "file": "sound-samples/creaks/suspension_02_short_creak.wav",
+        "name": "suspension_02_short_creak.wav",
+        "title": "Короткий скрип рессоры (Short creak)",
+        "duration": 0.24,
+        "size": 21212
+      },
+      {
+        "file": "sound-samples/creaks/suspension_03_elastic_rub.wav",
+        "name": "suspension_03_elastic_rub.wav",
+        "title": "Упругое трение (Elastic rub)",
+        "duration": 0.3,
+        "size": 26502
+      },
+      {
+        "file": "sound-samples/creaks/suspension_04_pothole_creak.wav",
+        "name": "suspension_04_pothole_creak.wav",
+        "title": "Сжатие на неровности (Pothole flex)",
+        "duration": 0.55,
+        "size": 48554
+      },
+      {
+        "file": "sound-samples/creaks/suspension_05_weight_shift.wav",
+        "name": "suspension_05_weight_shift.wav",
+        "title": "Крен кузова / сдвиг веса (Body roll)",
+        "duration": 0.57,
+        "size": 50320
+      },
+      {
+        "file": "sound-samples/creaks/suspension_06_quick_squeak.wav",
+        "name": "suspension_06_quick_squeak.wav",
+        "title": "Быстрый щелчок-скрип (Quick squeak)",
+        "duration": 0.28,
+        "size": 24740
+      },
+      {
+        "file": "sound-samples/creaks/suspension_07_heavy_creak.wav",
+        "name": "suspension_07_heavy_creak.wav",
+        "title": "Глубокий скрип на яме (Heavy heave)",
+        "duration": 0.75,
+        "size": 66194
+      }
+    ]
+  },
+  {
+    "groupId": "pobeda_cabin",
+    "groupTitle": "Вариант 2: Советское ретро — кузов и рычаги ГАЗ-М20 «Победа»",
+    "sourceName": "Handbrake & Cabin Creaks Pobeda 1957 (Freesound #316886)",
+    "sourceFile": "temp_creak_candidates/316886.mp3",
+    "description": "Аутентичная студийная запись финского радиоархива (YleArkisto) салона и механических узлов советского автомобиля 1957 года. Настоящий тяжелый металл и винтажный характер.",
+    "slices": [
+      {
+        "file": "sound-samples/creaks/pobeda_01_metal_strain.wav",
+        "name": "pobeda_01_metal_strain.wav",
+        "title": "Металлическое натяжение кузова",
+        "duration": 0.75,
+        "size": 66194
+      },
+      {
+        "file": "sound-samples/creaks/pobeda_02_joint_creak.wav",
+        "name": "pobeda_02_joint_creak.wav",
+        "title": "Сухой скрип сочленения рамы",
+        "duration": 0.8,
+        "size": 70604
+      },
+      {
+        "file": "sound-samples/creaks/pobeda_03_body_twist.wav",
+        "name": "pobeda_03_body_twist.wav",
+        "title": "Скрип кузова на диагональном вывешивании",
+        "duration": 0.95,
+        "size": 83834
+      },
+      {
+        "file": "sound-samples/creaks/pobeda_04_short_friction.wav",
+        "name": "pobeda_04_short_friction.wav",
+        "title": "Короткое сухое трение металла",
+        "duration": 0.38,
+        "size": 33560
+      },
+      {
+        "file": "sound-samples/creaks/pobeda_05_heavy_flex.wav",
+        "name": "pobeda_05_heavy_flex.wav",
+        "title": "Глубокий скрип кабины",
+        "duration": 0.7,
+        "size": 61784
+      }
+    ]
+  },
+  {
+    "groupId": "seat_springs",
+    "groupTitle": "Вариант 3: Пружины старого автомобильного сиденья",
+    "sourceName": "Classic Car Seat (Freesound #630548)",
+    "sourceFile": "temp_creak_candidates/630548.mp3",
+    "description": "Запись скрипа пружин водительского кресла старого автомобиля при покачивании водителя на кочках и гравии.",
+    "slices": [
+      {
+        "file": "sound-samples/creaks/seat_01_chirp.wav",
+        "name": "seat_01_chirp.wav",
+        "title": "Короткий скрип пружины под весом",
+        "duration": 0.25,
+        "size": 22094
+      },
+      {
+        "file": "sound-samples/creaks/seat_02_weight_shift.wav",
+        "name": "seat_02_weight_shift.wav",
+        "title": "Смещение водителя на повороте",
+        "duration": 0.35,
+        "size": 30912
+      },
+      {
+        "file": "sound-samples/creaks/seat_03_rebound.wav",
+        "name": "seat_03_rebound.wav",
+        "title": "Отбой пружин на кочке",
+        "duration": 0.5,
+        "size": 44144
+      },
+      {
+        "file": "sound-samples/creaks/seat_04_compression.wav",
+        "name": "seat_04_compression.wav",
+        "title": "Сжатие каркаса сиденья",
+        "duration": 0.35,
+        "size": 30914
+      },
+      {
+        "file": "sound-samples/creaks/seat_05_double_creak.wav",
+        "name": "seat_05_double_creak.wav",
+        "title": "Двойной скрип пружинного блока",
+        "duration": 0.5,
+        "size": 44144
+      },
+      {
+        "file": "sound-samples/creaks/seat_06_roll_groan.wav",
+        "name": "seat_06_roll_groan.wav",
+        "title": "Продолжительный скрип сиденья",
+        "duration": 0.55,
+        "size": 48554
+      },
+      {
+        "file": "sound-samples/creaks/seat_07_pothole_jolt.wav",
+        "name": "seat_07_pothole_jolt.wav",
+        "title": "Толчок на яме (быстрое сжатие)",
+        "duration": 0.55,
+        "size": 48554
+      }
+    ]
+  },
+  {
+    "groupId": "metal_chassis",
+    "groupTitle": "Вариант 4: Сухой скрип металла и рамы грузовика",
+    "sourceName": "Old Truck Metal Squeaks & Hinges (Freesound #508281 & #751719)",
+    "sourceFile": "temp_creak_candidates/380703.mp3",
+    "description": "Плотный скрежещущий скрип металлических элементов, трение листов рессор и пружинных блоков под высокой нагрузкой.",
+    "slices": [
+      {
+        "file": "sound-samples/creaks/metal_01_slow_creak.wav",
+        "name": "metal_01_slow_creak.wav",
+        "title": "Медленный протяжный скрежет",
+        "duration": 1.05,
+        "size": 92654
+      },
+      {
+        "file": "sound-samples/creaks/metal_02_sharp_slip.wav",
+        "name": "metal_02_sharp_slip.wav",
+        "title": "Резкий срыв металла (Stick-slip)",
+        "duration": 0.23,
+        "size": 20330
+      },
+      {
+        "file": "sound-samples/creaks/metal_03_heavy_cycle.wav",
+        "name": "metal_03_heavy_cycle.wav",
+        "title": "Тяжелый скрип рессорного листа",
+        "duration": 0.5,
+        "size": 44144
+      },
+      {
+        "file": "sound-samples/creaks/metal_04_friction_rub.wav",
+        "name": "metal_04_friction_rub.wav",
+        "title": "Трение металла о резину/дерево",
+        "duration": 0.5,
+        "size": 44144
+      },
+      {
+        "file": "sound-samples/creaks/metal_05_quick_snap.wav",
+        "name": "metal_05_quick_snap.wav",
+        "title": "Короткий скрежет-щелчок",
+        "duration": 0.35,
+        "size": 30914
+      }
+    ]
+  }
+]

@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ключевский · Почтовое отделение</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Marck+Script&family=Oswald:wght@400;500;700&family=PT+Mono&family=PT+Sans:wght@400;700&family=PT+Sans+Narrow:wght@400;700&family=PT+Serif:ital,wght@0,400;0,700;1,400&display=swap&subset=cyrillic" rel="stylesheet" />
+  <style>
+    *{box-sizing:border-box}body{margin:0;overflow:hidden;background:#292d27;color:#eee9d9;font:14px system-ui,sans-serif}
+    #app{position:fixed;inset:0}header{position:absolute;top:24px;left:28px;pointer-events:none;text-shadow:0 1px 5px #000}
+    .eyebrow{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:#e5d5aa}h1{font-size:23px;font-weight:500;margin:6px 0}header p{margin:0;color:#dedbcf;font-size:12px}
+    nav{position:absolute;bottom:24px;left:50%;transform:translateX(-50%);display:flex;gap:6px;padding:9px;background:#232820ed;border:1px solid #79796b;border-radius:5px;max-width:96vw;flex-wrap:wrap;justify-content:center;width:max-content}
+    button{font:inherit;font-size:12px;color:#e2dfd1;background:#3b4036;border:1px solid #686c5e;border-radius:3px;padding:9px 12px;cursor:pointer}button:hover{background:#555e49}button[aria-pressed=true]{background:#cfcca8;color:#282b24;border-color:#cfcca8}button:focus-visible{outline:2px solid #fff;outline-offset:2px}
+    #status{position:absolute;right:26px;top:26px;max-width:280px;text-align:right;font-size:12px;color:#e5dfcf;text-shadow:0 1px 4px #000}#help{position:absolute;bottom:94px;left:28px;font-size:12px;text-shadow:0 1px 5px #000;color:#ddd9c7}
+    @media(max-width:700px){header{top:15px;left:15px}h1{font-size:18px}#status{top:100px;left:15px;text-align:left}#help{display:none}nav{bottom:12px}button{padding:8px}}
+    #scene-panel{display:none;position:absolute;top:64px;left:50%;transform:translateX(-50%);width:min(780px,96vw);padding:8px;background:#20261fee;border:1px solid #777a68;gap:8px;flex-wrap:wrap;justify-content:center;z-index:40}
+    #scene-panel select{max-width:100%;background:#333d30;color:#eee9d9;border:1px solid #777a68;padding:8px;font:inherit;font-size:12px}
+    body.staging header,body.staging nav,body.staging #help{display:none}body.staging #scene-panel{display:flex}
+    body.staging #status{left:20px;right:auto;top:20px;text-align:left;max-width:90vw;background:#192018b8;padding:8px 12px}
+  </style>
+</head>
+<body>
+  <main id="app" aria-label="Трёхмерный интерьер почтового отделения"></main>
+  <header><div class="eyebrow">PostalDriver / Обустройство · этап 02</div><h1>Ключевский · Почтовое отделение</h1><p>Май–июнь 1998 · 5,4 × 4,6 м · высота 2,85 м</p></header>
+  <div id="status" role="status">Загрузка игровой локации…</div>
+  <div id="help">Мышь — осмотр · Колесо — приближение · Ракурсы — внизу</div>
+  <nav aria-label="Предпросмотр интерьера">
+    <button data-shot="wide">Общий план</button><button data-shot="entrance">От входа</button>
+    <button data-shot="zinaida">Место Зинаиды</button><button data-shot="hero">Обратный план</button>
+    <button data-shot="window">Вид из окна</button><button id="furniture" aria-pressed="true">Обстановка</button>
+    <button data-shot="desk">На столе</button><button data-shot="print">Печатная продукция</button>
+    <button id="retro" aria-pressed="true">PS2</button>
+    <button id="hiring">Сцена: приём на работу</button>
+  </nav>
+  <section id="scene-panel" aria-label="Просмотр катсцены">
+    <select id="scene-beat" aria-label="Кадр катсцены"></select>
+    <button id="scene-play">С начала</button><button id="scene-pause">Пауза</button>
+    <button id="scene-exit">Осмотр помещения</button>
+  </section>
+  <script type="module" src="/src/previews/PostOfficePreview.ts"></script>
+</body>
+</html>

@@ -1,0 +1,41 @@
+{
+  "source": "User-provided references in this chat",
+  "preserved_on": "2026-11-09",
+  "files": [
+    {
+      "file": "game-before/01-driver-forward.png",
+      "original_attachment": "codex-clipboard-b4844e9f-9b65-4662-b1c1-cd064d9ec58b.png",
+      "sha256": "460252C52AB8A16CF253FDC55A5DE343E9799B8283F848E50282CF4B0EB88452"
+    },
+    {
+      "file": "game-before/02-side-window.png",
+      "original_attachment": "codex-clipboard-6f47c3e8-67a5-4814-90dd-a2c510ba2d14.png",
+      "sha256": "4E17D8E3722505F61A1A41895C737BEEE85826800B5D0BBE81FB48CA3389C723"
+    },
+    {
+      "file": "game-before/03-dashboard-and-wheel.png",
+      "original_attachment": "codex-clipboard-4baf7ae5-d337-461b-9cde-72c8f3520e2d.png",
+      "sha256": "3FA590945B0DFBEEBDEDCEE1AF0653BD1F27D8A4DCBB3E148FD1F579C9BF3670"
+    },
+    {
+      "file": "photos/01-dashboard-oblique-initial.png",
+      "original_attachment": "codex-clipboard-a014a0bf-8f54-40b3-be2a-6e9285a828e6.png",
+      "sha256": "B5743AD1013903073BEFD20299F526E1C9DFCBA29816B772D2BA4A4123196978"
+    },
+    {
+      "file": "photos/02-cabin-wide-padded.png",
+      "original_attachment": "codex-clipboard-66a411c7-81f3-4902-b013-a6dac5896ccc.png",
+      "sha256": "422F2252EE4CDC22A4CF64F938CB156892B5C4DC0F47C553C863540CEE3D4A84"
+    },
+    {
+      "file": "photos/03-cabin-wide-metal.png",
+      "original_attachment": "codex-clipboard-7100ab86-1606-4d36-a1d5-1160b72df828.png",
+      "sha256": "FD125550B47B2D86EB6B77336D71D6D2A1D12C2E4C26E2C9229EC13A1FFA0BCB"
+    },
+    {
+      "file": "photos/04-dashboard-oblique.png",
+      "original_attachment": "codex-clipboard-d9415ec5-70cd-4b9a-aff5-feea8ba8c78b.png",
+      "sha256": "6962DAFA0CE5837DD753BE4FB5DCC03B97E67D404709915B0DC2F9560A04E339"
+    }
+  ]
+}

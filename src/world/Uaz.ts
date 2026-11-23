@@ -1,35 +1,49 @@
 import * as THREE from 'three';
-import { drawPlate } from './Plates';
+import { plateFor, plateMaterial, plateSize, POST_PLATE } from './Plates';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { decal, decalMat, font, tex } from './Cars';
 import { headlights } from './Headlights';
 import type { VehicleModel } from './Vehicles';
 import uazUrl from '../assets/uaz/uaz-452.glb?url';
+import wheelUrl from '../assets/uaz/urman-wheel.glb?url';
 import postUrl from '../assets/uaz/UazPost.png?url';
+import postAlphaUrl from '../assets/uaz/UazPostAlpha.png?url';
 import gasUrl from '../assets/uaz/UazGas.png?url';
 import greyUrl from '../assets/uaz/UazTex.png?url';
 import paletteUrl from '../assets/uaz/palette.png?url';
-import wheelUrl from '../assets/uaz/Wheel.png?url';
 
 /**
- * The UAZ-452 "буханка" on Mehozavr's CC0 low-poly model (src/assets/uaz/CREDITS.md):
+ * The Urman-452 ("Урман-452") postal all-terrain van on Mehozavr's CC0 low-poly model (src/assets/uaz/CREDITS.md):
  * hand-painted textures in three liveries — the 1990s post van (repainted:
- * off-white over post blue, with ПОЧТА lettering, the district communications
- * office and the post-horn emblem as decals, so the mirrored side UVs don't
- * mirror the words), the emergency gas service in orange, and plain grey.
+ * off-white over post blue, with ПОЧТА lettering, and the post-horn emblem as decals,
+ * so the mirrored side UVs don't mirror the words), the emergency gas service in orange, and plain grey.
  * Local forward is +Z, left +X, wheels on y = 0, metres (as the other cars).
  */
-export type UazLivery = 'post' | 'gas' | 'grey';
+export type UrmanLivery = 'post' | 'gas' | 'grey';
+export type UazLivery = UrmanLivery;
 
 let tpl: THREE.Object3D | null = null;
+let wheelTpl: THREE.Object3D | null = null;
 let loading: Promise<void> | null = null;
 const maps: Record<string, THREE.Texture> = {};
 
-export function loadUaz(): Promise<void> {
+export function loadUrman(): Promise<void> {
   return (loading ??= (async () => {
-    tpl = (await new GLTFLoader().loadAsync(uazUrl)).scene;
+    const loader = new GLTFLoader();
+    const [classicGltf, wheelGltf] = await Promise.all([
+      loader.loadAsync(uazUrl),
+      loader.loadAsync(wheelUrl),
+    ]);
+    tpl = classicGltf.scene;
+    wheelTpl = wheelGltf.scene;
     const tl = new THREE.TextureLoader();
-    await Promise.all(Object.entries({ post: postUrl, gas: gasUrl, grey: greyUrl, palette: paletteUrl, wheel: wheelUrl }).map(async ([k, url]) => {
+    await Promise.all(Object.entries({
+      post: postUrl,
+      postAlpha: postAlphaUrl,
+      gas: gasUrl,
+      grey: greyUrl,
+      palette: paletteUrl
+    }).map(async ([k, url]) => {
       const t = await tl.loadAsync(url);
       // the model keeps the FBX's uv convention
       t.flipY = true;
@@ -39,8 +53,9 @@ export function loadUaz(): Promise<void> {
     }));
   })());
 }
+export const loadUaz = loadUrman;
 
-const MATS = new Map<string, THREE.MeshLambertMaterial>();
+const MATS = new Map<string, THREE.Material>();
 const mat = (key: string, map: THREE.Texture | null, color = '#ffffff') => {
   let m = MATS.get(key);
   if (!m) { m = new THREE.MeshLambertMaterial({ map, color }); MATS.set(key, m); }
@@ -49,8 +64,7 @@ const mat = (key: string, map: THREE.Texture | null, color = '#ffffff') => {
 
 // ---------------- post livery decals ----------------
 
-let letters: THREE.Material | null = null, office: THREE.Material | null = null, emblem: THREE.Material | null = null, rearLetters: THREE.Material | null = null;
-let plate: THREE.Texture | null = null;
+let letters: THREE.Material | null = null, emblem: THREE.Material | null = null, rearLetters: THREE.Material | null = null;
 
 /** White condensed capitals, a touch worn. */
 const wordTex = (word: string, w: number, h: number, px: number, spacing: number) => tex(w, h, (g) => {
@@ -83,18 +97,13 @@ const emblemTex = () => tex(64, 64, (g) => {
   g.beginPath(); g.moveTo(31, 44); g.lineTo(29, 50); g.lineTo(33, 50); g.closePath(); g.fill();
 });
 
-/** The post van's own plate: «М 417 ВН 02», the 1993 kind, Bashkortostan. */
-const plateTex = () => tex(128, 28, (g) => drawPlate(g, { kind: 'new', main: 'М 417 ВН', region: '02' }, 128, 28));
-
 function postDecals(group: THREE.Group, body: THREE.Mesh[]): void {
   letters ??= decalMat(wordTex('ПОЧТА', 256, 48, 46, 3));
-  office ??= decalMat(wordTex('КЛЮЧЕВСКИЙ РАЙОННЫЙ УЗЕЛ ПОЧТОВОЙ СВЯЗИ', 512, 24, 18, 0));
   rearLetters ??= letters;
   emblem ??= decalMat(emblemTex());
   for (const s of [1, -1] as const) {
-    // the big word on the blue below the side windows, the office name under it
+    // Only the word ПОЧТА on the blue below the side windows (subtitle removed per user request)
     decal(group, body, letters, 1.75, 0.33, 0.86, -0.55, 'x', s, 5);
-    decal(group, body, office, 1.75, 0.075, 0.6, -0.55, 'x', s, 5);
     // the emblem on the cab doors
     decal(group, body, emblem, 0.36, 0.36, 0.92, 1.36, 'x', s, 1);
   }
@@ -102,45 +111,266 @@ function postDecals(group: THREE.Group, body: THREE.Mesh[]): void {
   decal(group, body, rearLetters, 0.95, 0.18, 0.86, 0, 'z', -1, 2);
 }
 
-// ---------------- build ----------------
+// ---------------- build interior ----------------
 
-export function buildUaz(livery: UazLivery): VehicleModel {
-  if (!tpl) throw new Error('loadUaz() must finish before building the UAZ');
+/**
+ * Authentic 1990s rural post UAZ-452 cabin & cargo interior.
+ * Attached to root at body offset (0, 1.3788836, 0) before root.rotation.y = Math.PI.
+ * Local space: driver side is -X, passenger +X, front is -Z.
+ */
+function buildClassicInterior(): THREE.Group {
+  const intGroup = new THREE.Group();
+  intGroup.name = 'ClassicInterior';
+  intGroup.position.set(0, 1.3788836, 0);
+
+  // Natural daylight fill lights inside cabin & cargo bay
+  const cabLight = new THREE.PointLight('#eef6ff', 2.2, 4.0);
+  cabLight.position.set(0, 0.12, -1.50);
+  intGroup.add(cabLight);
+
+  const cargoLight = new THREE.PointLight('#eef4fa', 1.4, 3.5);
+  cargoLight.position.set(0, 0.10, 0.80);
+  intGroup.add(cargoLight);
+
+  // Authentic 90s grandfather rural post UAZ materials:
+  const matFloor = new THREE.MeshLambertMaterial({ color: '#2a2b2e' });
+  const matCeil = new THREE.MeshLambertMaterial({ color: '#bcb9af' });    // light Soviet fabric headliner
+  const matBulkhead = new THREE.MeshLambertMaterial({ color: '#4a5660' });
+  const matDash = new THREE.MeshLambertMaterial({ color: '#444e56' });
+  const matCluster = new THREE.MeshLambertMaterial({ color: '#1a1b1d' });
+  const matDial = new THREE.MeshLambertMaterial({ color: '#ffffff', emissive: '#eae6dd', emissiveIntensity: 0.35 });
+  const matEngine = new THREE.MeshLambertMaterial({ color: '#544234' });   // quilted padded cover
+  const matSeat = new THREE.MeshLambertMaterial({ color: '#94603a', emissive: '#28170c', emissiveIntensity: 0.15 }); // grandfather cognac/saddle vinyl
+  const matWheel = new THREE.MeshLambertMaterial({ color: '#222222' });   // thin bakelite rim
+  const matEmblem = new THREE.MeshLambertMaterial({ color: '#d4b260' });  // steering hub brass horn button
+  const matLever = new THREE.MeshLambertMaterial({ color: '#2a2a2a' });
+  const matMirror = new THREE.MeshLambertMaterial({ color: '#828e9a' });
+  const matSack = new THREE.MeshLambertMaterial({ color: '#c2b294' });    // burlap postal sacks
+  const matBox = new THREE.MeshLambertMaterial({ color: '#9e734c' });     // wooden crate
+
+  // 1. Floor
+  const floor = new THREE.Mesh(new THREE.BoxGeometry(1.76, 0.04, 3.85), matFloor);
+  floor.position.set(0, -0.72, -0.20);
+  intGroup.add(floor);
+
+  // 2. Keep the headliner below the rounded roof edges.
+  const ceil = new THREE.Mesh(new THREE.BoxGeometry(1.30, 0.04, 3.20), matCeil);
+  ceil.position.set(0, 0.46, -0.08);
+  intGroup.add(ceil);
+
+  // 3. Cabin partition bulkhead behind front seats (Z = -1.05)
+  const wall = new THREE.Mesh(new THREE.BoxGeometry(1.74, 0.76, 0.04), matBulkhead);
+  wall.position.set(0, -0.34, -1.05);
+  intGroup.add(wall);
+
+  // 4. Engine doghouse hump between front seats (iconic Bukhanka layout)
+  const eng = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.38, 0.76), matEngine);
+  eng.position.set(0, -0.48, -1.58);
+  intGroup.add(eng);
+
+  // 5. Dashboard under front windshield (Z = -1.92)
+  const dash = new THREE.Mesh(new THREE.BoxGeometry(1.68, 0.18, 0.22), matDash);
+  dash.position.set(0, -0.16, -1.92);
+  intGroup.add(dash);
+
+  // Speedometer gauge binnacle in front of driver (X = -0.45)
+  const cluster = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.12, 0.10), matCluster);
+  cluster.position.set(-0.45, -0.04, -1.86);
+  intGroup.add(cluster);
+
+  const dial = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.015, 16), matDial);
+  dial.rotation.x = Math.PI / 2;
+  dial.position.set(-0.45, -0.03, -1.80);
+  intGroup.add(dial);
+
+  // 6. Driver & Passenger Seats (Driver X = -0.45, Passenger X = +0.45, aligned with front doors)
+  for (const sx of [-0.45, 0.45]) {
+    // Cushion
+    const cush = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.16, 0.44), matSeat);
+    cush.position.set(sx, -0.44, -1.52);
+    intGroup.add(cush);
+
+    // Backrest (slanted back 12 degrees)
+    const back = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.50, 0.10), matSeat);
+    back.position.set(sx, -0.12, -1.32);
+    back.rotation.x = 0.21;
+    intGroup.add(back);
+
+    // Headrest
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.15, 0.08), matSeat);
+    head.position.set(sx, 0.18, -1.26);
+    intGroup.add(head);
+  }
+
+  // 7. Steering Wheel on Driver side (X = -0.45)
+  const col = new THREE.Mesh(new THREE.CylinderGeometry(0.024, 0.024, 0.44, 12), matWheel);
+  col.position.set(-0.45, -0.20, -1.78);
+  col.rotation.x = Math.PI / 4;
+  intGroup.add(col);
+
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.20, 0.018, 12, 24), matWheel);
+  rim.position.set(-0.45, -0.06, -1.68);
+  rim.rotation.x = Math.PI / 4;
+  intGroup.add(rim);
+
+  const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.048, 0.048, 0.025, 12), matEmblem);
+  cap.position.set(-0.45, -0.06, -1.68);
+  cap.rotation.x = Math.PI / 4;
+  intGroup.add(cap);
+
+  // 8. Floor gear shift & 4WD transfer levers
+  const lev1 = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.32, 8), matLever);
+  lev1.position.set(-0.24, -0.32, -1.62);
+  lev1.rotation.x = -0.17;
+  intGroup.add(lev1);
+
+  const lev2 = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.24, 8), matLever);
+  lev2.position.set(-0.24, -0.36, -1.50);
+  lev2.rotation.x = -0.26;
+  intGroup.add(lev2);
+
+  // 9. Rearview mirror
+  const mir = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.06, 0.02), matMirror);
+  mir.position.set(0, 0.36, -1.86);
+  intGroup.add(mir);
+
+  // 10. Cargo compartment parcels & mail sacks (visible through rear windows)
+  const sack1 = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.28, 0.60, 8), matSack);
+  sack1.position.set(-0.35, -0.42, 0.50);
+  sack1.rotation.z = 0.2;
+  intGroup.add(sack1);
+
+  const sack2 = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.26, 0.55, 8), matSack);
+  sack2.position.set(0.30, -0.45, 0.90);
+  sack2.rotation.z = -0.15;
+  intGroup.add(sack2);
+
+  const crate = new THREE.Mesh(new THREE.BoxGeometry(0.50, 0.38, 0.46), matBox);
+  crate.position.set(-0.20, -0.50, 1.25);
+  crate.rotation.y = 0.18;
+  intGroup.add(crate);
+
+  // Ensure all interior parts render into depth and color buffers before transparent glass
+  intGroup.traverse((o) => {
+    if ((o as THREE.Mesh).isMesh) {
+      o.renderOrder = 0;
+    }
+  });
+
+  return intGroup;
+}
+
+// ---------------- build vehicle models ----------------
+
+/**
+ * The canonical Urman-452 postal van:
+ * - Handcrafted classic body with light reflective float glass
+ * - Authentic 1990s rural post cabin & cargo interior
+ * - Simplified 3D wheels with textured steel rims
+ * - Clean "ПОЧТА" decals without lower subtitle
+ */
+export function buildUrman(livery: UrmanLivery = 'post', seed = 0): VehicleModel {
+  if (!tpl || !wheelTpl) throw new Error('loadUrman() must finish before building the Urman-452');
   const root = tpl.clone(true);
-  // the file faces -Z with its left on -X: turn it round to the game's +Z/+X
   root.rotation.y = Math.PI;
   const group = new THREE.Group();
   group.add(root);
-  plate ??= plateTex();
+
+  // Add the 1990s rural post cabin interior
+  const interior = buildClassicInterior();
+  root.add(interior);
+
+  const registration = livery === 'post' ? POST_PLATE : plateFor(seed * 2 + (livery === 'gas' ? 161 : 162), 'fleet');
+  const registrationMaterial = plateMaterial(registration);
+  const [plateWidth, plateHeight] = plateSize(registration);
   const body: THREE.Mesh[] = [];
   const axles: VehicleModel['axles'] = [];
+
+  // Authentic 90s automotive float glass shader (light, subtle sky specular sheen, not dark tint)
+  const bodyMat = new THREE.MeshStandardMaterial({
+    map: maps.postAlpha ?? maps.post,
+    roughness: 0.24,
+    metalness: 0.16,
+    transparent: true,
+    opacity: 1.0,
+    depthWrite: true,
+    side: THREE.FrontSide,
+  });
+
   root.traverse((o) => {
     const m = o as THREE.Mesh;
     if (!m.isMesh) return;
+
+    // Do not touch interior meshes
+    let isInt = false;
+    for (let p: THREE.Object3D | null = m; p; p = p.parent) {
+      if (p === interior) { isInt = true; break; }
+    }
+    if (isInt) return;
+
+    // Wheels have their own material and are replaced below.
+    for (let p: THREE.Object3D | null = m; p && p !== root; p = p.parent) {
+      if (/^Wheel/.test(p.name)) return;
+    }
+
+    m.renderOrder = 1;
+
     const pick = (src: THREE.Material) => {
       switch (src.name) {
-        case 'UazMat': return mat(`body-${livery}`, maps[livery]);
+        case 'UazMat': return livery === 'post' ? bodyMat : mat(`body-${livery}`, maps[livery]);
         case 'Pixelly': return mat('palette', maps.palette);
-        case 'WheelMat': return mat('wheel', maps.wheel);
-        case 'LicensePlateUaz': return mat('plate', plate);
+        case 'LicensePlateUaz': {
+          m.scale.x *= plateWidth / 0.6372;
+          m.scale.y *= plateHeight / 0.1397;
+          return registrationMaterial;
+        }
         default: return mat('dark', null, '#2a2a2a');
       }
     };
     m.material = Array.isArray(m.material) ? m.material.map(pick) : pick(m.material);
-    // glTF splits the multi-material body into sibling primitives under one node
-    let wheel: THREE.Object3D | null = null;
-    for (let p: THREE.Object3D | null = m; p && p !== root; p = p.parent) if (/^Wheel/.test(p.name)) wheel = p;
-    if (wheel) {
-      // each wheel node sits on its axle; the turned-round root reverses its spin
-      if (!axles.some((a) => a.pivot === wheel)) axles.push({ pivot: wheel, r: -0.375 });
-    } else if (!/LicensePlate/.test(m.name) && !/LicensePlate/.test(m.parent?.name ?? '')) body.push(m);
+
+    if (!/LicensePlate/.test(m.name) && !/LicensePlate/.test(m.parent?.name ?? '')) {
+      body.push(m);
+    }
   });
+
+  for (const name of ['WheelLF', 'WheelRF', 'WheelLB', 'WheelRB']) {
+    const original = root.getObjectByName(name);
+    if (!original?.parent) throw new Error(`Missing Urman-452 wheel mount: ${name}`);
+    const pivot = new THREE.Group();
+    pivot.name = name;
+    pivot.position.copy(original.position);
+    pivot.quaternion.copy(original.quaternion);
+    const wheel = wheelTpl.clone(true);
+    // The asset extends along +X from the mount, with its hub facing outward.
+    if (pivot.position.x < 0) wheel.rotation.y = Math.PI;
+    pivot.add(wheel);
+    original.parent.add(pivot);
+    original.removeFromParent();
+    // The turned-round body reverses the spin in the model's local space.
+    axles.push({ pivot, r: -0.376 });
+  }
+
   group.updateMatrixWorld(true);
   if (livery === 'post') postDecals(group, body);
+
   const lights = headlights(group,
     [new THREE.Vector3(0.66, 0.74, 2.43), new THREE.Vector3(-0.66, 0.74, 2.43)],
     [new THREE.Vector3(0.86, 1.0, -1.95), new THREE.Vector3(-0.86, 1.0, -1.95)]);
   const tail = new THREE.MeshLambertMaterial({ color: '#a01810', emissive: '#ff2a18', emissiveIntensity: 0 });
   group.userData.color = livery;
-  return { group, kind: 'uaz', axles, tail, beacons: [], length: 4.44, width: 1.94, rear: new THREE.Vector3(0, 0, -1.2), lights };
+
+  return {
+    group,
+    kind: 'uaz',
+    axles,
+    tail,
+    beacons: [],
+    length: 4.44,
+    width: 1.94,
+    rear: new THREE.Vector3(0, 0, -1.2),
+    lights
+  };
 }
+export const buildUaz = buildUrman;
+export const buildUazWithInterior = buildUrman;

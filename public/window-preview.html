@@ -1,0 +1,807 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Синхронизированный звук стеклоподъемника — Postal Driver</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=PT+Mono&family=PT+Sans:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0d1117;
+      --card: #161b22;
+      --card-hover: #1c222b;
+      --border: #30363d;
+      --accent: #e5a00d;
+      --accent-glow: rgba(229, 160, 13, 0.25);
+      --success: #10b981;
+      --blue: #3b82f6;
+      --text: #e6edf3;
+      --text-dim: #8b949e;
+      --badge-bg: rgba(229, 160, 13, 0.15);
+      --badge-border: rgba(229, 160, 13, 0.35);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'PT Sans', system-ui, -apple-system, sans-serif;
+      min-height: 100vh;
+      padding: 24px 16px 80px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .container {
+      width: 100%;
+      max-width: 980px;
+      display: flex;
+      flex-direction: column;
+      gap: 22px;
+    }
+    header {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.35);
+    }
+    h1 {
+      font-size: 22px;
+      font-weight: 700;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+    .lead {
+      color: var(--text-dim);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    .key-badge {
+      display: inline-block;
+      background: #21262d;
+      border: 1px solid #484f58;
+      border-radius: 4px;
+      padding: 1px 6px;
+      font-family: 'PT Mono', monospace;
+      font-size: 12px;
+      color: #f0f6fc;
+      margin: 0 2px;
+    }
+
+    /* Interactive Simulator */
+    .hero-sim {
+      background: linear-gradient(145deg, #18202c 0%, #121720 100%);
+      border: 1px solid rgba(229, 160, 13, 0.45);
+      border-radius: 14px;
+      padding: 24px;
+      box-shadow: 0 8px 30px rgba(0,0,0,0.45);
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+    .hero-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .hero-title {
+      font-size: 17px;
+      font-weight: 700;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .hero-badge {
+      background: var(--badge-bg);
+      border: 1px solid var(--badge-border);
+      color: var(--accent);
+      padding: 3px 10px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-family: 'PT Mono', monospace;
+    }
+
+    .sim-content {
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      gap: 24px;
+      align-items: center;
+    }
+    @media (max-width: 760px) {
+      .sim-content {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* Window Visualizer */
+    .door-visualizer {
+      width: 100%;
+      height: 320px;
+      background: #141a15;
+      border: 3px solid #323d34;
+      border-radius: 12px;
+      position: relative;
+      overflow: hidden;
+      box-shadow: inset 0 0 20px rgba(0,0,0,0.6);
+      user-select: none;
+    }
+    .window-opening-bg {
+      position: absolute;
+      top: 14px;
+      left: 14px;
+      right: 14px;
+      height: 140px;
+      background: #090e0b;
+      border: 2px solid #242c26;
+      border-radius: 8px 8px 0 0;
+      overflow: hidden;
+    }
+    .outdoor-sky {
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(180deg, #3d5648 0%, #768f7a 70%, #9cb89c 100%);
+      opacity: 0.85;
+    }
+    .glass-pane {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(190, 205, 190, 0.45);
+      border-bottom: 3px solid rgba(255, 255, 255, 0.6);
+      backdrop-filter: blur(1px);
+      box-shadow: inset 0 0 10px rgba(255,255,255,0.25);
+      transform: translateY(0%);
+      transition: transform 0.05s linear;
+    }
+    .glass-reflection {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: 25%;
+      width: 40px;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+      transform: skewX(-20deg);
+    }
+    .rubber-seal {
+      position: absolute;
+      top: 154px;
+      left: 12px;
+      right: 12px;
+      height: 8px;
+      background: #1c241d;
+      border-top: 1px solid #111712;
+      border-bottom: 2px solid #0d120e;
+      z-index: 5;
+    }
+    .door-card-panel {
+      position: absolute;
+      top: 160px;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: linear-gradient(180deg, #242c25 0%, #1c221d 100%);
+      border-top: 2px solid #374339;
+      box-shadow: 0 -4px 10px rgba(0,0,0,0.4);
+      z-index: 6;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding-top: 10px;
+    }
+    .winder-mount {
+      position: relative;
+      width: 80px;
+      height: 80px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .winder-base {
+      position: absolute;
+      width: 48px;
+      height: 48px;
+      background: radial-gradient(circle, #2e3830 0%, #161c17 100%);
+      border: 2px solid #3f4e41;
+      border-radius: 50%;
+      box-shadow: 0 4px 8px rgba(0,0,0,0.5);
+    }
+    .winder-arm-wrapper {
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transform-origin: center center;
+      transition: transform 0.05s linear;
+      cursor: pointer;
+    }
+    .winder-arm {
+      position: absolute;
+      top: 12px;
+      width: 14px;
+      height: 42px;
+      background: linear-gradient(90deg, #38453a 0%, #1e2620 100%);
+      border-radius: 7px;
+      border: 1px solid #4a5c4d;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.4);
+    }
+    .winder-knob {
+      position: absolute;
+      top: 8px;
+      width: 22px;
+      height: 22px;
+      background: radial-gradient(circle, #3d4a3f 0%, #151a16 100%);
+      border: 2px solid #576b5a;
+      border-radius: 50%;
+      box-shadow: 0 3px 6px rgba(0,0,0,0.6);
+    }
+    .winder-knob::after {
+      content: '';
+      position: absolute;
+      inset: 4px;
+      background: #111712;
+      border-radius: 50%;
+    }
+    .glass-label {
+      position: absolute;
+      bottom: 8px;
+      font-family: 'PT Mono', monospace;
+      font-size: 11px;
+      color: #9cb89c;
+    }
+
+    /* Controls Panel */
+    .sim-controls {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .preset-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: #f0f6fc;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 6px;
+    }
+    .preset-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .preset-btn {
+      background: #161c22;
+      border: 1px solid #303846;
+      border-radius: 8px;
+      padding: 10px 14px;
+      text-align: left;
+      cursor: pointer;
+      transition: all 0.15s;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+    }
+    .preset-btn:hover {
+      background: #1f2732;
+      border-color: #4a576c;
+    }
+    .preset-btn.active {
+      background: rgba(229, 160, 13, 0.12);
+      border-color: var(--accent);
+      box-shadow: 0 0 10px rgba(229, 160, 13, 0.2);
+    }
+    .p-info {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .preset-btn-name {
+      font-size: 13px;
+      font-weight: 700;
+      color: #fff;
+    }
+    .preset-btn-desc {
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+    .p-tag {
+      font-family: 'PT Mono', monospace;
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: #21262d;
+      color: #7ee787;
+      white-space: nowrap;
+    }
+
+    /* Action Buttons */
+    .action-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-top: 4px;
+    }
+    .btn-act {
+      background: var(--accent);
+      color: #0d1117;
+      border: none;
+      padding: 12px 22px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.15s;
+    }
+    .btn-act:hover {
+      background: #f5b72e;
+      transform: translateY(-1px);
+    }
+    .btn-act:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .status-meter {
+      background: #10141a;
+      border: 1px solid #28303d;
+      border-radius: 8px;
+      padding: 8px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-family: 'PT Mono', monospace;
+      font-size: 12px;
+    }
+    .meter-bar {
+      width: 140px;
+      height: 8px;
+      background: #1e2430;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .meter-fill {
+      height: 100%;
+      background: var(--accent);
+      width: 0%;
+      transition: width 0.05s linear;
+    }
+
+    /* Sound Cards Grid */
+    .section-title {
+      font-size: 18px;
+      font-weight: 700;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .cards-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .opt-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+      transition: all 0.15s;
+    }
+    .opt-card:hover {
+      border-color: #485466;
+      background: var(--card-hover);
+    }
+    .opt-card.active-card {
+      border-color: var(--accent);
+      background: linear-gradient(90deg, rgba(229, 160, 13, 0.08) 0%, rgba(22, 27, 34, 1) 100%);
+    }
+    .opt-info {
+      flex: 1;
+      min-width: 280px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .opt-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .opt-name {
+      font-size: 15px;
+      font-weight: 700;
+      color: #fff;
+    }
+    .opt-tag {
+      font-size: 10px;
+      font-family: 'PT Mono', monospace;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: rgba(229, 160, 13, 0.15);
+      color: var(--accent);
+      border: 1px solid rgba(229, 160, 13, 0.3);
+    }
+    .opt-desc {
+      font-size: 13px;
+      color: var(--text-dim);
+      line-height: 1.4;
+    }
+    .opt-source {
+      font-size: 11px;
+      color: #7ee787;
+      font-family: 'PT Mono', monospace;
+    }
+    .opt-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .btn-play {
+      background: #21262d;
+      color: #e6edf3;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      padding: 9px 14px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.15s;
+      white-space: nowrap;
+    }
+    .btn-play:hover {
+      background: #30363d;
+      border-color: #8b949e;
+      color: #fff;
+    }
+    .btn-play.playing {
+      background: var(--accent);
+      color: #0d1117;
+      border-color: var(--accent);
+    }
+
+    /* Library table */
+    .library-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .library-table th {
+      background: #11161d;
+      text-align: left;
+      padding: 10px 14px;
+      color: var(--text-dim);
+      font-size: 12px;
+      border-bottom: 1px solid var(--border);
+      font-weight: 700;
+    }
+    .library-table td {
+      padding: 10px 14px;
+      border-bottom: 1px solid #21262d;
+      vertical-align: middle;
+    }
+    .library-table tr:hover td {
+      background: #19202a;
+    }
+    .player-mini {
+      height: 28px;
+      max-width: 200px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>🪟 Синхронизированный звук ручного стеклоподъемника (Вариант 2)</h1>
+      <p class="lead">
+        Выбран <strong>Вариант 2 (Freesound #82560)</strong> — чистая автомобильная механика ручного привода без посторонних шумов. Звук полностью <strong>синхронизирован с таймингом игры</strong>: начинается ровно в момент касания ручки рукой водителя, непрерывно сопровождает 2 оборота и завершается сочным ударом в упор точно при достижении крайнего положения (1.55 с).
+      </p>
+    </header>
+
+    <!-- Interactive Hero Simulator -->
+    <div class="hero-sim">
+      <div class="hero-top">
+        <div class="hero-title">
+          <span>🕹️ Тест синхронизации в симуляторе двери</span>
+        </div>
+        <div class="hero-badge">ХОД РУЧКИ: РОВНО 1.55 СЕК (720°)</div>
+      </div>
+
+      <div class="sim-content">
+        <!-- Visual Door Frame -->
+        <div class="door-visualizer">
+          <div class="window-opening-bg">
+            <div class="outdoor-sky"></div>
+            <div class="glass-pane" id="simGlass">
+              <div class="glass-reflection"></div>
+            </div>
+          </div>
+          <div class="rubber-seal"></div>
+          <div class="door-card-panel">
+            <div class="winder-mount">
+              <div class="winder-base"></div>
+              <div class="winder-arm-wrapper" id="simArm" onclick="toggleWindow()">
+                <div class="winder-arm"></div>
+                <div class="winder-knob"></div>
+              </div>
+            </div>
+            <div class="glass-label" id="simLabel">СТЕКЛО ЗАКРЫТО (0%)</div>
+          </div>
+        </div>
+
+        <!-- Controls -->
+        <div class="sim-controls">
+          <div class="preset-title">Режим тайминга звука:</div>
+          <div class="preset-list">
+            <button class="preset-btn active" id="pbtn_v2_sync" onclick="setPreset('v2_sync')">
+              <div class="p-info">
+                <span class="preset-btn-name">⭐ Вариант 2: Синхронизированный (1.55 с)</span>
+                <span class="preset-btn-desc">Старт без паузы + непрерывное кручение + стук в упор ровно в конце хода стекла</span>
+              </div>
+              <span class="p-tag">В ИГРЕ</span>
+            </button>
+            <button class="preset-btn" id="pbtn_v2_natural" onclick="setPreset('v2_natural')">
+              <div class="p-info">
+                <span class="preset-btn-name">⏱️ Вариант 2: Естественный темп (1.85 с)</span>
+                <span class="preset-btn-desc">Оригинальный темп записи из реального авто без тайм-компрессии</span>
+              </div>
+              <span class="p-tag">1.85s RAW</span>
+            </button>
+          </div>
+
+          <div class="action-row">
+            <button class="btn-act" id="btnToggle" onclick="toggleWindow()">
+              <span id="actIcon">⬇️</span> <span id="actText">Опустить стекло (Клавиша O)</span>
+            </button>
+          </div>
+
+          <div class="status-meter">
+            <span>СОСТОЯНИЕ СТЕКЛА:</span>
+            <div class="meter-bar">
+              <div class="meter-fill" id="meterFill"></div>
+            </div>
+            <span id="meterText">0%</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Cards with Play Buttons -->
+    <div class="section-title">
+      <span>🎚️ Сравнение таймингов Варианта 2</span>
+    </div>
+
+    <div class="cards-grid">
+      <!-- V2 Synced 1.55s -->
+      <div class="opt-card active-card" id="card_v2_sync">
+        <div class="opt-info">
+          <div class="opt-header">
+            <span class="opt-name">⭐ Вариант 2: Точная синхронизация 1.55s (Подключено в игру)</span>
+            <span class="opt-tag">АКТИВНО В ИГРЕ</span>
+          </div>
+          <p class="opt-desc">
+            Идеальная покадровая синхронизация с механикой игры: звук стартует в миллисекунду касания ручки рукой водителя, тактильные щелчки зубьев сопровождают оба оборота, а финальный стук упора стекла совпадает с окончанием хода (1.55 с).
+          </p>
+          <span class="opt-source">Файлы: window_down.wav / window_up.wav в src/assets/cabin/</span>
+        </div>
+        <div class="opt-actions">
+          <button class="btn-play" onclick="playSample('sound-samples/window/v2_sync_155_down.wav', this)">
+            <span>⬇️ Ход вниз (1.55s)</span>
+          </button>
+          <button class="btn-play" onclick="playSample('sound-samples/window/v2_sync_155_up.wav', this)">
+            <span>⬆️ Ход вверх (1.55s)</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- V2 Natural 1.85s -->
+      <div class="opt-card" id="card_v2_natural">
+        <div class="opt-info">
+          <div class="opt-header">
+            <span class="opt-name">⏱️ Вариант 2: Естественный темп 1.85s</span>
+            <span class="opt-tag">FS #82560</span>
+          </div>
+          <p class="opt-desc">
+            Оригинальная скорость вращения ручки из записи в автомобиле без подгонки темпа. Чуть более размеренный ход механизма (1.85 секунды).
+          </p>
+          <span class="opt-source">Файлы: v2_natural_185_down.wav / v2_natural_185_up.wav</span>
+        </div>
+        <div class="opt-actions">
+          <button class="btn-play" onclick="playSample('sound-samples/window/v2_natural_185_down.wav', this)">
+            <span>⬇️ Ход вниз (1.85s)</span>
+          </button>
+          <button class="btn-play" onclick="playSample('sound-samples/window/v2_natural_185_up.wav', this)">
+            <span>⬆️ Ход вверх (1.85s)</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Original Library Recording -->
+    <div class="section-title">
+      <span>📚 Исходная запись Freesound #82560</span>
+    </div>
+
+    <table class="library-table">
+      <thead>
+        <tr>
+          <th>Запись</th>
+          <th>Автор / Описание</th>
+          <th>Длит.</th>
+          <th>Плеер</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>car - manual window lift</strong><br><span style="color:#8b949e;font-size:11px;">Freesound #82560</span></td>
+          <td>Автор: launemax. Чистая салонная запись ручного стеклоподъемника: ручка, редуктор, ход стекла, стук упора.</td>
+          <td>33.3s</td>
+          <td><audio class="player-mini" controls src="sound-samples/window/classic_manual_window_lift.mp3"></audio></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <script>
+    let selectedPreset = 'v2_sync';
+    let openness = 0;
+    let targetOpenness = 0;
+    let startOpenness = 0;
+    let isWinding = false;
+    let windStartTime = 0;
+    let currentAudio = null;
+
+    const simGlass = document.getElementById('simGlass');
+    const simArm = document.getElementById('simArm');
+    const simLabel = document.getElementById('simLabel');
+    const meterFill = document.getElementById('meterFill');
+    const meterText = document.getElementById('meterText');
+    const btnToggle = document.getElementById('btnToggle');
+    const actIcon = document.getElementById('actIcon');
+    const actText = document.getElementById('actText');
+
+    function getPresetDuration() {
+      return (selectedPreset === 'v2_natural') ? 1.85 : 1.55;
+    }
+
+    function setPreset(p) {
+      selectedPreset = p;
+      ['pbtn_v2_sync', 'pbtn_v2_natural'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.classList.remove('active');
+      });
+      const map = {
+        v2_sync: 'pbtn_v2_sync',
+        v2_natural: 'pbtn_v2_natural'
+      };
+      if (map[p]) document.getElementById(map[p])?.classList.add('active');
+
+      document.querySelectorAll('.opt-card').forEach(c => c.classList.remove('active-card'));
+      document.getElementById('card_' + p)?.classList.add('active-card');
+    }
+
+    function toggleWindow() {
+      if (isWinding) return;
+      startOpenness = openness;
+      targetOpenness = (openness === 0) ? 1 : 0;
+      isWinding = true;
+      windStartTime = performance.now();
+      btnToggle.disabled = true;
+
+      const dur = getPresetDuration();
+      const prefix = (selectedPreset === 'v2_natural') ? 'v2_natural_185' : 'v2_sync_155';
+      const file = (targetOpenness === 1)
+        ? `sound-samples/window/${prefix}_down.wav`
+        : `sound-samples/window/${prefix}_up.wav`;
+
+      if (currentAudio) {
+        currentAudio.pause();
+        currentAudio.currentTime = 0;
+      }
+      currentAudio = new Audio(file);
+      currentAudio.play().catch(() => {});
+
+      requestAnimationFrame(animateWinding);
+    }
+
+    function ease(t) {
+      t = Math.max(0, Math.min(1, t));
+      return t * t * (3 - 2 * t);
+    }
+
+    function animateWinding(now) {
+      const dur = getPresetDuration();
+      const elapsed = (now - windStartTime) / 1000;
+      const progress = Math.min(1, elapsed / dur);
+      const e = ease(progress);
+
+      openness = startOpenness + (targetOpenness - startOpenness) * e;
+
+      // 2 full rotations = 720 deg
+      const angle = (startOpenness === 0 ? 0 : 720) + (targetOpenness - startOpenness) * e * 720;
+      simArm.style.transform = `rotate(${angle}deg)`;
+      simGlass.style.transform = `translateY(${openness * 88}%)`;
+
+      const pct = Math.round(openness * 100);
+      meterFill.style.width = pct + '%';
+      meterText.textContent = pct + '%';
+
+      if (openness > 0.99) {
+        simLabel.textContent = 'СТЕКЛО ОТКРЫТО (100%)';
+      } else if (openness < 0.01) {
+        simLabel.textContent = 'СТЕКЛО ЗАКРЫТО (0%)';
+      } else {
+        simLabel.textContent = `ОКНО: ${pct}%`;
+      }
+
+      if (progress < 1) {
+        requestAnimationFrame(animateWinding);
+      } else {
+        openness = targetOpenness;
+        isWinding = false;
+        btnToggle.disabled = false;
+        if (openness === 1) {
+          actIcon.textContent = '⬆️';
+          actText.textContent = 'Поднять стекло (Клавиша O)';
+        } else {
+          actIcon.textContent = '⬇️';
+          actText.textContent = 'Опустить стекло (Клавиша O)';
+        }
+      }
+    }
+
+    window.addEventListener('keydown', (e) => {
+      if (e.code === 'KeyO' || e.key === 'o' || e.key === 'щ' || e.key === 'Щ') {
+        toggleWindow();
+      }
+    });
+
+    let singleAudio = null;
+    let singleBtn = null;
+    function playSample(url, btn) {
+      if (singleAudio) {
+        singleAudio.pause();
+        singleAudio.currentTime = 0;
+        if (singleBtn) singleBtn.classList.remove('playing');
+      }
+      singleAudio = new Audio(url);
+      singleBtn = btn;
+      btn.classList.add('playing');
+      singleAudio.play().catch(() => {});
+      singleAudio.onended = () => {
+        btn.classList.remove('playing');
+      };
+    }
+  </script>
+</body>
+</html>

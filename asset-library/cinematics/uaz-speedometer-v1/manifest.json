@@ -1,0 +1,66 @@
+{
+  "preserved_on": "2026-11-09",
+  "purpose": "Preserved cinematic original; create optimized derivatives elsewhere",
+  "files": [
+    {
+      "path": "model-stats.json",
+      "bytes": 115,
+      "sha256": "51CCACBE8C078354F489F271DFB9C699A095D220F78FCBA3D1457B5A08711D5D"
+    },
+    {
+      "path": "README.md",
+      "bytes": 2185,
+      "sha256": "938432123D987C475D7FB0753B47C367BA5CB501E9F1FB8BF9C14A92D9D215B2"
+    },
+    {
+      "path": "model/speedometer-dial.png",
+      "bytes": 135655,
+      "sha256": "3CB6CFD7CD62A475AC8D5C21A9C4E2E906403920ADA7630A0ED500B2F0DF6DF7"
+    },
+    {
+      "path": "model/uaz-speedometer.glb",
+      "bytes": 265036,
+      "sha256": "FA648422ACB30ED1AF12AFC693166E906E2F28E0C7A21D2FDB58D0C5B1DA6475"
+    },
+    {
+      "path": "preview/threejs-0.png",
+      "bytes": 281989,
+      "sha256": "45B8082FEFE2A08E7687F78DF05141FEBD845404A7B390CBFD937CE06FC3585C"
+    },
+    {
+      "path": "preview/threejs-120.png",
+      "bytes": 282652,
+      "sha256": "FF45E1FA91CC136AB4E9FB16E307C589C80318D491C98ACFD734BB3917726287"
+    },
+    {
+      "path": "preview/threejs-60.png",
+      "bytes": 280588,
+      "sha256": "0604886C53DC67294293B47557E61A944D1EFC31FD51532E4341D2483B29BF98"
+    },
+    {
+      "path": "preview/threejs-preview.png",
+      "bytes": 279760,
+      "sha256": "24377DEB54315EFDBC8DD1DD74C82DEEA13FE2BD76ED8626837CFD827E25A569"
+    },
+    {
+      "path": "source/build-speedometer.py",
+      "bytes": 5499,
+      "sha256": "957548FD3C177DBB1434FCB7A4EF403511BBA62774E550E010D06A0082712B97"
+    },
+    {
+      "path": "source/prototype-notes.md",
+      "bytes": 4954,
+      "sha256": "CD448459BBE7B4400AE5846540D49D6759BB0BBF54FF3165C936B73AB18A63C3"
+    },
+    {
+      "path": "source/speedometer-texture.py",
+      "bytes": 1825,
+      "sha256": "9DCC701F5E1B71A4050C7E2F15CCA8AFDA329DFD1E671630216AFF93E1C3FD89"
+    },
+    {
+      "path": "source/speedometer.blend",
+      "bytes": 268251,
+      "sha256": "B1A65BEC259D5B4CDB4CDC3FC36124AF6D06A87929E2BA44AC0D133E34583733"
+    }
+  ]
+}

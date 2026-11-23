@@ -6,6 +6,10 @@ import { RetroRenderer } from '../core/Renderer';
 import { IDLE, Vehicle } from './Vehicle';
 import { Hands, ReachTask } from './Hands';
 import { Smoker } from './Smoking';
+import { Dashboard, DASH_CONTROLS } from './Dashboard';
+import { addCabinDocuments, makeDocumentAtlas } from './CabinDocuments';
+import { addCabinStructure, cabinOutline, cabinCushion, SIDE_WINDOW, makeCabinVinyl, sideWindowPane, WINDSCREEN, windscreenSlantHeight, windscreenZ } from './CabinStructure';
+import { WindowWinder } from './WindowWinder';
 
 /** Driver eye in vehicle space (y=0 is 0.75 m above ground, forward is -Z). */
 export const EYE = new THREE.Vector3(-0.42, 1.06, -1.08);
@@ -14,13 +18,14 @@ export const EYE_PITCH = -0.25;
 /** Seconds a hand takes to let go of the rim and take it again further round. */
 const REGRIP = 0.32;
 const WHEEL_Y = 0.5;
+const WHEEL_R = 0.245;
 const FLOOR = 0.12;
 const D2R = Math.PI / 180;
 /** Windscreen overlay resolution (per pane) and wiper sweep radius in those pixels. */
 const PW = 192, PH = 144, ARM = 156, ARM_IN = 34;
 const GW = 0.835, GX = GW / 2;
 /** One-piece windscreen: panes meet at the centre, the glass bows forward in the middle. */
-const BOW = 0.055;
+const BOW = WINDSCREEN.bow;
 const bend = (x: number) => BOW * (x / 0.85) ** 2;
 
 /** Rounded rectangle as a dense point loop (straight runs subdivided so the bow can bend them). */
@@ -47,7 +52,7 @@ function bendGeo(g: THREE.BufferGeometry, offsetX = 0): THREE.BufferGeometry {
   return g;
 }
 
-export type HotspotId = 'horn' | 'handbrake' | '4wd' | 'low' | 'wipers' | 'lights' | 'vent' | 'tape' | 'map' | 'smoke' | 'stub';
+export type HotspotId = 'start' | 'horn' | 'handbrake' | '4wd' | 'low' | 'wipers' | 'lights' | 'vent' | 'tape' | 'map' | 'smoke' | 'stub' | 'window';
 export interface Hotspot { mesh: THREE.Mesh; id: HotspotId; label: string }
 
 /** A bead of water on the outside of the glass; r in texels, area is conserved when drops merge. */
@@ -79,17 +84,19 @@ const M = (color: THREE.ColorRepresentation, map: THREE.Texture | null = null) =
 export class Cabin {
   readonly group = new THREE.Group();
   readonly hotspots: Hotspot[] = [];
+  readonly dashboard: Dashboard;
   lightsOn = false;
   wipersOn = false;
+  /** 0…1 while the driver is turning the key toward the starter, before it bites. */
+  keyTurn = 0;
   /** Windscreen blower: dries the inside of the glass. */
   ventOn = false;
   /** 0…1 how misted the glass is now, for hints. */
   mist = 0;
   onMist?: () => void;
   private wheel = new THREE.Group();
-  private needles: Record<'speed' | 'fuel' | 'temp' | 'oil' | 'amp', THREE.Mesh>;
+  private needles: Record<'speed' | 'fuel' | 'temp' | 'oil' | 'amp', THREE.Object3D>;
   private lamps: Record<'brake' | 'oil' | 'charge' | 'beam', THREE.MeshBasicMaterial>;
-  private clusterMat: THREE.MeshLambertMaterial;
   private gearLever = new THREE.Group();
   private lever4 = new THREE.Group();
   private leverLow = new THREE.Group();
@@ -99,7 +106,7 @@ export class Cabin {
   private wipers: THREE.Group[] = [];
   private wiperA = 0;
   private wiperPhase = 0;
-  private wiperDir = 1;
+  private wiperDir = -1;
   private panes: Pane[] = [];
   private paneDirty = true;
   private fogLevel = 0;
@@ -115,101 +122,59 @@ export class Cabin {
   private dashLight: THREE.PointLight;
   private temp = 40;
   private hands!: Hands;
+  private windowWinder!: WindowWinder;
+  get windowLean(): number { return this.windowWinder.lean; }
+  get windowOpening(): number { return this.windowWinder.openness; }
+  onWindowWind?: (down: boolean) => void;
+  windWindow(): void { this.windowWinder.play(this.hands); }
   /** The pack, lighter and ashtray on the dash, and the routine that uses them. */
   smoker!: Smoker;
   /** Where each hand holds the rim, degrees in the wheel's own frame, and its re-grip timer (-1: holding). */
-  private grip: Record<'L' | 'R', { at: number; t: number }> = { L: { at: 165, t: -1 }, R: { at: 15, t: -1 } };
+  private grip: Record<'L' | 'R', { at: number; from: number; t: number }> = {
+    L: { at: 165, from: 165, t: -1 }, R: { at: 15, from: 15, t: -1 },
+  };
   private lastWheel = 0;
   private wheelTilt = new THREE.Group();
   private key = new THREE.Group();
   private lastGear = 1;
   private hornHeld = false;
   private cassetteMesh!: THREE.Mesh;
-  onWiperEnd?: () => void;
+  onWiperEnd?: (dir: number) => void;
 
   constructor(private T: Textures) {
     const b = new Bucket();
     this.buildShell(b);
+    const cabinVinyl=makeCabinVinyl();
     this.group.add(b.build({
       paint: new THREE.MeshLambertMaterial({ map: T.paintMetal, color: '#d8dee2', vertexColors: true }),
       vinyl: new THREE.MeshLambertMaterial({ map: T.vinyl, vertexColors: true }),
       rubber: new THREE.MeshLambertMaterial({ map: T.rubber, vertexColors: true }),
-      seat: new THREE.MeshLambertMaterial({ map: T.seat, vertexColors: true }),
+      seat: new THREE.MeshLambertMaterial({ map: cabinVinyl, vertexColors: true }),
       doorCard: new THREE.MeshLambertMaterial({ map: T.doorCard, vertexColors: true }),
       flat: new THREE.MeshLambertMaterial({ vertexColors: true }),
-      newspaper: new THREE.MeshLambertMaterial({ map: T.newspaper, vertexColors: true }),
+      documents: new THREE.MeshLambertMaterial({ map: makeDocumentAtlas(), vertexColors: true }),
       sack: new THREE.MeshLambertMaterial({ map: T.sack, vertexColors: true }),
       sticker: new THREE.MeshLambertMaterial({ map: T.sticker, vertexColors: true }),
       icon: new THREE.MeshLambertMaterial({ map: T.icon, vertexColors: true }),
-      waybill: new THREE.MeshLambertMaterial({ map: T.waybill, vertexColors: true }),
       cassette: new THREE.MeshLambertMaterial({ map: T.cassette, vertexColors: true }),
       mirrorInner: new THREE.MeshBasicMaterial({ map: T.mirrorInner, vertexColors: true }),
       van: new THREE.MeshLambertMaterial({ map: T.vanSide, vertexColors: true }),
     }, 'cabin'));
 
-    // instrument cluster, as in the factory photos: a black rectangular housing with four round
-    // gauges in a row, left of the steering column, turned toward the driver
-    const pod = new THREE.Group();
-    // straight in front of the driver, tipped up to face his eyes (as on the real van)
-    pod.position.set(EYE.x, 0.535, -1.672);
-    pod.rotation.set(-0.66, 0, 0);
-    this.group.add(pod);
-    const PWD = 0.42, PHT = 0.131;
-    const podBody = new THREE.Mesh(new THREE.BoxGeometry(PWD + 0.02, PHT + 0.03, 0.1), M('#161615'));
-    podBody.position.z = -0.052;
-    const trim = new THREE.Mesh(new THREE.BoxGeometry(PWD + 0.02, 0.006, 0.006), M('#a8a8a2'));
-    trim.position.set(0, -(PHT + 0.03) / 2 + 0.002, 0.002);
-    pod.add(podBody, trim);
-    this.clusterMat = new THREE.MeshLambertMaterial({ map: T.cluster, emissive: '#a8e0b0', emissiveMap: T.cluster, emissiveIntensity: 0 });
-    const cluster = new THREE.Mesh(new THREE.PlaneGeometry(PWD, PHT), this.clusterMat);
-    cluster.position.z = 0.001;
-    pod.add(cluster);
-    const k = PWD / 384;
-    const bezel = M('#c4c4be');
-    // four gauges, 96 px apart: speedometer, fuel, coolant temperature, oil pressure
-    const GX = [48, 144, 240, 336];
-    for (const px of GX) {
-      const ring = new THREE.Mesh(new THREE.TorusGeometry(40 * k, 0.0032, 4, 28), bezel);
-      ring.position.set((px - 192) * k, 0, 0.003);
-      pod.add(ring);
-    }
-    const needle = (len: number, x: number, y: number) => {
-      const g = new THREE.PlaneGeometry(len, 0.0036);
-      g.translate(len / 2 - 0.004, 0, 0);
-      const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: '#ff8a3a' }));
-      m.position.set(x, y, 0.002);
-      cluster.add(m);
-      return m;
-    };
-    const gy = 0;
-    this.needles = {
-      speed: needle(0.036, (GX[0] - 192) * k, gy),
-      fuel: needle(0.03, (GX[1] - 192) * k, gy),
-      temp: needle(0.03, (GX[2] - 192) * k, gy),
-      oil: needle(0.03, (GX[3] - 192) * k, gy),
-      // the ammeter shares the oil dial's face in this cluster: a hair-thin second needle
-      amp: needle(0.022, (GX[3] - 192) * k, gy),
-    };
-    this.needles.amp.visible = false;
-    const lamp = (px: number, py: number, color: string) => {
-      const mtl = new THREE.MeshBasicMaterial({ color: '#202020' });
-      mtl.userData.on = new THREE.Color(color);
-      const m = new THREE.Mesh(new THREE.CircleGeometry(6 * k, 8), mtl);
-      m.position.set((px - 192) * k, (60 - py) * k, 0.002);
-      cluster.add(m);
-      return mtl;
-    };
-    this.lamps = { brake: lamp(60, 112, '#ff3a2a'), oil: lamp(156, 112, '#ff4a2a'), charge: lamp(252, 112, '#ff4a2a'), beam: lamp(340, 112, '#4a8aff') };
+    this.dashboard = new Dashboard(T);
+    this.group.add(this.dashboard.group);
+    this.needles = this.dashboard.needles;
+    this.lamps = this.dashboard.lamps;
 
     this.buildWheel();
     this.buildExtras();
     this.buildLevers();
-    this.toggles = { wipers: this.toggle(-0.14, 'wipers', 'Дворники · R'), lights: this.toggle(-0.075, 'lights', 'Фары · F'), vent: this.toggle(-0.205, 'vent', 'Обдув стекла · B') };
+    this.toggles = { wipers: this.toggle(DASH_CONTROLS.wipers, 'wipers', 'Дворники · R'), lights: this.toggle(DASH_CONTROLS.lights, 'lights', 'Фары · F'), vent: this.toggle(DASH_CONTROLS.vent, 'vent', 'Обдув стекла · B') };
     this.buildGlass();
     this.buildMirrors();
     this.buildFreshener();
     this.buildTrinkets();
-    this.addHit('tape', 'Магнитола · C', new THREE.BoxGeometry(0.2, 0.07, 0.16), 0.2, 0.15, -1.62);
+    this.addHit('tape', 'Магнитола · C', new THREE.BoxGeometry(0.20, 0.065, 0.035), DASH_CONTROLS.radio.x, DASH_CONTROLS.radio.y, DASH_CONTROLS.radio.z);
     this.addHit('map', 'Путевой лист и схема · M', new THREE.BoxGeometry(0.25, 0.05, 0.32), 0.0, 0.61, -1.05);
 
     for (const s of [-1, 1]) {
@@ -225,9 +190,10 @@ export class Cabin {
     this.buildKey();
     this.buildDashDetails();
     this.buildHands();
+    this.addHit('window', 'Опустить стекло · O', new THREE.BoxGeometry(.12, .24, .28), -.84, .397, -1.37);
   }
 
-  /** The rest of the dash and column from the factory photos: boot, red lamp, switch block, glovebox. */
+  /** Column boot and collar; the fascia details belong to Dashboard. */
   private buildDashDetails(): void {
     // the steering column, wrapped in a black cloth boot that flares toward the floor
     const boot = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.048, 0.62, 10, 1, true), M('#141414'));
@@ -239,28 +205,13 @@ export class Cabin {
     collar.rotation.x = Math.PI / 2;
     collar.position.z = -0.05;
     this.wheelTilt.add(collar);
-    const face = (w: number, h: number, d: number, x: number, y: number, color: string) => {
-      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), M(color));
-      m.position.set(x, y, -1.664 + d / 2);
-      this.group.add(m);
-      return m;
-    };
-    // red telltale and the switch block with three rockers
-    const red = new THREE.Mesh(new THREE.CircleGeometry(0.011, 10), new THREE.MeshBasicMaterial({ color: '#c8281e' }));
-    red.position.set(0.0, 0.5, -1.661);
-    this.group.add(red);
-    face(0.1, 0.045, 0.016, 0.09, 0.485, '#1a1a19');
-    for (const dx of [-0.03, 0, 0.03]) face(0.017, 0.022, 0.026, 0.09 + dx, 0.485, '#d4d4cc');
-    // the glovebox lid on the passenger side, with its latch
-    face(0.36, 0.15, 0.01, 0.46, 0.4, '#c9cfd1');
-    face(0.034, 0.012, 0.016, 0.46, 0.468, '#2a2a28');
   }
 
   // ------------------------------------------------------------ the driver's arms
 
-  /** Ignition switch left of the instrument pod: a chrome barrel, a key with a black head. */
+  /** Ignition below the small instruments: chrome barrel and a black key head. */
   private buildKey(): void {
-    this.key.position.set(-0.7, 0.43, -1.668);
+    this.key.position.copy(DASH_CONTROLS.ignition);
     const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.012, 10), M('#8a8a86'));
     barrel.rotation.x = Math.PI / 2;
     const blade = new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.026, 0.004), M('#c8c8c0'));
@@ -269,11 +220,12 @@ export class Cabin {
     head.position.set(0, 0.016, 0.02);
     this.key.add(barrel, blade, head);
     this.group.add(this.key);
+    this.addHit('start', 'Завести · I', new THREE.BoxGeometry(.045,.055,.04), 0,0,.015,this.key);
   }
 
   private wheelPoint(angleDeg: number, out: THREE.Vector3): THREE.Vector3 {
     const a = angleDeg * D2R;
-    return out.set(Math.cos(a) * 0.245, Math.sin(a) * 0.245, 0).applyMatrix4(this.wheel.matrix).applyMatrix4(this.wheelTilt.matrix);
+    return out.set(Math.cos(a) * WHEEL_R, Math.sin(a) * WHEEL_R, 0).applyMatrix4(this.wheel.matrix).applyMatrix4(this.wheelTilt.matrix);
   }
 
   /** Tip of a lever/handle, `len` up its own axis, in cabin space. */
@@ -287,28 +239,31 @@ export class Cabin {
     this.hands = new Hands(this.group, new THREE.Vector3(-0.48, 0.4, -0.8), EYE);
     // at rest: ten and two on the rim, riding the wheel as it turns, palms toward the driver's side of the rim;
     // past a comfortable arc a hand lets go and takes the rim again further back (hand over hand)
-    const homeL = new THREE.Vector3(), homeR = new THREE.Vector3();
+    const rim = { L: new THREE.Vector3(), R: new THREE.Vector3() };
     const away = new THREE.Vector3(0, 0, -1).transformDirection(this.wheelTilt.matrix);
     const home = (side: 'L' | 'R', out: THREE.Vector3) => () => {
       const g = this.grip[side];
-      this.wheelPoint(g.at, out);
+      const phase = g.t < 0 ? 1 : clamp(g.t / REGRIP, 0, 1);
+      const turn = THREE.MathUtils.smoothstep(phase, 0.15, 0.85);
+      this.wheelPoint(THREE.MathUtils.lerp(g.from, g.at, turn), rim[side]);
+      out.copy(rim[side]);
       // lifted off the rim toward the driver on the way to the new hold
-      if (g.t >= 0) out.addScaledVector(away, -0.075 * Math.sin(Math.PI * Math.min(1, g.t / REGRIP)));
+      if (g.t >= 0) out.addScaledVector(away, -0.075 * Math.sin(Math.PI * phase));
       return out;
     };
-    const pose = (side: 'L' | 'R') => () => (this.grip[side].t >= 0 && this.grip[side].t < REGRIP * 0.7 ? 'open' : 'grip');
+    const pose = (side: 'L' | 'R') => () => (this.grip[side].t >= 0 && this.grip[side].t < REGRIP * 0.8 ? 'open' : 'grip');
     // a real hold on the rim: the palm on its outer, driver's-side face pressing in toward the hub,
     // the back of the hand out and toward the driver, the fingers forward round it to close behind
     const hub = new THREE.Vector3(), out = { L: new THREE.Vector3(), R: new THREE.Vector3() };
     const radial = (side: 'L' | 'R') => {
       hub.set(0, 0, 0).applyMatrix4(this.wheel.matrix).applyMatrix4(this.wheelTilt.matrix);
-      return out[side].copy(side === 'L' ? homeL : homeR).sub(hub).normalize();
+      return out[side].copy(rim[side]).sub(hub).normalize();
     };
     const palmOf = { L: new THREE.Vector3(), R: new THREE.Vector3() }, fingOf = { L: new THREE.Vector3(), R: new THREE.Vector3() };
     const palm = (side: 'L' | 'R') => () => palmOf[side].copy(radial(side)).multiplyScalar(-0.75).addScaledVector(away, 0.66).normalize();
     const fingers = (side: 'L' | 'R') => () => fingOf[side].copy(radial(side)).multiplyScalar(0.62).addScaledVector(away, 0.78).normalize();
-    this.hands.setHome('L', home('L', homeL), palm('L'), pose('L'), fingers('L'));
-    this.hands.setHome('R', home('R', homeR), palm('R'), pose('R'), fingers('R'));
+    this.hands.setHome('L', home('L', new THREE.Vector3()), palm('L'), pose('L'), fingers('L'));
+    this.hands.setHome('R', home('R', new THREE.Vector3()), palm('R'), pose('R'), fingers('R'));
     this.smoker = new Smoker(this.group, this.hands, EYE, 0.4955);
     this.addHit('stub', 'Потушить · Y', new THREE.BoxGeometry(0.1, 0.05, 0.1), -0.13, 0.52, -1.715);
     this.addHit('smoke', 'Закурить · J', new THREE.BoxGeometry(0.12, 0.06, 0.12), -0.01, 0.52, -1.7);
@@ -317,29 +272,29 @@ export class Cabin {
   }
 
   /** The fingers go to a control and press, pull or turn it; called when the player acts. */
-  reach(id: string, opts: { cassette?: boolean } = {}): void {
+  reach(id: string, opts: { cassette?: boolean; until?: () => boolean } = {}): void {
     const t = (hand: 'L' | 'R', pose: ReachTask['pose'], hold: number, target: () => THREE.Vector3, palm: THREE.Vector3, extra: Partial<ReachTask> = {}) =>
       this.hands.reach({ hand, pose, hold, target, palm: palm.clone().normalize(), ...extra });
     const v = new THREE.Vector3();
-    const toggle = (x: number) => () => v.set(x, 0.405, -1.65);
+    const toggle = (x: number) => () => v.set(x, DASH_CONTROLS.y, DASH_CONTROLS.z + .018);
     const SIDE = new THREE.Vector3(1, -0.15, -0.25), DOWNF = new THREE.Vector3(0, -1, -0.3);
     switch (id) {
       case 'handbrake': t('R', 'grip', 0.55, () => this.tipOf(this.handbrake, 0.44, v), SIDE); break;
-      case '4wd': t('R', 'knob', 0.6, () => this.tipOf(this.lever4, 0.46, v), SIDE); break;
-      case 'low': t('R', 'knob', 0.6, () => this.tipOf(this.leverLow, 0.46, v), SIDE); break;
-      case 'wipers': t('R', 'point', 0.35, toggle(-0.14), DOWNF); break;
-      case 'lights': t('R', 'point', 0.35, toggle(-0.075), DOWNF); break;
-      case 'vent': t('R', 'point', 0.35, toggle(-0.205), DOWNF); break;
-      case 'tapeNext': t('R', 'point', 0.4, () => v.set(0.28, 0.16, -1.56), DOWNF); break;
+      case '4wd': t('R', 'knob', 0.6, () => this.tipOf(this.lever4, 0.30, v), SIDE); break;
+      case 'low': t('R', 'knob', 0.6, () => this.tipOf(this.leverLow, 0.30, v), SIDE); break;
+      case 'wipers': t('R', 'point', 0.35, toggle(DASH_CONTROLS.wipers), DOWNF); break;
+      case 'lights': t('R', 'point', 0.35, toggle(DASH_CONTROLS.lights), DOWNF); break;
+      case 'vent': t('R', 'point', 0.35, toggle(DASH_CONTROLS.vent), DOWNF); break;
+      case 'tapeNext': t('R', 'point', 0.4, () => v.copy(DASH_CONTROLS.radio).add(new THREE.Vector3(.07, 0, .015)), DOWNF); break;
       case 'tape':
         if (opts.cassette) {
           this.cassetteMesh.rotation.set(0, 0, 0);
           this.cassetteMesh.position.set(0, 0.075, -0.02);
-          t('R', 'pinch', 0.9, () => v.set(0.2, 0.16, -1.56), new THREE.Vector3(0, -0.5, -0.8), { carry: this.cassetteMesh, push: new THREE.Vector3(0, 0, -0.05) });
-        } else t('R', 'point', 0.4, () => v.set(0.2, 0.16, -1.56), DOWNF);
+          t('R', 'pinch', 0.9, () => v.copy(DASH_CONTROLS.radio).add(new THREE.Vector3(0, 0, .015)), new THREE.Vector3(0, -0.5, -0.8), { carry: this.cassetteMesh, push: new THREE.Vector3(0, 0, -0.05) });
+        } else t('R', 'point', 0.4, () => v.copy(DASH_CONTROLS.radio).add(new THREE.Vector3(0, 0, .015)), DOWNF);
         break;
       case 'map': t('R', 'pinch', 0.8, () => v.set(0, 0.62, -1.05), new THREE.Vector3(0, -1, 0)); break;
-      case 'start': t('L', 'pinch', 1.4, () => v.set(-0.7, 0.44, -1.64), new THREE.Vector3(0.5, -0.2, -0.8)); break;
+      case 'start': t('L', 'pinch', opts.until ? 0.15 : 1.4, () => v.copy(DASH_CONTROLS.ignition).add(new THREE.Vector3(0, .012, .015)), new THREE.Vector3(0.5, -0.2, -0.8), { until: opts.until }); break;
     }
   }
 
@@ -363,9 +318,9 @@ export class Cabin {
   private buildShell(b: Bucket): void {
     const add = (key: string, g: THREE.BufferGeometry, x: number, y: number, z: number, rx = 0, ry = 0, rz = 0, c: THREE.ColorRepresentation = '#ffffff') => b.add(key, g, mat(x, y, z, rx, ry, rz), c);
     // UAZ-452 cab: pressed steel in light grey enamel, black rubber, dark grey leatherette
-    const DASH = '#d4dadc', PILLAR = '#c2c8cb', ROOF = '#dde2e4', HUMP = '#787d80', DARK = '#26241f', CHROME = '#b8b8b2';
+    const DARK = '#26241f', CHROME = '#b8b8b2';
     // ---- floor, pedals, front wall
-    add('rubber', boxGeo(1.8, 0.04, 1.5, 0.5), 0, FLOOR - 0.02, -1.25);
+    add('rubber', boxGeo(1.8, 0.04, 1.75, 0.5), 0, FLOOR - 0.02, -1.125);
     add('paint', boxGeo(1.8, 0.4, 0.04), 0, FLOOR + 0.2, -1.95, 0, 0, 0, '#9a9a96');
     for (const [x, w, z] of [[-0.6, 0.07, -1.74], [-0.45, 0.07, -1.74], [-0.29, 0.05, -1.7]] as [number, number, number][]) {
       add('flat', boxGeo(0.018, 0.018, 0.3), x, FLOOR + 0.2, z - 0.06, -0.9, 0, 0, '#1c1c1c');
@@ -373,116 +328,52 @@ export class Cabin {
       // ribbed rubber pad on each pedal
       for (let i = 0; i < 4; i++) add('flat', boxGeo(w - 0.01, 0.006, 0.006), x, FLOOR + 0.07 + i * 0.022, z + 0.07 - i * 0.011, -0.45, 0, 0, '#3e3e3e');
     }
-    // ---- dashboard: deep flat steel shelf, rolled front edge, vertical face
-    add('paint', boxGeo(1.8, 0.025, 0.28), 0, 0.483, -1.8, 0, 0, 0, DASH);
-    add('paint', new THREE.CylinderGeometry(0.03, 0.03, 1.8, 8), 0, 0.462, -1.665, 0, 0, Math.PI / 2, DASH);
-    add('paint', boxGeo(1.8, 0.27, 0.025), 0, 0.33, -1.68, 0, 0, 0, DASH);
-    add('paint', boxGeo(1.8, 0.03, 0.12), 0, 0.2, -1.72, 0, 0, 0, '#bdbdb8');
-    // a strip of dust and grime along the base of the windscreen
-    add('flat', boxGeo(1.7, 0.002, 0.07), 0, 0.497, -1.9, 0, 0, 0, '#a6a49a');
-    // glovebox lid with its lock, and the stickers
-    add('paint', boxGeo(0.34, 0.14, 0.012), 0.5, 0.34, -1.665, 0, 0, 0, '#cfcfca');
-    add('flat', boxGeo(0.04, 0.02, 0.012), 0.5, 0.39, -1.657, 0, 0, 0, CHROME);
-    add('sticker', planeGeo(0.12, 0.06), 0.66, 0.42, -1.665);
+    // The complete fascia is built by Dashboard; retain the owner's small icon.
     add('icon', planeGeo(0.05, 0.075), 0.14, 0.535, -1.86, -0.2);
-    // black switch strip right of the column: toggles, red hazard button, ignition lock with key
-    add('flat', boxGeo(0.34, 0.075, 0.012), -0.02, 0.405, -1.672, 0, 0, 0, '#161616');
-    add('flat', boxGeo(0.35, 0.005, 0.014), -0.02, 0.444, -1.672, 0, 0, 0, CHROME);
-    add('flat', boxGeo(0.35, 0.005, 0.014), -0.02, 0.366, -1.672, 0, 0, 0, CHROME);
-    add('flat', new THREE.CylinderGeometry(0.014, 0.014, 0.01, 10), 0.03, 0.405, -1.664, Math.PI / 2, 0, 0, '#6a6a66');
-    add('flat', new THREE.CylinderGeometry(0.01, 0.01, 0.014, 10), 0.03, 0.405, -1.66, Math.PI / 2, 0, 0, '#c8281e');
-    add('flat', new THREE.CylinderGeometry(0.017, 0.017, 0.016, 10), 0.105, 0.405, -1.664, Math.PI / 2, 0, 0, CHROME);
-    add('flat', boxGeo(0.012, 0.004, 0.004), 0.105, 0.405, -1.655, 0, 0, 0, '#2a2a2a');
-    add('flat', boxGeo(0.014, 0.04, 0.005), 0.108, 0.385, -1.65, 0, 0, 0.18, '#c8c8c0');
-    add('flat', new THREE.TorusGeometry(0.009, 0.0018, 4, 10), 0.112, 0.358, -1.649, 0, 0, 0, '#b8b8b0');
-    add('flat', boxGeo(0.018, 0.026, 0.003), 0.115, 0.343, -1.648, 0, 0, 0.1, '#c8a838');
-    // speaker grille and ashtray in the middle of the dash
-    add('flat', boxGeo(0.17, 0.06, 0.008), 0.3, 0.4, -1.668, 0, 0, 0, '#1c1c1c');
-    for (let i = 0; i < 6; i++) add('flat', boxGeo(0.15, 0.003, 0.004), 0.3, 0.382 + i * 0.0075, -1.663, 0, 0, 0, '#3e3e3c');
-    add('flat', boxGeo(0.07, 0.03, 0.012), 0.12, 0.27, -1.664, 0, 0, 0, '#8a8a82');
-    // radio cassette deck hung under the dash
-    add('flat', boxGeo(0.19, 0.055, 0.15), 0.2, 0.15, -1.63, 0, 0, 0, '#1c1c1c');
-    add('cassette', planeGeo(0.18, 0.05), 0.2, 0.15, -1.554);
-    // ---- windscreen frame: one rounded pane (no divider), slim pillars, header
-    add('paint', boxGeo(1.8, 0.065, 0.09), 0, 1.17, -1.86, 0, 0, 0, PILLAR);
-    add('paint', boxGeo(1.8, 0.035, 0.06), 0, 0.497, -1.94, 0, 0, 0, PILLAR);
-    for (const s of [-1, 1]) {
-      add('paint', boxGeo(0.07, 0.69, 0.075), s * 0.9, 0.83, -1.86, 0.11, 0, 0, PILLAR);
-      // grab handle on the pillar
-      add('flat', new THREE.CylinderGeometry(0.011, 0.011, 0.34, 6), s * 0.84, 0.86, -1.82, 0.11, 0, 0, '#b0b0aa');
-      for (const y of [0.7, 1.02]) add('flat', boxGeo(0.05, 0.02, 0.02), s * 0.862, y, -1.835 + (y - 0.86) * 0.11, 0, 0, 0, '#b0b0aa');
-    }
-    // ---- roof: ribs, dome light, visors, interior mirror stalk
-    add('paint', boxGeo(1.82, 0.03, 1.5), 0, 1.235, -1.2, 0, 0, 0, ROOF);
-    for (const z of [-1.6, -1.25, -0.9, -0.55]) add('paint', boxGeo(1.8, 0.025, 0.04), 0, 1.214, z, 0, 0, 0, '#c4c4bf');
+    addCabinStructure(b);
+    // Roof fixtures sit below the new continuous vaulted lining.
     // round dome light: chrome rim, frosted lens, a wire stapled along a roof rib
     add('flat', new THREE.CylinderGeometry(0.06, 0.064, 0.018, 14), 0, 1.212, -1.08, 0, 0, 0, '#9a9a94');
     add('flat', new THREE.SphereGeometry(0.052, 12, 4, 0, Math.PI * 2, 0, Math.PI / 2), 0, 1.203, -1.08, Math.PI, 0, 0, '#f0ecd8');
     add('flat', boxGeo(0.006, 0.006, 0.5), 0.02, 1.218, -1.35, 0, 0, 0, '#1c1c1c');
     // padded grey visors with sewn edges and a hinge rod
     for (const s of [-1, 1]) {
-      add('flat', boxGeo(0.46, 0.022, 0.17), s * 0.45, 1.2, -1.76, 0.1, 0, 0, '#8e8e8a');
-      add('flat', boxGeo(0.44, 0.024, 0.006), s * 0.45, 1.2, -1.677, 0.1, 0, 0, '#6e6e6a');
-      add('flat', new THREE.CylinderGeometry(0.006, 0.006, 0.46, 5), s * 0.45, 1.214, -1.845, 0, 0, Math.PI / 2, CHROME);
+      add('flat', boxGeo(0.46, 0.022, 0.17), s * 0.45, 1.2, windscreenZ(s*.45,1.2)+.12, 0.1, 0, 0, '#8e8e8a');
+      add('flat', boxGeo(0.44, 0.024, 0.006), s * 0.45, 1.2, windscreenZ(s*.45,1.2)+.203, 0.1, 0, 0, '#6e6e6a');
+      add('flat', new THREE.CylinderGeometry(0.006, 0.006, 0.46, 5), s * 0.45, 1.214, windscreenZ(s*.45,1.214)+.035, 0, 0, Math.PI / 2, CHROME);
     }
-    // (the interior mirror itself is built with the other mirrors, in buildMirrors)
-    // ---- doors: pressed steel with stamped panels, sliding windows
-    for (const s of [-1, 1]) {
-      add('paint', boxGeo(0.035, 0.44, 1.08), s * 0.905, 0.34, -1.24, 0, 0, 0, '#cacac5');
-      for (const z of [-1.5, -0.98]) add('paint', boxGeo(0.02, 0.2, 0.36), s * 0.885, 0.32, z, 0, 0, 0, '#d4d4cf');
-      add('paint', boxGeo(0.07, 0.04, 1.1), s * 0.9, 0.57, -1.24, 0, 0, 0, '#c2c2bd');
-      add('paint', boxGeo(0.05, 0.045, 1.1), s * 0.91, 1.13, -1.24, 0, 0, 0, PILLAR);
-      add('paint', boxGeo(0.035, 0.55, 0.03), s * 0.91, 0.85, -1.3, 0, 0, 0, PILLAR);
-      add('paint', boxGeo(0.09, 1.12, 0.1), s * 0.9, 0.66, -0.68, 0, 0, 0, PILLAR);
-      add('flat', boxGeo(0.03, 0.025, 0.12), s * 0.875, 0.45, -1.5, 0, 0, 0, CHROME);
-      add('flat', boxGeo(0.02, 0.02, 0.05), s * 0.875, 0.45, -1.43, 0, 0, 0, CHROME);
-      add('van', planeGeo(1.18, 0.9, 0, 0, 0.37, 0.56), s * 0.975, 0.09, -1.31, 0, s * Math.PI / 2);
+    // Continuous rounded engine cover: its nose descends below the fascia instead
+    // of covering the radio and switch rail with a vertical half-cylinder end cap.
+    const rings = [[-.43,.49],[-.52,.58],[-.80,.60],[-1.12,.60],[-1.30,.54],[-1.52,.29],[-1.73,.17]];
+    const vertices: number[] = [], indices: number[] = [];
+    for (const [z, top] of rings) {
+      const round = Math.min(.16,(top-FLOOR)*.65);
+      for (const [x,y] of [[-.29,FLOOR],[-.29,top-round],[-.26,top-round*.5],[-.18,top-round*.15],[0,top],[.18,top-round*.15],[.26,top-round*.5],[.29,top-round],[.29,FLOOR]]) vertices.push(x+.055,y,z);
     }
-    // ---- engine cover between the seats: dark grey padded leatherette with sewn ribs
-    const hump = new THREE.CylinderGeometry(0.29, 0.29, 0.8, 14, 1, false, Math.PI / 2, Math.PI);
-    hump.rotateX(Math.PI / 2);
-    hump.scale(1, 0.62, 1);
-    add('flat', boxGeo(0.58, 0.3, 0.8), 0.2, FLOOR + 0.15, -1.2, 0, 0, 0, '#3e3e3d');
-    add('flat', hump, 0.2, FLOOR + 0.3, -1.2, 0, 0, 0, HUMP);
-    add('flat', boxGeo(0.58, 0.2, 0.2), 0.2, 0.36, -1.62, 0.55, 0, 0, '#454544');
-    for (const z of [-1.48, -1.2, -0.92]) {
-      const rib = new THREE.CylinderGeometry(0.293, 0.293, 0.014, 14, 1, true, Math.PI / 2, Math.PI);
-      rib.rotateX(Math.PI / 2);
-      rib.scale(1, 0.62, 1);
-      add('flat', rib, 0.2, FLOOR + 0.3, z, 0, 0, 0, '#2c2c2b');
+    const n=9;
+    for(let k=0;k<rings.length-1;k++)for(let j=0;j<n;j++){
+      const a=k*n+j, c=k*n+(j+1)%n, d=(k+1)*n+j, e=(k+1)*n+(j+1)%n;
+      indices.push(a,d,e,a,e,c);
     }
-    add('flat', boxGeo(0.012, 0.008, 0.8), 0.2, FLOOR + 0.48, -1.2, 0, 0, 0, '#2c2c2b');
-    // cover latches and the hinge strip along the front
-    for (const x of [-0.09, 0.49]) for (const z of [-1.45, -0.95]) {
-      add('flat', boxGeo(0.014, 0.05, 0.05), x, FLOOR + 0.28, z, 0, 0, 0, '#2a2a28');
-      add('flat', boxGeo(0.016, 0.014, 0.03), x + Math.sign(x - 0.2) * 0.004, FLOOR + 0.3, z, 0, 0, 0, CHROME);
+    for(let j=1;j<n-1;j++) { indices.push(0,j,j+1); const o=(rings.length-1)*n; indices.push(o,o+j+1,o+j); }
+    for(let i=0;i<indices.length;i+=3) [indices[i+1],indices[i+2]]=[indices[i+2],indices[i+1]];
+    const cover=new THREE.BufferGeometry();cover.setAttribute('position',new THREE.Float32BufferAttribute(vertices,3));cover.setIndex(indices);cover.computeVertexNormals();
+    const coverUV:number[]=[];for(let i=0;i<vertices.length;i+=3)coverUV.push(vertices[i]*2,vertices[i+2]*2);
+    cover.setAttribute('uv',new THREE.Float32BufferAttribute(coverUV,2));
+    add('seat',cover,0,0,0,0,0,0,'#a7aca5');
+    // Rear seam only; the sloping nose remains clear of floating trim and papers.
+    add('flat',boxGeo(.012,.005,.28),.055,.603,-.96,0,0,0,'#343a33');
+    for(const x of [-.235,.345])for(const z of [-1.12,-.92]) {
+      add('flat',boxGeo(.014,.04,.04),x,.36,z,0,0,0,'#343a33');
+      add('flat',boxGeo(.016,.012,.025),x,.38,z,0,0,0,CHROME);
     }
-    add('flat', boxGeo(0.56, 0.014, 0.02), 0.2, FLOOR + 0.33, -1.6, 0, 0, 0, '#8a8a84');
-    // the postman's clutter on the hump
-    add('newspaper', boxGeo(0.3, 0.05, 0.22, 0.3), 0.24, 0.625, -1.42, 0, 0.25, -0.05);
-    add('newspaper', boxGeo(0.28, 0.01, 0.2, 0.28), 0.2, 0.655, -1.4, 0, -0.2);
-    // the thermos on the floor between the seats, by the fire extinguisher: out of the way of whoever rides
-    // in the right-hand seat, and out of the driver's view
-    add('flat', new THREE.CylinderGeometry(0.045, 0.045, 0.27, 8), 0.2, FLOOR + 0.135, -0.62, 0, 0, 0, '#5a7a5a');
-    add('flat', new THREE.CylinderGeometry(0.047, 0.047, 0.05, 8), 0.2, FLOOR + 0.285, -0.62, 0, 0, 0, '#9a9a98');
-    add('waybill', boxGeo(0.22, 0.012, 0.3, 0.3), 0.1, 0.61, -1.08, 0, 0.15, 0.04);
-    // ---- seats: dark vinyl cushions on painted boxes
-    // (the driver's seat is slid forward to the pedals and sits lower, the way a person fits the cab)
-    for (const x of [-0.48, 0.62]) {
-      const dz = x < 0 ? -0.2 : 0;
-      add('seat', boxGeo(0.5, 0.12, 0.46), x, 0.28, -0.6 + dz);
-      add('seat', boxGeo(0.5, 0.58, 0.1), x, 0.62, -0.36 + dz, 0.12);
-      add('paint', boxGeo(0.46, 0.22, 0.42), x, 0.15, -0.6 + dz, 0, 0, 0, '#7a7a76');
-    }
+    addCabinDocuments(b);
+    // Thermos beside the passenger footwell, clear of the extended engine cover.
+    add('flat', new THREE.CylinderGeometry(0.045, 0.045, 0.27, 8), 0.79, FLOOR + 0.135, -1.18, 0, 0, 0, '#5a7a5a');
+    add('flat', new THREE.CylinderGeometry(0.047, 0.047, 0.05, 8), 0.79, FLOOR + 0.285, -1.18, 0, 0, 0, '#9a9a98');
     // ---- steering column rising steeply out of the floor
     add('flat', new THREE.CylinderGeometry(0.022, 0.022, 0.62, 6), -0.42, WHEEL_Y - 0.25, -1.62, 0.73, 0, 0, '#1c1c1c');
     add('flat', new THREE.CylinderGeometry(0.04, 0.046, 0.2, 8), -0.42, WHEEL_Y - 0.085, -1.5, 0.73, 0, 0, DARK);
-    // ---- outer mirror arms (round heads are built with the mirror glass)
-    for (const s of [-1, 1]) {
-      // arms run behind the mirror head so they never cross the glass
-      add('flat', new THREE.CylinderGeometry(0.01, 0.01, 0.34, 5), s * 1.03, 0.8, -1.95, 0, 0, Math.PI / 2 - s * 0.12, '#1e1e1e');
-      add('flat', new THREE.CylinderGeometry(0.01, 0.01, 0.24, 5), s * 1.1, 0.72, -1.95, 0, 0, s * 0.9, '#1e1e1e');
-    }
     this.buildDetails(add);
     this.buildBulkheadAndCargo(add);
     // ---- exterior shell, seen in the side mirrors
@@ -500,12 +391,10 @@ export class Cabin {
   private buildDetails(add: (key: string, g: THREE.BufferGeometry, x: number, y: number, z: number, rx?: number, ry?: number, rz?: number, c?: THREE.ColorRepresentation) => void): void {
     const DARK = '#1a1a18', CHROME = '#9a9a92';
     // heater ("печка") hung under the dash, its fan drum and hoses into the front wall
-    add('paint', boxGeo(0.34, 0.17, 0.22), 0.3, 0.1, -1.79, 0, 0, 0, '#5e5e52');
-    add('paint', new THREE.CylinderGeometry(0.085, 0.085, 0.12, 10), 0.53, 0.1, -1.79, 0, 0, Math.PI / 2, '#4e4e44');
-    for (const x of [0.2, 0.38]) add('flat', new THREE.CylinderGeometry(0.018, 0.018, 0.28, 6), x, 0.04, -1.86, 1.2, 0, 0, DARK);
-    add('flat', boxGeo(0.02, 0.06, 0.012), 0.22, 0.155, -1.672, 0, 0, 0.3, '#2a2a28');
-    // windscreen demister slots on the dash top
-    for (const x of [-0.45, 0.45]) add('flat', boxGeo(0.3, 0.006, 0.035), x, 0.497, -1.9, 0, 0, 0, '#222220');
+    add('paint', boxGeo(0.34, 0.17, 0.22), 0.3, 0.20, -1.79, 0, 0, 0, '#5e5e52');
+    add('paint', new THREE.CylinderGeometry(0.085, 0.085, 0.12, 10), 0.53, 0.20, -1.79, 0, 0, Math.PI / 2, '#4e4e44');
+    for (const x of [0.2, 0.38]) add('flat', new THREE.CylinderGeometry(0.018, 0.018, 0.28, 6), x, 0.16, -1.86, 1.2, 0, 0, DARK);
+    add('flat', boxGeo(0.02, 0.06, 0.012), 0.22, 0.255, -1.672, 0, 0, 0.3, '#2a2a28');
     // wiring loom sagging under the dash, a few coloured strays
     for (let i = 0; i < 8; i++) {
       const x0 = -0.82 + i * 0.12, sag = Math.sin((i / 7) * Math.PI) * 0.03;
@@ -517,51 +406,43 @@ export class Cabin {
       add('flat', new THREE.CylinderGeometry(0.004, 0.004, 0.03, 4), x, 0.255, -1.65, Math.PI / 2, 0, 0, CHROME);
       add('flat', new THREE.CylinderGeometry(0.013, 0.013, 0.018, 8), x, 0.255, -1.633, Math.PI / 2, 0, 0, c);
     }
-    // slotted screw heads along the dash face and the glovebox
-    for (let x = -0.85; x <= 0.86; x += 0.17) add('flat', new THREE.CylinderGeometry(0.006, 0.006, 0.006, 6), x, 0.448, -1.666, Math.PI / 2, 0, 0, '#8a8676');
     // cigarettes and matches on the dash top
     add('flat', boxGeo(0.055, 0.022, 0.085), 0.36, 0.507, -1.74, 0, 0.3, 0, '#d4c49a');
     add('flat', boxGeo(0.056, 0.023, 0.03), 0.36, 0.508, -1.74, 0, 0.3, 0, '#a8281e');
     add('flat', boxGeo(0.05, 0.016, 0.036), 0.27, 0.504, -1.7, 0, -0.2, 0, '#d8b84a');
-    // seat piping and tubular frames
-    for (const x of [-0.48, 0.62]) {
-      add('flat', boxGeo(0.5, 0.018, 0.018), x, 0.48, -0.37, 0, 0, 0, '#2c2c2c');
-      add('flat', boxGeo(0.5, 0.016, 0.016), x, 0.47, -0.83, 0, 0, 0, '#2c2c2c');
-      for (const sx of [-0.24, 0.24]) add('flat', boxGeo(0.016, 0.58, 0.016), x + sx, 0.76, -0.31, 0.12, 0, 0, '#2c2c2c');
-      for (const sx of [-0.22, 0.22]) add('flat', new THREE.CylinderGeometry(0.012, 0.012, 0.3, 5), x + sx, 0.22, -0.82, 0, 0, 0, '#2a2a26');
-    }
-    // fire extinguisher clamped by the passenger seat
-    add('flat', new THREE.CylinderGeometry(0.048, 0.048, 0.3, 8), 0.33, FLOOR + 0.17, -0.42, 0, 0, 0, '#a8281e');
-    add('flat', boxGeo(0.06, 0.05, 0.05), 0.33, FLOOR + 0.35, -0.42, 0, 0, 0, '#2a2a28');
+    // Fire extinguisher clamped outside the driver seat, clear of the engine cover.
+    add('flat', new THREE.CylinderGeometry(0.048, 0.048, 0.3, 8), -0.81, FLOOR + 0.17, -0.45, 0, 0, 0, '#a8281e');
+    add('flat', boxGeo(0.06, 0.05, 0.05), -0.81, FLOOR + 0.35, -0.45, 0, 0, 0, '#2a2a28');
     // dried mud clods on the floor mat
     const r = mulberry32(919);
     for (let i = 0; i < 14; i++) {
       const x = -0.75 + r() * 0.75, z = -1.75 + r() * 1.0;
       add('flat', new THREE.SphereGeometry(0.03 + r() * 0.04, 5, 3), x, FLOOR + 0.005, z, 0, r() * 3, 0, ['#3a3024', '#4a3c2a', '#2e261c'][i % 3]);
     }
-    // door hardware: sliding-window latches, pull straps, window channels
-    for (const s of [-1, 1]) {
-      add('flat', boxGeo(0.03, 0.03, 0.05), s * 0.895, 0.62, -1.32, 0, 0, 0, CHROME);
-      add('flat', boxGeo(0.012, 0.03, 0.2), s * 0.875, 0.52, -1.0, 0, 0, 0, '#3a2a1e');
-      add('flat', boxGeo(0.02, 0.02, 1.08), s * 0.918, 0.6, -1.24, 0, 0, 0, '#1c1c1a');
-      add('flat', boxGeo(0.02, 0.02, 1.08), s * 0.918, 1.11, -1.24, 0, 0, 0, '#1c1c1a');
-    }
+
   }
 
   /** Transparent / animated / canvas-textured extras that cannot go through the bucket. */
   private buildExtras(): void {
-    // dirty sliding door glass: front pane slides behind the rear one
-    const glassMat = new THREE.MeshBasicMaterial({ color: '#a8b0a8', transparent: true, opacity: 0.1, depthWrite: false, side: THREE.DoubleSide, fog: false });
-    for (const s of [-1, 1]) for (const [z, dx] of [[-1.56, 0], [-1.04, 0.012]] as [number, number][]) {
-      const g = new THREE.Mesh(new THREE.PlaneGeometry(0.52, 0.5), glassMat);
-      g.position.set(s * (0.918 - dx), 0.86, z);
-      g.rotation.y = Math.PI / 2;
-      g.renderOrder = 4;
-      this.group.add(g);
+    // Glass uses the exact door aperture; quarterlight and main pane share one
+    // aperture. The driver's main pane moves independently of its fixed quarterlight.
+    const glassMat = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: .08, depthWrite: false, side: THREE.DoubleSide, forceSinglePass: true, fog: false });
+    const glassBucket=new Bucket();
+    for(const s of [-1,1]) for(const quarterlight of [false,true]) {
+      if (s === -1 && !quarterlight) continue;
+      const w=SIDE_WINDOW;
+      const g=new THREE.ShapeGeometry(sideWindowPane(quarterlight));
+      g.rotateY(Math.PI/2);g.translate(s*w.x,0,0);
+      glassBucket.add('glass',g,undefined,quarterlight ? '#a9b8a5' : '#bdc9bb');
     }
+    const sideGlass=glassBucket.build({glass:glassMat},'door-glass');
+    sideGlass.children.forEach(g=>g.renderOrder=4);this.group.add(sideGlass);
+    this.windowWinder = new WindowWinder(this.group);
+    this.windowWinder.onWind = (down) => this.onWindowWind?.(down);
     // "Ветерок" dashboard fan
     const fan = new THREE.Group();
-    fan.position.set(0.7, 0.63, -1.79);
+    fan.name='dashboard-fan';
+    fan.position.set(.7,.63,windscreenZ(.7,.63)+.125);
     fan.rotation.y = -1.0;
     fan.scale.setScalar(1.35);
     const black = M('#1e1e1c');
@@ -653,8 +534,8 @@ export class Cabin {
     add('flat', boxGeo(0.3, 0.22, 0.3), 0.42, Y0 + 0.43, 1.83, 0, -0.1, 0, '#c49a62');
     add('flat', new THREE.CylinderGeometry(0.38, 0.38, 0.22, 10), 0.55, Y0 + 0.4, BACK - 0.16, Math.PI / 2, 0, 0, '#1a1a1a');
     add('flat', new THREE.CylinderGeometry(0.17, 0.17, 0.23, 8), 0.55, Y0 + 0.4, BACK - 0.16, Math.PI / 2, 0, 0, '#5a6a5a');
-    // a sack slumped against the partition, visible over the shoulder
-    add('sack', new THREE.SphereGeometry(0.28, 7, 5), 0.06, 0.3, -0.5, 0, 0.4, 0);
+    // A mail sack behind the partition, clear of the engine cover and seats.
+    add('sack', new THREE.SphereGeometry(0.28, 7, 5), 0.06, 0.3, 0.30, 0, 0.4, 0);
   }
 
   private addHit(id: HotspotId, label: string, g: THREE.BufferGeometry, x: number, y: number, z: number, parent: THREE.Object3D = this.group): THREE.Mesh {
@@ -663,6 +544,17 @@ export class Cabin {
     parent.add(m);
     this.hotspots.push({ mesh: m, id, label });
     return m;
+  }
+
+  /** Preserve the animation root while batching its rigid, direct mesh children. */
+  private mergeRigid(root: THREE.Group, name: string): void {
+    const bucket=new Bucket(), materials: Record<string,THREE.Material>={};
+    for(const object of [...root.children]) {
+      if(!(object instanceof THREE.Mesh)||Array.isArray(object.material))continue;
+      const key=object.material.uuid;materials[key]=object.material;
+      object.updateMatrix();bucket.add(key,object.geometry,object.matrix);root.remove(object);
+    }
+    root.add(bucket.build(materials,name));
   }
 
   private buildWheel(): void {
@@ -674,8 +566,8 @@ export class Cabin {
     tilt.add(this.wheel);
     // big thin black bakelite three-spoke wheel with a smooth round rim
     const black = new THREE.MeshLambertMaterial({ color: '#141414', emissive: '#050505' });
-    const R = 0.245;
-    this.wheel.add(new THREE.Mesh(new THREE.TorusGeometry(R, 0.0115, 8, 56), black));
+    const R = WHEEL_R;
+    this.wheel.add(new THREE.Mesh(new THREE.TorusGeometry(R, 0.0115, 6, 32), black));
     for (const a of [-90, 30, 150]) {
       // flat steel spokes sleeved in black plastic, widening into the hub
       const sp = new THREE.Mesh(new THREE.BoxGeometry(0.016, R - 0.05, 0.006), black);
@@ -693,11 +585,12 @@ export class Cabin {
     hub.rotation.x = Math.PI / 2;
     hub.position.z = -0.03;
     hub.scale.set(1, 0.6, 1);
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.05, 0.005, 4, 14), M('#9a9a94'));
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.048, 0.0025, 4, 16), M('#747e70'));
     ring.position.z = -0.03;
-    const cap = new THREE.Mesh(new THREE.CircleGeometry(0.02, 10), M('#7a1e18'));
+    const cap = new THREE.Mesh(new THREE.CircleGeometry(0.043, 16), M('#333a34'));
     cap.position.z = 0.004;
     this.wheel.add(hub, ring, cap);
+    this.mergeRigid(this.wheel, 'steering-wheel');
     this.addHit('horn', 'Клаксон · H', new THREE.CylinderGeometry(0.08, 0.08, 0.08, 8), 0, 0, 0, tilt).rotation.x = Math.PI / 2;
   }
 
@@ -716,10 +609,12 @@ export class Cabin {
   private buildLevers(): void {
     // long cranked gear lever and the two transfer-case levers rising out of the floor
     this.lever(this.gearLever, -0.13, -1.4, 0.66, '#151515');
-    this.lever(this.lever4, -0.19, -1.02, 0.46, '#7a2a22');
-    this.lever(this.leverLow, -0.12, -1.02, 0.46, '#151515');
-    this.addHit('4wd', 'Передний мост · Z', new THREE.BoxGeometry(0.09, 0.12, 0.09), 0, 0.43, 0, this.lever4);
-    this.addHit('low', 'Понижающая передача · X', new THREE.BoxGeometry(0.09, 0.12, 0.09), 0, 0.43, 0, this.leverLow);
+    this.lever(this.lever4, .20, -1.56, .30, '#25251f');
+    this.lever4.position.y=.235;
+    this.lever(this.leverLow, .30, -1.50, .30, '#151515');
+    this.leverLow.position.y=.235;
+    this.addHit('4wd', 'Передний мост · Z', new THREE.BoxGeometry(.065, .075, .065), 0, .30, 0, this.lever4);
+    this.addHit('low', 'Понижающая передача · X', new THREE.BoxGeometry(.065, .075, .065), 0, .30, 0, this.leverLow);
     this.handbrake.position.set(-0.2, FLOOR, -1.58);
     const rod = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.42, 0.03), M('#2a2a2a'));
     rod.position.y = 0.21;
@@ -727,12 +622,12 @@ export class Cabin {
     grip.position.y = 0.44;
     this.handbrake.add(rod, grip);
     this.group.add(this.handbrake);
-    this.addHit('handbrake', 'Ручник · Пробел', new THREE.BoxGeometry(0.1, 0.2, 0.1), 0, 0.38, 0, this.handbrake);
+    this.addHit('handbrake', 'Ручник · Пробел', new THREE.BoxGeometry(0.055, 0.08, 0.055), 0, 0.44, 0, this.handbrake);
   }
 
   private toggle(x: number, id: HotspotId, label: string): THREE.Object3D {
     const g = new THREE.Group();
-    g.position.set(x, 0.405, -1.676);
+    g.position.set(x, DASH_CONTROLS.y, DASH_CONTROLS.z);
     const bez = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.008, 8), M('#8a8a86'));
     bez.rotation.x = Math.PI / 2;
     const stick = new THREE.Mesh(new THREE.CylinderGeometry(0.004, 0.005, 0.03, 5), M('#d8d8d0'));
@@ -748,14 +643,16 @@ export class Cabin {
 
   private buildGlass(): void {
     const frame = new THREE.Group();
-    frame.position.set(0, 0.5, -1.93);
-    frame.rotation.x = 0.11;
+    frame.name='windscreen-assembly';
+    frame.position.set(0, WINDSCREEN.bottomY, WINDSCREEN.bottomZ);
+    frame.rotation.x = WINDSCREEN.angle;
+    const glassHeight=windscreenSlantHeight;
     this.group.add(frame);
     const r = mulberry32(77);
     for (const [cx, pivotX] of [[-GX, -0.8], [GX, -0.04]]) {
       const canvas = makeCanvas(PW, PH);
       const ctx = canvas.getContext('2d')!;
-      const pivot: [number, number] = [((pivotX - cx + GW / 2) / GW) * PW, (1 - 0.03 / 0.62) * PH];
+      const pivot: [number, number] = [((pivotX - cx + GW / 2) / GW) * PW, (1 - 0.03 / glassHeight) * PH];
       const base = ctx.createImageData(PW, PH);
       const fog = new Float32Array(PW * PH), film = new Float32Array(PW * PH), bias = new Float32Array(PW * PH), grain = new Float32Array(PW * PH);
       for (let y = 0; y < PH; y++) for (let x = 0; x < PW; x++) {
@@ -774,8 +671,8 @@ export class Cabin {
         grain[k] = noise2(x * 0.9, y * 0.9, 13);
       }
       const tex = toTex(canvas, { repeat: false, mip: false });
-      const mesh = new THREE.Mesh(bendGeo(new THREE.PlaneGeometry(GW, 0.62, 10, 1), cx), new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, fog: false }));
-      mesh.position.set(cx, 0.31, 0.004);
+      const mesh = new THREE.Mesh(bendGeo(new THREE.PlaneGeometry(GW, glassHeight, 10, 1), cx), new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, fog: false }));
+      mesh.position.set(cx, glassHeight/2, 0.004);
       mesh.renderOrder = 5;
       frame.add(mesh);
       this.panes.push({ canvas, ctx, base, out: ctx.createImageData(PW, PH), tex, mesh, drops: [], cracks: [], pivot, fog, film, bias, grain });
@@ -792,7 +689,7 @@ export class Cabin {
       this.wipers.push(w);
     }
     // painted frame with a rounded opening, and the black rubber seal following it
-    const R0 = 0.115, ih = 0.62;
+    const R0 = 0.115, ih = glassHeight;
     const hole = roundedRect(-GW, 0, GW, ih, R0);
     const panel = new THREE.Shape(roundedRect(-0.95, -0.07, 0.95, ih + 0.09, 0.02));
     panel.holes.push(new THREE.Path([...hole].reverse()));
@@ -807,38 +704,39 @@ export class Cabin {
 
   private buildMirrors(): void {
     const flip = (rt: THREE.WebGLRenderTarget) => { rt.texture.repeat.set(-1, 1); rt.texture.offset.set(1, 0); return rt.texture; };
-    // round outside mirrors on long arms, like the real Bukhanka
+    // Rounded rectangular steel-backed mirrors, as in the primary cabin photo
     for (const s of [-1, 1]) {
-      const rt = new THREE.WebGLRenderTarget(56, 56, { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
+      const rt = new THREE.WebGLRenderTarget(56, 64, { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
       const ry = s < 0 ? 0.25 : -0.35;
       const head = new THREE.Group();
       head.position.set(s * 1.2, 0.84, -1.885);
       head.rotation.y = ry;
-      const shell = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.092, 0.035, 14), M('#161616'));
-      shell.rotation.x = Math.PI / 2;
-      const glass = new THREE.Mesh(new THREE.CircleGeometry(0.088, 14), new THREE.MeshBasicMaterial({ map: flip(rt), color: '#c8d0d4', fog: false }));
+      const shell = new THREE.Mesh(cabinCushion(.17,.21,.035,.018,.004), M('#20241f'));
+      const glass = new THREE.Mesh(new THREE.ShapeGeometry(cabinOutline(-.074,-.092,.074,.092,.012)), new THREE.MeshBasicMaterial({ map: flip(rt), color: '#c8d0d4', fog: false }));
       glass.position.z = 0.019;
       head.add(shell, glass);
       this.group.add(head);
       head.updateMatrix();
       const pos = new THREE.Vector3(0, 0, 0.019).applyMatrix4(head.matrix);
-      const cam = new THREE.PerspectiveCamera(26, 1, 0.3, 260);
+      const cam = new THREE.PerspectiveCamera(26, .148/.184, 0.3, 260);
       this.mirrors.push({ glass, cam, rt, pos, normal: new THREE.Vector3(Math.sin(ry), 0, Math.cos(ry)) });
     }
     // interior mirror on a stalk from the header, angled so the driver sees straight back through the cargo bay
-    const pos = new THREE.Vector3(0, 0.99, -1.775);
+    const pos = new THREE.Vector3(0, 0.99, windscreenZ(0,.99)+.11);
     const normal = new THREE.Vector3().subVectors(EYE, pos).normalize().add(new THREE.Vector3(0, 0, 1)).normalize();
     const rt = new THREE.WebGLRenderTarget(84, 26, { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
     const glass = new THREE.Mesh(new THREE.PlaneGeometry(0.152, 0.047), new THREE.MeshBasicMaterial({ map: flip(rt), color: '#d6dada', fog: false }));
     glass.position.copy(pos);
     glass.lookAt(pos.clone().add(normal));
     this.group.add(glass);
-    const housing = new THREE.Mesh(new THREE.BoxGeometry(0.168, 0.062, 0.02), M('#151515'));
+    const housing = new THREE.Mesh(cabinCushion(.168,.062,.02,.007,.002), M('#151515'));
     housing.position.copy(pos).addScaledVector(normal, -0.012);
     housing.quaternion.copy(glass.quaternion);
-    const stalk = new THREE.Mesh(new THREE.CylinderGeometry(0.007, 0.007, 0.13, 6), M('#1c1c1c'));
-    stalk.position.set(0, 1.06, -1.8);
-    stalk.rotation.x = -0.1;
+    const mount=new THREE.Vector3(0,1.17,windscreenZ(0,1.17)+.04);
+    const neck=pos.clone().add(new THREE.Vector3(0,.025,-.012));
+    const stalk = new THREE.Mesh(new THREE.CylinderGeometry(.007,.007,mount.distanceTo(neck),6),M('#1c1c1c'));
+    stalk.position.copy(mount).add(neck).multiplyScalar(.5);
+    stalk.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),mount.clone().sub(neck).normalize());
     this.group.add(housing, stalk);
     this.mirrors.push({ glass, cam: new THREE.PerspectiveCamera(22, 0.152 / 0.047, 0.05, 160), rt, pos, normal });
   }
@@ -850,7 +748,7 @@ export class Cabin {
     g.beginPath(); g.moveTo(8, 0); g.lineTo(14, 8); g.lineTo(11, 8); g.lineTo(15, 15); g.lineTo(11, 15); g.lineTo(13, 21); g.lineTo(3, 21); g.lineTo(5, 15); g.lineTo(1, 15); g.lineTo(5, 8); g.lineTo(2, 8); g.closePath(); g.fill();
     g.fillStyle = '#e8e0c0'; g.fillRect(7, 21, 2, 3);
     const tex = toTex(c, { repeat: false, mip: false });
-    this.fresh.position.set(0, 1.04, -1.8);
+    this.fresh.position.set(0, .965, windscreenZ(0,.99)+.126);
     const str = new THREE.Mesh(new THREE.BoxGeometry(0.003, 0.1, 0.003), M('#d8d0b8'));
     str.position.y = -0.05;
     const card = new THREE.Mesh(new THREE.PlaneGeometry(0.05, 0.075), new THREE.MeshLambertMaterial({ map: tex, alphaTest: 0.5, side: THREE.DoubleSide }));
@@ -882,11 +780,24 @@ export class Cabin {
       g.fillText('ЛУЧШЕМУ', 20, 31); g.fillText('ВОДИТЕЛЮ', 20, 38);
     });
     const pennant = new THREE.Mesh(new THREE.PlaneGeometry(0.09, 0.126), new THREE.MeshLambertMaterial({ map: pen, alphaTest: 0.5, side: THREE.DoubleSide }));
-    pennant.position.set(-0.3, 1.075, -1.83);
-    pennant.rotation.set(0.08, 0.05, 0.02);
-    const cord = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.004, 0.004), M('#d8b24a'));
-    cord.position.set(-0.3, 1.14, -1.832);
-    this.group.add(pennant, cord);
+    const award=new THREE.Group();
+    award.name='driver-award';
+    // A visible suction mount just below the top seal, left of the mirror.
+    // The cloth hangs vertically into the cab; it is not buried in the header.
+    award.position.set(-.29,1.098,windscreenZ(-.29,1.098)+.018);
+    pennant.name='driver-award-cloth';
+    pennant.position.set(0,-.099,.005);
+    const cordBucket=new Bucket();
+    for(const x of [-.043,.043]) {
+      const end=new THREE.Vector3(x,-.036,.005),mid=end.clone().multiplyScalar(.5);
+      const geo=new THREE.CylinderGeometry(.0015,.0015,end.length(),4);
+      geo.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0),end.clone().normalize()));
+      cordBucket.add('cord',geo,mat(mid.x,mid.y,mid.z));
+    }
+    const hook=new THREE.Mesh(new THREE.CircleGeometry(.009,10),M('#454a3d'));
+    hook.rotation.x=WINDSCREEN.angle;
+    award.add(pennant,hook,cordBucket.build({cord:M('#c7a452')},'award-cord'));
+    this.group.add(award);
 
     // amber prayer beads with a little cross, swinging with the freshener
     const bead = new THREE.SphereGeometry(0.0065, 5, 4);
@@ -902,6 +813,7 @@ export class Cabin {
     const crossH = new THREE.Mesh(new THREE.BoxGeometry(0.016, 0.004, 0.003), M('#c8a848'));
     crossH.position.set(-0.03, -0.122, 0.004);
     this.fresh.add(crossV, crossH);
+    this.mergeRigid(this.fresh, 'hanging-trinkets');
 
     // TO coupon stuck inside the glass, lower corner of the right pane
     const to = canvasTex(32, 32, (g) => {
@@ -911,8 +823,8 @@ export class Cabin {
       g.fillStyle = '#a81e1a'; g.font = 'bold 8px sans-serif'; g.fillText('1998', 16, 24);
     });
     const coupon = new THREE.Mesh(new THREE.PlaneGeometry(0.06, 0.06), new THREE.MeshBasicMaterial({ map: to, alphaTest: 0.5, color: '#cfcfc8', side: THREE.DoubleSide }));
-    coupon.position.set(0.12, 0.575, -1.906);
-    coupon.rotation.x = 0.11;
+    coupon.position.set(0.12, 0.575, windscreenZ(.12,.575)+.010);
+    coupon.rotation.x = WINDSCREEN.angle;
     this.group.add(coupon);
 
     // cardboard "ПОЧТА" card leaning on the right pane, seen from behind: the
@@ -926,8 +838,8 @@ export class Cabin {
       g.fillStyle = 'rgba(230,210,140,0.75)'; g.fillRect(4, 0, 12, 9); g.fillRect(80, 0, 12, 9);
     });
     const placard = new THREE.Mesh(new THREE.PlaneGeometry(0.3, 0.125), new THREE.MeshLambertMaterial({ map: card }));
-    placard.position.set(0.52, 0.565, -1.9);
-    placard.rotation.set(0.24, -0.06, 0);
+    placard.position.set(0.52, 0.565, windscreenZ(.52,.565)+.014);
+    placard.rotation.set(WINDSCREEN.angle, -0.06, 0);
     this.group.add(placard);
 
     // a spare cassette in its cracked case on the dash top
@@ -950,11 +862,11 @@ export class Cabin {
     // gauges
     const kmh = Math.abs(v.speedKmh);
     const jitter = v.engine === 'running' ? Math.sin(performance.now() * 0.03) * 0.6 : 0;
-    this.needles.speed.rotation.z = -(135 + (270 * clamp(kmh + jitter * (kmh > 2 ? 1 : 0), 0, 125)) / 120) * D2R;
+    this.needles.speed.rotation.z = (135 - 270 * clamp(kmh + jitter * (kmh > 2 ? 1 : 0), 0, 120) / 120) * D2R;
     const running = v.engine === 'running';
     // coolant temperature from the engine's own (Vehicle.heat: 0.55 is 86 °C, 1 is boiling)
     this.temp = damp(this.temp, 40 + v.heat * 84, 2, dt);
-    const small = (n: THREE.Mesh, f: number) => { n.rotation.z = -(225 + 90 * clamp(f, 0, 1)) * D2R; };
+    const small = (n: THREE.Object3D, f: number) => { n.rotation.z = -(225 + 90 * clamp(f, 0, 1)) * D2R; };
     small(this.needles.fuel, v.fuel);
     small(this.needles.temp, (this.temp - 40) / 80);
     small(this.needles.oil, running ? 0.25 + (v.rpm / 4200) * 0.55 : 0);
@@ -964,7 +876,7 @@ export class Cabin {
     setLamp(this.lamps.oil, !running || v.rpm < IDLE * 0.6);
     setLamp(this.lamps.charge, !running);
     setLamp(this.lamps.beam, this.lightsOn);
-    this.clusterMat.emissiveIntensity = this.lightsOn ? 0.55 : 0;
+    this.dashboard.setIllumination(this.lightsOn);
     this.dashLight.intensity = this.lightsOn ? 0.25 * dark : 0;
     for (const s of this.spots) s.intensity = this.lightsOn ? 70 : 0;
 
@@ -994,8 +906,8 @@ export class Cabin {
   }
 
   private updateHands(dt: number, v: Vehicle): void {
-    // the ignition key turns while the starter runs, springs back when the engine catches
-    const goal = v.engine === 'cranking' ? -0.9 : v.engine === 'running' ? -0.35 : 0;
+    // toward the starter while the key is held, full over while it cranks, back to On once the engine runs
+    const goal = v.engine === 'cranking' ? -0.9 : v.engine === 'running' ? -0.35 : -0.9 * this.keyTurn;
     this.key.rotation.z = damp(this.key.rotation.z, goal, 12, dt);
     this.wheel.updateMatrix();
     // a gear change takes the right hand off the wheel onto the lever
@@ -1007,8 +919,16 @@ export class Cabin {
       }
     }
     this.regrip(dt);
+    this.windowWinder.update(dt, this.hands);
+    const windowHit = this.hotspots.find(h => h.id === 'window');
+    if (windowHit) windowHit.label = this.windowOpening > .5 ? 'Поднять стекло · O' : 'Опустить стекло · O';
+    const keyHit = this.hotspots.find(h => h.id === 'start');
+    if (keyHit) keyHit.label = v.engine === 'running' ? 'Заглушить · I' : v.engine === 'cranking' ? 'Заводится…' : this.keyTurn > 0 ? 'Держите…' : 'Завести · I';
+    this.smoker.updateMouth();
     this.hands.update(dt);
     this.smoker.speed = v.speedKmh;
+    this.smoker.windowOpening = this.windowOpening;
+    this.smoker.ventilation = this.ventOn ? 1 : 0;
     this.smoker.update(dt);
   }
 
@@ -1034,7 +954,9 @@ export class Cabin {
       if (other.t >= 0 && !otherFree) continue;
       if (this.hands.busy(side)) continue;
       const dir = Math.abs(turning) > 1e-3 ? Math.sign(turning) : Math.sign(d);
-      g.at = ideal - dir * 38 - rot;
+      g.from = g.at;
+      const change = ideal - dir * 38 - rot - g.from;
+      g.at = g.from + THREE.MathUtils.euclideanModulo(change + 180, 360) - 180;
       g.t = 0;
     }
   }
@@ -1049,9 +971,10 @@ export class Cabin {
     } else {
       this.wiperPhase = 0;
       this.wiperA = 0;
+      this.wiperDir = -1;
     }
     const dir = Math.sign(this.wiperA - prev);
-    if (dir !== 0 && dir !== this.wiperDir) { this.wiperDir = dir; this.onWiperEnd?.(); }
+    if (dir !== 0 && dir !== this.wiperDir) { this.wiperDir = dir; this.onWiperEnd?.(this.wiperDir); }
     for (const w of this.wipers) w.rotation.z = this.wiperA;
     if (this.wiperA !== prev) this.sweep(prev, this.wiperA);
   }

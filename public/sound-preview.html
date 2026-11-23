@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Звуки «Сельской почты» · Заводка УАЗа и реальный клаксон</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=PT+Mono&family=PT+Sans:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #14171c;
+      --card: #1c212a;
+      --border: #2e3746;
+      --accent: #3b82f6;
+      --accent-gold: #f59e0b;
+      --text: #e2e8f0;
+      --text-dim: #94a3b8;
+      --green: #10b981;
+      --red: #ef4444;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'PT Sans', system-ui, sans-serif;
+      min-height: 100vh;
+      padding: 24px 16px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .container {
+      width: 100%;
+      max-width: 860px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+    header {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+    }
+    h1 {
+      font-size: 22px;
+      margin-bottom: 8px;
+      color: #fff;
+    }
+    .desc {
+      color: var(--text-dim);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    .section-title {
+      font-size: 17px;
+      font-weight: 700;
+      color: var(--accent-gold);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 12px 14px;
+      background: rgba(0,0,0,0.2);
+      border: 1px solid rgba(255,255,255,0.05);
+      border-radius: 8px;
+    }
+    .item.recommended {
+      border-color: rgba(59, 130, 246, 0.4);
+      background: rgba(59, 130, 246, 0.06);
+    }
+    .item-info {
+      flex: 1;
+    }
+    .item-title {
+      font-weight: 700;
+      font-size: 15px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .tag {
+      font-family: 'PT Mono', monospace;
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: var(--border);
+      color: var(--text-dim);
+    }
+    .tag.rec {
+      background: rgba(16, 185, 129, 0.2);
+      color: var(--green);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+    .tag.old {
+      background: rgba(239, 68, 68, 0.2);
+      color: var(--red);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+    }
+    .item-sub {
+      font-size: 13px;
+      color: var(--text-dim);
+      margin-top: 4px;
+      line-height: 1.4;
+    }
+    .btn {
+      background: var(--accent);
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 6px;
+      font-weight: 700;
+      font-size: 13px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.15s ease;
+      user-select: none;
+      white-space: nowrap;
+    }
+    .btn:hover {
+      background: #2563eb;
+      transform: translateY(-1px);
+    }
+    .btn:active {
+      transform: translateY(1px);
+    }
+    .btn-secondary {
+      background: #334155;
+      color: #cbd5e1;
+    }
+    .btn-secondary:hover {
+      background: #475569;
+    }
+    .btn-horn {
+      background: #d97706;
+    }
+    .btn-horn:hover {
+      background: #b45309;
+    }
+    .btn-horn:active {
+      background: #92400e;
+    }
+    .status-box {
+      background: rgba(16, 185, 129, 0.1);
+      border: 1px solid rgba(16, 185, 129, 0.25);
+      border-radius: 8px;
+      padding: 12px 14px;
+      font-size: 13px;
+      line-height: 1.5;
+      color: #a7f3d0;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Звуки «Сельской почты»: Заводка УАЗа и реальный клаксон</h1>
+      <p class="desc">
+        Аутентичные студийные и полевые записи работы техники: запуск двигателя и клаксон старого автомобиля.
+      </p>
+    </header>
+
+    <div class="status-box">
+      ✅ <strong>Выбранный звук стартера установлен в игру:</strong> «Советский внедорожник: долгая прокрутка стартера (3.90 сек)» теперь активен. Все процедурные писки (птицы, камушки, уведомления) полностью удалены.<br>
+      🎺 <strong>Клаксон заменен на реальную запись:</strong> процедурный синтезатор убран, вместо него загружен настоящий сигнал старой машины (одиночная мембрана ~400 Гц с гармониками).<br>
+      🚗 <strong>Звук мотора на ходу:</strong> открыта специальная интерактивная страница для прослушивания и сравнения вариантов: <a href="/engine-preview.html" style="color: #60a5fa; font-weight: bold; text-decoration: underline;">Перейти к выбору звука едущего двигателя →</a>
+    </div>
+
+    <div class="section-title">1. Заводка двигателя УАЗа</div>
+    <div class="card">
+      <div class="item recommended">
+        <div class="item-info">
+          <div class="item-title">
+            Советский внедорожник: долгая натужная прокрутка стартера (3.90 сек)
+            <span class="tag rec">Установлен в игре (Идеал)</span>
+          </div>
+          <div class="item-sub">
+            Тяжёлый пуск холодного мотора: характерный «вжык-вжык-вжык-вжжжжж», уверенное схватывание цилиндров и перегазовка на холостые.
+          </div>
+        </div>
+        <button class="btn" onclick="playWav('/sound-samples/starter_jeep_long.wav')">▶ Послушать (3.90 с)</button>
+      </div>
+
+      <div class="item">
+        <div class="item-info">
+          <div class="item-title">
+            УАЗ-452: 5 тактов компрессии (2.59 сек)
+            <span class="tag">Альтернатива</span>
+          </div>
+          <div class="item-sub">
+            Схватывание на 5-м обороте («вжык-вжык-вжык-вжык-вжжжж-ррр»).
+          </div>
+        </div>
+        <button class="btn btn-secondary" onclick="playWav('/sound-samples/uaz_starter_struggle.wav')">▶ Послушать (2.59 с)</button>
+      </div>
+
+      <div class="item">
+        <div class="item-info">
+          <div class="item-title">
+            УАЗ-452: Быстрый запуск с 1 оборота (1.65 сек)
+            <span class="tag">Резерв в игре</span>
+          </div>
+          <div class="item-sub">
+            Быстрый пуск теплого мотора (сохранен в starter_quick.wav).
+          </div>
+        </div>
+        <button class="btn btn-secondary" onclick="playWav('/sound-samples/uaz_starter_v2_tight.wav')">▶ Послушать (1.65 с)</button>
+      </div>
+    </div>
+
+    <div class="section-title">2. Клаксон от старой машины (реальные записи)</div>
+    <div class="card">
+      <div class="item recommended">
+        <div class="item-info">
+          <div class="item-title">
+            Настоящий клаксон старого авто (С311 / С302)
+            <span class="tag rec">Установлен в игре</span>
+          </div>
+          <div class="item-sub">
+            Реальная запись электромагнитного мембранного гудка: основной тон 398 Гц + гармоники мембраны 786 Гц и 1184 Гц. При клике дает плотный «Бип!», при зажатии бесшовно гудит сколь угодно долго.
+          </div>
+        </div>
+        <button class="btn btn-horn" onpointerdown="startSampleHorn('/sound-samples/horn_classic_uaz.wav', 0.34, 0.98)" onpointerup="stopSampleHorn()" onpointerleave="stopSampleHorn()">
+          🎺 Зажать в игре (С302)
+        </button>
+      </div>
+
+      <div class="item">
+        <div class="item-info">
+          <div class="item-title">
+            Короткий резкий «Бип» старого авто (0.65 сек)
+            <span class="tag">Вариант 2</span>
+          </div>
+          <div class="item-sub">
+            Резкий предупредительный щелчок мембраны — звонкий и сухой одиночный сигнал.
+          </div>
+        </div>
+        <button class="btn btn-secondary" onclick="playWav('/sound-samples/horn_punchy_beep.wav')">▶ «Бип» (0.65 с)</button>
+      </div>
+
+      <div class="item">
+        <div class="item-info">
+          <div class="item-title">
+            Плотный сигнал старой классики (0.70 сек)
+            <span class="tag">Вариант 3</span>
+          </div>
+          <div class="item-sub">
+            Плотный монолитный сигнал (463 Гц + 711 Гц + 926 Гц), характерный для советских легковушек и микроавтобусов.
+          </div>
+        </div>
+        <button class="btn btn-secondary" onclick="playWav('/sound-samples/horn_old_car_v2.wav')">▶ Послушать (0.70 с)</button>
+      </div>
+
+      <div class="item">
+        <div class="item-info">
+          <div class="item-title">
+            Тяжелый протяжный гудок грузовика / внедорожника (1.80 сек)
+            <span class="tag">Вариант 4</span>
+          </div>
+          <div class="item-sub">
+            Низкий басовитый тон (280 Гц + 732 Гц), массивный и солидный звук для сельской дороги.
+          </div>
+        </div>
+        <button class="btn btn-secondary" onpointerdown="startSampleHorn('/sound-samples/horn_sustained_honk.wav', 0.4, 1.6)" onpointerup="stopSampleHorn()" onpointerleave="stopSampleHorn()">
+          🎺 Зажать басовитый
+        </button>
+      </div>
+
+      <div class="item">
+        <div class="item-info">
+          <div class="item-title">
+            Винтажный клаксон «Би-бип» двойной (0.83 сек)
+            <span class="tag">Вариант 5</span>
+          </div>
+          <div class="item-sub">
+            Классическое двойное нажатие («би-бип») на руле старого автомобиля.
+          </div>
+        </div>
+        <button class="btn btn-secondary" onclick="playWav('/sound-samples/horn_retro_double_beep.wav')">▶ «Би-бип» (0.83 с)</button>
+      </div>
+
+      <div class="item">
+        <div class="item-info">
+          <div class="item-title">
+            Тяжелый сигнал советского грузовика (2.30 сек)
+            <span class="tag">Вариант 6</span>
+          </div>
+          <div class="item-sub">
+            Глубокий сигнал ГАЗ-53 / ЗИЛ / КрАЗ.
+          </div>
+        </div>
+        <button class="btn btn-secondary" onclick="playWav('/sound-samples/horn_truck_heavy.wav')">▶ Послушать (2.30 с)</button>
+      </div>
+
+      <div class="item">
+        <div class="item-info">
+          <div class="item-title">
+            Прежний процедурный синтетический «Бип»
+            <span class="tag old">Отклонён</span>
+          </div>
+          <div class="item-sub">
+            Синтез генератором (пилообразная волна 400 Гц + шейпер), который звучал пластмассово и неприятно.
+          </div>
+        </div>
+        <button class="btn btn-secondary" onpointerdown="startSynthSovietHorn()" onpointerup="stopSynthSovietHorn()" onpointerleave="stopSynthSovietHorn()">
+          Синтез (было)
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let ctx = null;
+    function getCtx() {
+      if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+      if (ctx.state === 'suspended') ctx.resume();
+      return ctx;
+    }
+
+    let activeSrc = null;
+    async function playWav(url) {
+      const c = getCtx();
+      if (activeSrc) { try { activeSrc.stop(); } catch(e){} }
+      const res = await fetch(url);
+      const buf = await c.decodeAudioData(await res.arrayBuffer());
+      const src = c.createBufferSource();
+      src.buffer = buf;
+      src.connect(c.destination);
+      src.start();
+      activeSrc = src;
+    }
+
+    // Воспроизведение реального сэмпла клаксона с бесшовным сустейном
+    let hornSampleNode = null;
+    let hornGain = null;
+    const hornBuffers = {};
+
+    async function startSampleHorn(url, loopStart, loopEnd) {
+      const c = getCtx();
+      if (hornSampleNode) return;
+      if (!hornBuffers[url]) {
+        const res = await fetch(url);
+        hornBuffers[url] = await c.decodeAudioData(await res.arrayBuffer());
+      }
+      const t = c.currentTime;
+      const src = c.createBufferSource();
+      src.buffer = hornBuffers[url];
+      if (loopStart !== undefined && loopEnd !== undefined) {
+        src.loop = true;
+        src.loopStart = loopStart;
+        src.loopEnd = loopEnd;
+      }
+      const gain = c.createGain();
+      gain.gain.setValueAtTime(0.001, t);
+      gain.gain.linearRampToValueAtTime(0.9, t + 0.015);
+
+      src.connect(gain).connect(c.destination);
+      src.start(t);
+      hornSampleNode = src;
+      hornGain = gain;
+    }
+
+    function stopSampleHorn() {
+      if (!hornSampleNode || !hornGain) return;
+      const c = getCtx();
+      const t = c.currentTime;
+      hornGain.gain.setValueAtTime(hornGain.gain.value, t);
+      hornGain.gain.exponentialRampToValueAtTime(0.001, t + 0.03);
+      const node = hornSampleNode;
+      hornSampleNode = null;
+      hornGain = null;
+      setTimeout(() => { try { node.stop(); } catch(e){} }, 45);
+    }
+
+    // Старый процедурный «Бип» для сравнения
+    let synthSovietHorn = null;
+    function startSynthSovietHorn() {
+      if (synthSovietHorn) return;
+      const c = getCtx();
+      const t = c.currentTime;
+      const o1 = c.createOscillator();
+      o1.type = 'sawtooth';
+      o1.frequency.setValueAtTime(425, t);
+      o1.frequency.exponentialRampToValueAtTime(400, t + 0.02);
+
+      const o2 = c.createOscillator();
+      o2.type = 'triangle';
+      o2.frequency.setValueAtTime(800, t);
+      o2.frequency.exponentialRampToValueAtTime(796, t + 0.02);
+      const g2 = c.createGain();
+      g2.gain.value = 0.35;
+      o2.connect(g2);
+
+      const bpf = c.createBiquadFilter();
+      bpf.type = 'bandpass';
+      bpf.frequency.value = 980;
+      bpf.Q.value = 2.0;
+
+      const highShelf = c.createBiquadFilter();
+      highShelf.type = 'highshelf';
+      highShelf.frequency.value = 3400;
+      highShelf.gain.value = -6;
+
+      const shaper = c.createWaveShaper();
+      const curve = new Float32Array(256);
+      for (let i = 0; i < 256; i++) {
+        const x = i / 128 - 1;
+        curve[i] = Math.tanh(x * 2.6) + 0.12 * Math.sin(x * Math.PI * 2);
+      }
+      shaper.curve = curve;
+
+      const gain = c.createGain();
+      gain.gain.setValueAtTime(0.001, t);
+      gain.gain.exponentialRampToValueAtTime(0.55, t + 0.01);
+
+      o1.connect(shaper);
+      g2.connect(shaper);
+      shaper.connect(bpf).connect(highShelf).connect(gain).connect(c.destination);
+
+      o1.start(t);
+      o2.start(t);
+      synthSovietHorn = { oscs: [o1, o2], gain };
+    }
+
+    function stopSynthSovietHorn() {
+      if (!synthSovietHorn) return;
+      const c = getCtx();
+      const h = synthSovietHorn;
+      synthSovietHorn = null;
+      const t = c.currentTime;
+      h.gain.gain.setValueAtTime(h.gain.gain.value, t);
+      h.gain.gain.exponentialRampToValueAtTime(0.001, t + 0.025);
+      h.oscs.forEach(o => o.stop(t + 0.04));
+    }
+  </script>
+</body>
+</html>

@@ -57,6 +57,70 @@ const tailGeo = new THREE.PlaneGeometry(0.7, 0.7);
 const BEAM_LEN = 11;
 const beamGeo = new THREE.ConeGeometry(1.5, BEAM_LEN, 12, 1, true).rotateX(-Math.PI / 2).translate(0, 0, BEAM_LEN / 2);
 const poolGeo = new THREE.PlaneGeometry(5, 13).rotateX(-Math.PI / 2);
+/** High-beam glare: soft per-lamp streaks and textured cores, with no opaque panels. */
+const flareGeo = new THREE.PlaneGeometry(2.4, 0.85);
+const coreGeo = new THREE.PlaneGeometry(0.62, 0.62);
+const highPoolGeo = new THREE.PlaneGeometry(6, 26).rotateX(-Math.PI / 2);
+
+let flareMap: THREE.Texture | null = null;
+/** Soft horizontal streak, bright in the middle: headlight glare on a dirty windscreen. */
+function flareTexture(): THREE.Texture {
+  return flareMap ??= tex(128, 64, (g) => {
+    g.translate(64, 32);
+    g.scale(1, 0.5);
+    const r = g.createRadialGradient(0, 0, 0, 0, 0, 64);
+    // Continuous falloff to transparent on every edge, with no opaque plateau.
+    r.addColorStop(0, 'rgba(255,255,250,1)');
+    r.addColorStop(0.08, 'rgba(255,250,230,0.8)');
+    r.addColorStop(0.28, 'rgba(255,240,210,0.3)');
+    r.addColorStop(0.6, 'rgba(255,235,200,0.06)');
+    r.addColorStop(1, 'rgba(255,220,160,0)');
+    g.fillStyle = r;
+    g.fillRect(-64, -64, 128, 128);
+  });
+}
+
+interface BeamFlash {
+  root: THREE.Group;
+  flare: THREE.MeshBasicMaterial;
+  core: THREE.MeshBasicMaterial;
+  pool: THREE.MeshBasicMaterial;
+}
+
+/** Per-car high beam (the dipped lamps share one material, so a warning flash can't). Off until setHighBeam. */
+function highBeam(heads: THREE.Vector3[]): BeamFlash {
+  const root = new THREE.Group();
+  root.name = 'highbeam';
+  root.visible = false;
+  const flare = new THREE.MeshBasicMaterial({
+    map: flareTexture(), color: '#fff4d4', transparent: true, opacity: 0, depthWrite: false, fog: false,
+    blending: THREE.AdditiveBlending, toneMapped: false,
+  });
+  const core = new THREE.MeshBasicMaterial({
+    map: materials().halo.map, color: '#fffef8', transparent: true, opacity: 0, depthWrite: false, fog: false,
+    blending: THREE.AdditiveBlending, toneMapped: false,
+  });
+  const pool = new THREE.MeshBasicMaterial({
+    map: materials().pool.map, color: '#ffe6b0', transparent: true, opacity: 0, depthWrite: false,
+    blending: THREE.AdditiveBlending, fog: false, toneMapped: false,
+    polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+  });
+  if (heads.length) {
+    for (const p of heads) {
+      const streak = new THREE.Mesh(flareGeo, flare);
+      streak.position.set(p.x, p.y, p.z + 0.2);
+      root.add(streak);
+      const lamp = new THREE.Mesh(coreGeo, core);
+      lamp.position.set(p.x, p.y, p.z + 0.22);
+      root.add(lamp);
+    }
+    // Brighten the road at night without drawing cone shells in clear air.
+    const road = new THREE.Mesh(highPoolGeo, pool);
+    road.position.set(0, .075, Math.max(...heads.map(p => p.z)) + 13.2);
+    root.add(road);
+  }
+  return { root, flare, core, pool };
+}
 
 /**
  * Lamps on a vehicle (local forward +Z, wheels on y = 0): headlamp and tail
@@ -89,6 +153,9 @@ export function headlights(parent: THREE.Object3D, heads: THREE.Vector3[], tails
     t.rotation.y = Math.PI;
     g.add(t);
   }
+  const flash = highBeam(heads);
+  g.add(flash.root);
+  g.userData.high = flash;
   // the transparent quads would be culled by the car's bounding box otherwise
   g.traverse((o) => { o.frustumCulled = false; o.renderOrder = 2; });
   parent.add(g);
@@ -107,4 +174,20 @@ export function setHeadlightGlow(lamps: number): void {
   M.tail.opacity = k * 0.55;
   const on = k > 0.02;
   for (const m of Object.values(M)) m.visible = on;
+}
+
+/**
+ * High-beam flash on one vehicle. `k` is 0 or 1 (a stalk, not a fade); `night`
+ * is 0 by day … 1 in the dark, and only then does the road pool show. By day
+ * the lamp cores and their soft glare carry it.
+ */
+export function setHighBeam(lights: THREE.Group | undefined, k: number, night = 0): void {
+  const h = lights?.userData.high as BeamFlash | undefined;
+  if (!h) return;
+  const on = k > 0.04;
+  h.root.visible = on;
+  if (!on) return;
+  h.core.opacity = k;
+  h.flare.opacity = k * 0.95;
+  h.pool.opacity = k * night * night * 0.35;
 }

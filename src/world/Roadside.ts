@@ -145,17 +145,28 @@ export function gasStation(b: Bucket, p: Place, sign: SignFn, cols: Collider[], 
 
   const A = '#b8b8b2', K = '#b4b0a6';
   const slab = (x: number, z: number, w: number, d: number) => b.add('asphalt', boxGeo(w, 1, d, 4), T(p, x, -0.35, z), A);
-  // forecourt, and the two mouths to the road: in at one end, out at the other
+  // forecourt, the two mouths to the road, and the side driveway from the country road
   const D = 6.5, HW = 15, mouth = 6;
   slab(0, 0, HW * 2, D * 2);
   const mz0 = D, mz1 = edge + 0.4;
   for (const sx of [-1, 1]) slab(sx * (HW - mouth / 2), (mz0 + mz1) / 2, mouth, mz1 - mz0);
-  // kerbs round the forecourt: the back, the ends, and the strip of grass between the two mouths
+  // side driveway from the country road into the forecourt (on sx = +1, the corner side)
+  b.add('asphalt', boxGeo(12, 1.15, 8.2, 4), T(p, HW + 6, -0.28, 0), A);
+
+  // kerbs round the forecourt:
+  // back kerb (behind booth)
   b.add('concrete', boxGeo(HW * 2 + 0.4, 0.3, 0.3), T(p, 0, 0.1, -D - 0.15), K);
-  for (const sx of [-1, 1]) {
-    b.add('concrete', boxGeo(0.3, 0.3, D * 2 + (mz1 - mz0)), T(p, sx * (HW + 0.15), 0.1, (mz1 - D) / 2 - 0.2), K);
-    b.add('concrete', boxGeo(0.3, 0.3, mz1 - mz0), T(p, sx * (HW - mouth - 0.15), 0.1, (mz0 + mz1) / 2), K);
-  }
+  // North end (sx = -1, towards Klyuchevsk): continuous kerb and mouth kerb
+  b.add('concrete', boxGeo(0.3, 0.3, D * 2 + (mz1 - mz0)), T(p, -1 * (HW + 0.15), 0.1, (mz1 - D) / 2 - 0.2), K);
+  b.add('concrete', boxGeo(0.3, 0.3, mz1 - mz0), T(p, -1 * (HW - mouth - 0.15), 0.1, (mz0 + mz1) / 2), K);
+  // South end (sx = +1, facing the intersection and country road):
+  // framed opening for the side driveway (open between lz = -4.1 and lz = +4.1)
+  b.add('concrete', boxGeo(0.3, 0.3, 2.4), T(p, HW + 0.15, 0.1, -5.3), K);
+  b.add('concrete', boxGeo(12, 0.3, 0.3), T(p, HW + 6, 0.1, -4.25), K);
+  b.add('concrete', boxGeo(0.3, 0.3, 2.4), T(p, HW + 0.15, 0.1, 5.3), K);
+  b.add('concrete', boxGeo(12, 0.3, 0.3), T(p, HW + 6, 0.1, 4.25), K);
+  b.add('concrete', boxGeo(0.3, 0.3, mz1 - mz0), T(p, HW - mouth - 0.15, 0.1, (mz0 + mz1) / 2), K);
+  // road-facing kerb between the two mouths
   b.add('concrete', boxGeo((HW - mouth) * 2, 0.3, 0.3), T(p, 0, 0.1, D + 0.15), K);
   // lane lines along the island and arrows: in on the left, out on the right
   for (const z of [5.0, -5.0]) b.add('flat', boxGeo(18, 0.02, 0.12), T(p, 0, 0.155, z), '#e8e4d0');

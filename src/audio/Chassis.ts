@@ -3,6 +3,11 @@ import type { Vehicle } from '../vehicle/Vehicle';
 
 interface Loop { src: AudioBufferSourceNode; gain: GainNode; filter: BiquadFilterNode }
 
+export interface CreakBuffers {
+  suspension: AudioBuffer[];
+  seat: AudioBuffer[];
+}
+
 /**
  * Everything the van's body and wheels say on a bad road, all synthesised:
  * leaf springs and rubber bushings squeaking (stick-slip), the body creaking as
@@ -32,7 +37,13 @@ export class ChassisSounds {
   private cabinT = 1;
   private leafCd = [0, 0, 0, 0];
 
-  constructor(private ctx: AudioContext, private inside: AudioNode, private outside: AudioNode, private buf: Record<string, AudioBuffer>) {
+  constructor(
+    private ctx: AudioContext,
+    private inside: AudioNode,
+    private outside: AudioNode,
+    private buf: Record<string, AudioBuffer>,
+    private creaks?: CreakBuffers
+  ) {
     this.wet = this.loop('pink', 'highpass', 2200, 0.5, outside);
     this.spray = this.loop('white', 'lowpass', 3200, 0.5, outside);
     const whine = (type: OscillatorType, q: number) => {
@@ -142,6 +153,24 @@ export class ChassisSounds {
     o.start(at); o.stop(at + d + 0.02);
   }
 
+  setCreaks(creaks: CreakBuffers): void {
+    this.creaks = creaks;
+  }
+
+  /** Play a random variation from homogeneous real recordings with subtle pitch jitter. */
+  private playCreak(buffers: AudioBuffer[], volume: number, dest: AudioNode, pitchJitter = 0.05, at = this.ctx.currentTime): void {
+    if (!buffers || buffers.length === 0) return;
+    const buf = buffers[Math.floor(Math.random() * buffers.length)];
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+    const rate = 1.0 + (Math.random() * 2 - 1) * pitchJitter;
+    src.playbackRate.setValueAtTime(clamp(rate, 0.88, 1.12), at);
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(volume, at);
+    src.connect(g).connect(dest);
+    src.start(at);
+  }
+
   /** Struck steel: a few inharmonic partials (jack, tool box, loose bracket). */
   private clank(peak: number, dest: AudioNode, base = 420, at = this.ctx.currentTime): void {
     for (const [k, a, d] of [[1, 1, 0.22], [2.76, 0.6, 0.14], [4.4, 0.4, 0.09], [6.9, 0.25, 0.06]]) {
@@ -164,36 +193,55 @@ export class ChassisSounds {
       const rear = w.lz > 0 ? 0.75 : 1;
       const dest = this.out(pan, this.inside);
       // pothole edges and stones: the tyre thumps, the axle answers
-      if (w.hit > 0.022 && speed > 1.2 && w.F > 30) {
-        const k = clamp(w.hit * 8 * clamp(speed / 10, 0.25, 1.6), 0, 1.2) * rear;
+      if (w.hit > 0.015 && speed > 1.0 && w.F > 20) {
+        const k = clamp(w.hit * 8 * clamp(speed / 10, 0.25, 1.6), 0.2, 1.2) * rear;
         this.noise('brown', 'lowpass', 180 + w.hit * 2200, 0.9, 0.42 * k, 0.09 + k * 0.06, dest, t);
         this.tone('sine', 62 + Math.random() * 18, 0.22 * k, 0.12, dest, t, 38);
         if (k > 0.55 && Math.random() < 0.5) this.clank(0.035 * k, this.out(0.25, this.inside), 380 + Math.random() * 200, t + 0.03);
+        // Suspension creak on hitting edge/bump
+        if (this.creaks?.suspension && this.creaks.suspension.length > 0) {
+          this.playCreak(this.creaks.suspension, 0.65 * k, dest, 0.05, t);
+        }
       }
       // bump stop: rubber and steel meeting hard
       if (w.stop > 0.35) {
         const k = clamp(w.stop / 1.6, 0.2, 1) * rear;
         this.noise('brown', 'lowpass', 260, 0.8, 0.55 * k, 0.16, dest, t);
         this.tone('sine', 52, 0.3 * k, 0.2, dest, t, 34);
+        if (this.creaks?.suspension && this.creaks.suspension.length > 0) {
+          this.playCreak(this.creaks.suspension, 0.75 * k, dest, 0.04, t + 0.02);
+        }
       }
-      // leaf spring squeak when the suspension reverses after a big stroke
+      // leaf spring squeak when the suspension reverses after a stroke
       this.squeakCd[i] -= dt;
       const pv = this.prevVel[i];
-      if (this.squeakCd[i] <= 0 && Math.sign(pv) !== Math.sign(w.vel) && Math.abs(pv) > 0.16 && speed < 22) {
-        this.squeakCd[i] = 0.35 + Math.random() * 0.4;
-        const k = clamp(Math.abs(pv) / 0.6, 0.2, 1);
+      if (this.squeakCd[i] <= 0 && Math.sign(pv) !== Math.sign(w.vel) && Math.abs(pv) > 0.08 && speed < 30) {
+        this.squeakCd[i] = 0.25 + Math.random() * 0.35;
+        const k = clamp(Math.abs(pv) / 0.4, 0.3, 1.2);
         const p = this.springPitch[i];
         const up = pv > 0;
-        this.creak(95 * p, (up ? 140 : 75) * p, 1350 * p, 7, 0.05 * k * rear, 0.1 + k * 0.12, dest, t);
-        // the rubber shackle bushes groan lower
-        if (Math.random() < 0.6) this.creak(34 * p, 26 * p, 420 * p, 5, 0.035 * k, 0.16 + k * 0.1, dest, t + 0.02);
+        if (this.creaks?.suspension && this.creaks.suspension.length > 0) {
+          this.playCreak(this.creaks.suspension, 0.58 * k * rear, dest, 0.05, t);
+        } else {
+          this.creak(95 * p, (up ? 140 : 75) * p, 650 * p, 2.5, 0.04 * k * rear, 0.1 + k * 0.12, dest, t);
+          // the rubber shackle bushes groan lower
+          if (Math.random() < 0.6) this.creak(34 * p, 26 * p, 320 * p, 3, 0.035 * k, 0.16 + k * 0.1, dest, t + 0.02);
+        }
+        // When suspension strokes significantly, driver bounces gently on seat
+        if (k > 0.45 && this.creaks?.seat && this.creaks.seat.length > 0 && Math.random() < 0.6) {
+          this.playCreak(this.creaks.seat, 0.30 * k, this.out(-0.25, this.inside), 0.04, t + 0.03);
+        }
       }
       // small strokes still rub the leaves: a quiet, frequent "skrip-skrip" on rough ground
       this.leafCd[i] -= dt;
-      if (this.leafCd[i] <= 0 && speed > 1.5 && w.F > 30 && Math.abs(w.vel) > 0.05 && Math.sign(pv) !== Math.sign(w.vel)) {
-        this.leafCd[i] = 0.5 + Math.random() * 0.9;
-        const k = clamp(Math.abs(w.vel) / 0.25, 0.2, 1) * rear;
-        this.creak(70 * this.springPitch[i], 105 * this.springPitch[i], 1100 * this.springPitch[i], 8, 0.022 * k, 0.07 + k * 0.05, dest, t);
+      if (this.leafCd[i] <= 0 && speed > 1.0 && w.F > 25 && Math.abs(w.vel) > 0.03 && Math.sign(pv) !== Math.sign(w.vel)) {
+        this.leafCd[i] = 0.35 + Math.random() * 0.6;
+        const k = clamp(Math.abs(w.vel) / 0.2, 0.3, 1) * rear;
+        if (this.creaks?.suspension && this.creaks.suspension.length > 0) {
+          this.playCreak(this.creaks.suspension, 0.38 * k * rear, dest, 0.06, t);
+        } else {
+          this.creak(70 * this.springPitch[i], 105 * this.springPitch[i], 520 * this.springPitch[i], 2.2, 0.02 * k, 0.07 + k * 0.05, dest, t);
+        }
       }
       this.prevVel[i] = w.vel;
       // puddles: a broadband "pshh" off the tyre and a soft thud of water in the arch;
@@ -215,45 +263,57 @@ export class ChassisSounds {
     const rollRate = (v.roll - this.rollPrev) / Math.max(dt, 1e-3);
     this.rollPrev = v.roll;
     this.creakCd -= dt;
-    if (this.creakCd <= 0 && Math.abs(rollRate) > 0.09 && speed > 0.8) {
-      this.creakCd = 0.6 + Math.random() * 1.2;
-      const k = clamp(Math.abs(rollRate) / 0.4, 0.2, 1);
-      const res = 260 + Math.random() * 260;
-      this.creak(18 + Math.random() * 10, 30 + Math.random() * 12, res, 6, 0.03 * k, 0.3 + Math.random() * 0.35, this.out((Math.random() - 0.5) * 0.8, this.inside), t);
+    if (this.creakCd <= 0 && Math.abs(rollRate) > 0.05 && speed > 0.5) {
+      this.creakCd = 0.4 + Math.random() * 0.8;
+      const k = clamp(Math.abs(rollRate) / 0.25, 0.3, 1.2);
+      const d = this.out((Math.random() - 0.5) * 0.8, this.inside);
+      if (this.creaks?.suspension && this.creaks.suspension.length > 0) {
+        this.playCreak(this.creaks.suspension, 0.52 * k, d, 0.04, t);
+      } else {
+        const res = 260 + Math.random() * 260;
+        this.creak(18 + Math.random() * 10, 30 + Math.random() * 12, res, 6, 0.03 * k, 0.3 + Math.random() * 0.35, d, t);
+      }
+      if (this.creaks?.seat && this.creaks.seat.length > 0 && Math.random() < 0.65) {
+        this.playCreak(this.creaks.seat, 0.28 * k, this.out(-0.25, this.inside), 0.04, t + 0.02);
+      }
     }
 
     // the cab itself: seat springs, door seals rubbing, dash plastic ticking as the body works
-    this.cabinT -= dt * contact * moving * (0.25 + v.rough * 4 + Math.abs(v.accelLat) * 0.05 + Math.abs(v.accelLong) * 0.04);
+    this.cabinT -= dt * contact * moving * (0.4 + v.rough * 5 + Math.abs(v.accelLat) * 0.08 + Math.abs(v.accelLong) * 0.06);
     if (this.cabinT < 0) {
-      this.cabinT = 0.7 + Math.random() * 2.2;
-      const k = clamp(0.35 + v.rough * 2 + Math.abs(v.accelLat) * 0.04, 0.2, 1);
+      this.cabinT = 0.4 + Math.random() * 1.1;
+      const k = clamp(0.4 + v.rough * 2 + Math.abs(v.accelLat) * 0.05, 0.35, 1);
       const pick = Math.random();
-      if (pick < 0.4) {
-        // seat springs: two short groans
-        const d = this.out(-0.15, this.inside);
-        this.creak(38, 52, 640 + Math.random() * 160, 6, 0.028 * k, 0.16, d, t);
-        this.creak(44, 60, 760 + Math.random() * 160, 6, 0.02 * k, 0.12, d, t + 0.11);
-      } else if (pick < 0.75) {
+      if (pick < 0.65) {
+        // seat springs: distinct, comfortable cabin volume (not too loud, around 0.32 * k)
+        const d = this.out(-0.25, this.inside);
+        if (this.creaks?.seat && this.creaks.seat.length > 0) {
+          this.playCreak(this.creaks.seat, 0.32 * k, d, 0.04, t);
+        } else {
+          this.creak(38, 52, 640 + Math.random() * 160, 6, 0.028 * k, 0.16, d, t);
+          this.creak(44, 60, 760 + Math.random() * 160, 6, 0.02 * k, 0.12, d, t + 0.11);
+        }
+      } else if (pick < 0.85) {
         // rubber door seal sliding on the pillar
         const d = this.out(Math.random() < 0.5 ? -0.7 : 0.7, this.inside);
         this.noise('pink', 'bandpass', 1500 + Math.random() * 700, 3, 0.05 * k, 0.3 + Math.random() * 0.25, d, t, 900);
       } else {
-        // dashboard plastic ticking
+        // dashboard plastic tapping (natural muffled noise instead of high-Q squeak)
         const d = this.out(0.1, this.inside);
-        for (let i = 0; i < 2 + Math.floor(Math.random() * 3); i++) this.creak(110, 150, 2100 + Math.random() * 600, 9, 0.02 * k, 0.05, d, t + i * 0.08);
+        for (let i = 0; i < 2 + Math.floor(Math.random() * 3); i++) this.noise('white', 'bandpass', 1100 + Math.random() * 400, 3, 0.02 * k, 0.025, d, t + i * 0.08);
       }
     }
     this.drivetrain(v, speed);
 
-    // gravel and dirt: stones flicked into the floor and the wheel arches
+    // gravel and dirt: stones flicked into the floor and wheel arches (realistic acoustic noise impacts, no procedural tone beeps)
     if ((surf === 'gravel' || surf === 'dirt') && speed > 2) {
       this.stoneT -= dt * speed * (surf === 'gravel' ? 0.75 : 0.25) * contact;
       if (this.stoneT < 0) {
         this.stoneT = 0.4 + Math.random() * 1.6;
         const d = this.out(Math.random() * 1.4 - 0.7, this.inside);
-        const f = 1800 + Math.random() * 3200;
-        this.tone('triangle', f, 0.03 + Math.random() * 0.04, 0.03 + Math.random() * 0.05, d, t, f * 0.92);
-        this.noise('white', 'bandpass', f, 3, 0.04, 0.015, d, t);
+        const f = 900 + Math.random() * 700;
+        this.noise('white', 'bandpass', f, 2.5, 0.035, 0.018, d, t);
+        this.noise('brown', 'lowpass', 450, 0.8, 0.03, 0.025, d, t);
       }
     }
 

@@ -8,27 +8,36 @@ import { World } from './world/World';
 import { Atmosphere, WINTER } from './world/Atmosphere';
 import { H0, Vehicle } from './vehicle/Vehicle';
 import { Cabin, EYE, EYE_PITCH, HotspotId } from './vehicle/Cabin';
+import { loadDashboardAssets } from './vehicle/Dashboard';
 import { AudioEngine } from './audio/AudioEngine';
 import { Voice } from './audio/Voice';
 import { Mission } from './game/Mission';
+import { morningAway } from './game/MorningLines';
 import { freshProfile, grandpaLine, loadProfile, repair, saveProfile, type RepairKind } from './game/Profile';
 import { clearDay, dayLabel, loadDay, replayedExtra, saveDay, type DaySave } from './game/Autosave';
 import { boardFor, daysBetween, destName, newPlaceToday, paydays, reckon, TALONS_DAY, TALONS_MAX, type Order } from './game/Career';
 import { Encounters } from './game/Encounters';
-import { Cases, GRANDPA_HOME, morningCase, weekBefore, type MorningCase } from './game/Cases';
+import { Cases, GRANDPA_HOME, GRANDPA_SISTER, morningCase, weekBefore, type MorningCase } from './game/Cases';
 import { BeeCloud } from './vehicle/Bees';
 import { Countryside } from './world/Countryside';
 import { MuhaStory } from './game/MuhaStory';
+import { StoryScene } from './game/StoryScene';
+import { HospitalReception } from './game/HospitalReception';
+import { MuhaMeeting } from './game/MuhaMeeting';
 import { RoadsideFix } from './game/Roadside';
 import { Cutscene, type CutKind, type CarPose, type VanPose } from './game/Cutscene';
-import { farewellPages, keysPage, Prologue } from './game/Prologue';
+import { Prologue } from './game/Prologue';
+import { PostOfficeHiring } from './game/PostOfficeHiring';
 import { FIRST_SHEET } from './audio/stations';
 import { FirstMorning, KARTATAY, VISIT } from './game/FirstMorning';
 import { Passenger } from './vehicle/Passenger';
+import { AliaRide } from './game/AliaRide';
+import { ALIA_SHIFTS, aliaShift, type AliaShift } from './game/AliaStory';
+import { ALIA_OUTFIT, dressAlia } from './world/Alia';
 import { RoadStop } from './game/RoadStop';
 import { GRANDPA_LETTER, Letters, letterForBoard } from './game/Letters';
 import { RadioNews } from './game/RadioNews';
-import { DEPARTURE, playDeparture, playFinaleEvening, playSummer, seasonFinaleDue, summerDue } from './game/Summer';
+import { DEPARTURE, playDeparture, playFinaleEvening, seasonFinaleDue } from './game/Summer';
 import { dateParts } from './game/Career';
 import { rub } from './game/Money';
 import { UI, Settings } from './ui/UI';
@@ -41,6 +50,7 @@ import { loadSoviet } from './world/Soviet';
 import { loadAnimals } from './world/Animals';
 import { TitleShots } from './game/TitleShots';
 import { buildUaz, loadUaz } from './world/Uaz';
+import type { VehicleModel } from './world/Vehicles';
 import { initAnalytics, trackEvent } from './core/analytics';
 import { FuelStop } from './game/Fuel';
 
@@ -50,7 +60,7 @@ async function boot(): Promise<void> {
   initAnalytics();
   const app = document.getElementById('app')!;
   // the character and car models load alongside the fonts
-  const people = Promise.all([loadPeople(), loadCars(), loadUaz(), loadSoviet(), loadAnimals()]);
+  const people = Promise.all([loadPeople(), loadCars(), loadUaz(), loadSoviet(), loadAnimals(), loadDashboardAssets()]);
   // canvas textures bake text, so fonts must be ready first
   try {
     await Promise.race([
@@ -82,6 +92,8 @@ async function boot(): Promise<void> {
   scene.add(cabin.group);
   // the right-hand seat: the grandfather rides there on the drive home and on the first morning
   const grandpaSeat = new Passenger(cabin.group, new THREE.Vector3(0.62, 0.4, -0.7));
+  const aliaSeat = new Passenger(cabin.group, new THREE.Vector3(0.62, 0.4, -0.7), {body:'woman',outfit:ALIA_OUTFIT,lean:.12,stick:false});
+  dressAlia(aliaSeat.human,true);
   {
     // our own post van's body, seen only in the door mirrors; the cab's frame
     // faces -Z with the driver over the front axle, the model's wheelbase centre is 0
@@ -132,19 +144,23 @@ async function boot(): Promise<void> {
     applyWear();
     if (profile.damage < 0.1) cabin.repair();
     ui.setGarage(profile);
-    if (share <= 0) { ui.toast('Нечего чинить или касса пуста', 2.4); return; }
-    const part = share < 0.99 ? ' Денег хватило не на всё — остальное в другой раз.' : '';
+    if (share <= 0) { ui.toast('Машина в порядке', 2.4); return; }
+    const part = '';
     // (the day just played: in the evening the profile has already moved on to tomorrow)
-    const home = (mission?.finished ? profile.day - 1 : profile.day) >= GRANDPA_HOME;
+    const played = mission?.finished ? profile.day - 1 : profile.day;
+    const home = played >= GRANDPA_HOME;
+    const sister = played >= GRANDPA_SISTER && played < GRANDPA_HOME;
     if (kind === 'grandpa') {
       // first a few seconds in the yard, the van before the garage and Timur at it; then the evening's card
       const card = () => ui.blackout('Гараж картатая, вечер', home
       ? `Лампочка над ямой, радио «Маяк». Картатай на табуретке у ямы — подаёт ключи и не молчит:<br><br>«${grandpaLine(profile)}»${part}`
-      : `Лампочка над ямой, радио «Маяк», дедовы ключи на табуретке — сам. Потом — межгород из Уфы, картатай из больницы:<br><br>«${grandpaLine(profile, false)}»${part}`, 5, () => {}, () => {}, 'Починили');
+      : sister
+      ? `Лампочка над ямой, радио «Маяк», дедовы ключи на табуретке — сам. Потом — межгород из Уфы, картатай от Хадии-апа:<br><br>«${grandpaLine(profile, 'sister')}»${part}`
+      : `Лампочка над ямой, радио «Маяк», дедовы ключи на табуретке — сам. Потом — межгород из Уфы, картатай из санатория:<br><br>«${grandpaLine(profile, false)}»${part}`, 5, () => {}, () => {}, 'Починили');
       const gf = world.garageFront;
       if (!film(Math.random() < 0.5 ? 'wheel' : 'hood', 'Гараж картатая, вечер', '', 4.6, () => {}, card, { van: { x: gf.x, y: ground.height(gf.x, gf.z) + H0, z: gf.z, yaw: gf.yaw } })) card();
     }
-    else ui.toast(`Колька, мастерская МТС: «Сделано. Деньги вперёд — как договаривались».${part}`, 3.4);
+    else ui.toast(`Колька, мастерская МТС: «Сделано. В ведомости расписался — Зинаиде передашь».${part}`, 3.4);
   };
   const audio = new AudioEngine();
   // recorded voices, when there are files for them (docs/voice/README.md): every line on screen asks for its own
@@ -153,17 +169,49 @@ async function boot(): Promise<void> {
   // a line on screen: the voice, and the speaker (if he stands about in the world) talks with his hands
   ui.onLine = (who, text, kind) => {
     const sec = clamp(1.4 + text.length * 0.05, 1.8, 7);
-    if (/Муха/.test(who)) world.muha?.talk(sec);
+    if (/Муха/.test(who) && !narrative.active) world.muha?.talk(sec);
     else if (/Картатай|Урал-агай/.test(who)) { world.home.grandpa?.talk(sec); world.postGrandpa.talk(sec); }
+    else if (/өләсәй/i.test(who)) world.home.person.talk(sec);
     else if (/Кузьмин/.test(who)) police.speaking(sec);
     return voice.say(who, text, kind);
   };
 
   // short scenes outside the cab (Cutscene.ts): the camera is lent and comes back to the driver's head
   const cut = new Cutscene(scene, ground, camera, world.colliders, () => { head.add(camera); camera.position.set(0, 0, 0); camera.rotation.set(0, 0, 0); });
+  let sceneInputWas = false;
+  const narrative = new StoryScene(scene, camera, {
+    begin: () => {
+      sceneInputWas = input.enabled; input.enabled = false;
+      vehicle.vx = vehicle.vy = vehicle.r = 0;
+      vehicle.handbrake = true;
+      ui.storyCinema(true);
+    },
+    line: (who, line) => ui.sceneLine(who, line),
+    choices: (options, pick) => ui.sceneChoices(options, pick),
+    clear: () => { ui.clearSceneLine(); voice.stop(); },
+    end: () => {
+      ui.storyCinema(false);
+      input.enabled = sceneInputWas && !ui.paused && !mission.finished;
+      input.lookYaw = input.lookPitch = 0;
+    },
+  });
+  let meeting: MuhaMeeting | null = null;
+  let reception: HospitalReception | null = null;
+  const receiveAtHospital = (who: string, line: string): boolean => {
+    if (!started || cut.active || narrative.active || ui.storyOpen || ui.paused) return false;
+    reception ??= new HospitalReception(scene, camera, world.hospital.interior);
+    return narrative.play(reception.script(who, line), [cabin.group, world.group]);
+  };
+  let hiring: PostOfficeHiring | null = null;
+  const meetMuha = (done: (bond: number) => void, cancel: () => void): boolean => {
+    if (!started || cut.active || narrative.active || ui.storyOpen || ui.choiceOpen || ui.boardOpen || ui.mapOpen || ui.paused || held || !world.muha || !['idle', 'cool'].includes(police.state)) return false;
+    meeting ??= new MuhaMeeting(scene, world, camera, () => audio.doorSlam(0.65));
+    const van = { x: vehicle.x, y: vehicle.y, z: vehicle.z, yaw: vehicle.yaw, pitch: vehicle.pitch, roll: vehicle.roll };
+    return narrative.play(meeting.script(van, done, cancel), [cabin.group, world.muha.group]);
+  };
   /** Film a scene at the van (or where `opts.van` puts it): false if one can't play now (it falls back to a fade). */
   const film = (kind: CutKind, title: string, text: string, seconds: number, mid: () => void, done: () => void, opts: { van?: VanPose; car?: CarPose; bribe?: boolean } = {}): boolean => {
-    if (!started || cut.active || ui.storyOpen) return false;
+    if (!started || cut.active || narrative.active || ui.storyOpen) return false;
     const van = opts.van ?? { x: vehicle.x, y: vehicle.y, z: vehicle.z, yaw: vehicle.yaw, pitch: vehicle.pitch, roll: vehicle.roll };
     const hide: THREE.Object3D[] = [cabin.group, ...(kind === 'fine' ? police.crewGroups() : [])];
     ui.cinema(true, title, text);
@@ -188,7 +236,7 @@ async function boot(): Promise<void> {
       if (sandbox) { /* nothing to record */ } else if (r.kind === 'bribe') mission.extra('ГАИ · «без квитанции»', -r.fine, 0); else mission.record(r.kind, r.fine);
       trackEvent('police_stop');
       // a fine settled: a few seconds by the patrol car, Kuzmin writing it out (or the money slipped over)
-      if (r.kind === 'fine' || r.kind === 'bribe') film('fine', r.kind === 'bribe' ? 'ГАИ · без квитанции' : 'ГАИ · штраф', `${rub(r.fine)} · ${r.note}`, 4.6, () => {}, () => {}, { car: police.carPose(), bribe: r.kind === 'bribe' });
+      if (r.kind === 'fine' || r.kind === 'bribe') film('fine', r.kind === 'bribe' ? 'ГАИ · без квитанции' : 'ГАИ · штраф', `${r.note}`, 4.6, () => {}, () => {}, { car: police.carPose(), bribe: r.kind === 'bribe' });
     },
     choice: (who, line, opts, pick) => { audio.paper(); ui.choice(who, line, opts, pick); },
     closeChoice: () => ui.closeChoice(),
@@ -219,10 +267,9 @@ async function boot(): Promise<void> {
   const fuelStop = new FuelStop({
     view: (v) => ui.setFuel(v),
     pump: (on) => audio.fuelPump(on),
-    done: (liters, paid, why, talon) => {
+    done: (liters) => {
       profile.fuel = vehicle.fuel; saveProfile(profile); ui.setGarage(profile);
-      const how = paid > 0 ? `${talon >= 0.5 ? `${talon.toFixed(0)} л по талонам, ` : ''}за свои ${rub(paid)}` : 'по талонам';
-      ui.toast(why === 'broke' ? `Талоны и деньги кончились · залито ${liters.toFixed(0)} л` : `Заправлено ${liters.toFixed(0)} л · ${how}`, 3);
+      ui.toast(`Заправлено ${liters.toFixed(0)} л · по ведомости почты`, 3);
     },
   });
   let fuelHinted = false;
@@ -263,8 +310,8 @@ async function boot(): Promise<void> {
       profile.pay.premium = Math.max(0, Math.min(30, profile.pay.premium + rec.premium));
       const premium = profile.pay.premium;
       const pay = paydays(profile.pay, day.day);
-      const cash = rec.total + pay.lines.reduce((a, [, v]) => a + v, 0);
-      profile.money = Math.max(0, profile.money + cash); profile.trust = rec.trustAfter; profile.runs++; profile.day++;
+      profile.trust = rec.trustAfter; profile.runs++; profile.day++;
+      profile.returnEvening = ALIA_SHIFTS[day.day] === 'evening' ? day.day : undefined;
       profile.damage = vehicle.damage; profile.fuel = vehicle.fuel;
       profile.wear = { steer: vehicle.steerWear, rad: vehicle.radWear, pull: vehicle.pullDir };
       // the story keeps what happened today
@@ -283,7 +330,7 @@ async function boot(): Promise<void> {
       ui.setGarage(profile);
       // a short walk back into the post office, then the evening at the counter
       setTimeout(() => {
-        ui.showEvening(day, st, rec, profile, { onRepair: (kind) => ui.onRepair?.(kind), onNext: toMorning, pay, premium });
+        ui.showEvening(day, st, rec, profile, { onRepair: (kind) => ui.onRepair?.(kind), onNext: skipEvening, onHome: profile.returnEvening ? () => void startEvening() : undefined, pay, premium });
         // the evening the grandfather's own letter went home: before the journal, his story
         if (grandpa) ui.blackout('Вечер, лавка у ворот', GRANDPA_LETTER, 9, () => {}, () => {}, '');
       }, 600);
@@ -309,7 +356,7 @@ async function boot(): Promise<void> {
     vehicle.place(p.x, p.z, p.yaw, ground);
   };
   reset();
-  if (import.meta.env.DEV) Object.assign(window, { __uaz: { input, vehicle, ground, world, cabin, atmo, camera, scene, renderer, police, rain, ui, audio, get mission() { return mission; }, get encounters() { return encounters; }, get story() { return story; }, get roadStop() { return roadStop; }, get title() { return title; }, fx, grandpaSeat, get first() { return first; }, country, get cases() { return cases; }, get profile() { return profile; }, voice, get morning() { return morning; }, get birth() { return birth; }, get today() { return today; }, cut, film } });
+  if (import.meta.env.DEV) Object.assign(window, { __uaz: { input, vehicle, ground, world, cabin, atmo, camera, scene, renderer, police, rain, ui, audio, get mission() { return mission; }, get encounters() { return encounters; }, get story() { return story; }, get roadStop() { return roadStop; }, get title() { return title; }, fx, grandpaSeat, aliaSeat, get aliaRide() { return aliaRide; }, get eveningReturn() { return eveningReturn; }, get first() { return first; }, country, get cases() { return cases; }, get profile() { return profile; }, voice, get morning() { return morning; }, get birth() { return birth; }, get today() { return today; }, cut, film, narrative, meetMuha, get meeting() { return meeting; } } });
 
   // ---- vehicle feedback
   let shake = 0;
@@ -342,6 +389,7 @@ async function boot(): Promise<void> {
   };
   vehicle.onBump = (s) => {
     shake = Math.min(1.2, shake + s * 0.25);
+    audio.bumpCreak(s);
     if (s > 0.2) audio.rattle(s);
     if (started) { mission.jolt(s); cases?.jolt(s); }
     // the morning's passenger to the maternity feels every pothole
@@ -350,7 +398,8 @@ async function boot(): Promise<void> {
   vehicle.onShift = () => audio.gearShift();
   vehicle.onSplash = (s) => audio.splash(s);
   vehicle.onPlank = () => audio.plank(clamp(Math.abs(vehicle.vx) / 8, 0.3, 1));
-  cabin.onWiperEnd = () => audio.wiper();
+  cabin.onWiperEnd = (dir) => audio.wiper(dir);
+  cabin.onWindowWind = (down) => audio.windowWind(down);
   cabin.smoker.onToast = (t) => ui.toast(t, 2.4);
   cabin.smoker.onSfx = (k) => audio.smoking(k);
   cabin.onMist = () => ui.hint('mist', 'Стёкла запотели изнутри. Включи обдув или протри рукой — клик по стеклу.', 'B');
@@ -364,8 +413,14 @@ async function boot(): Promise<void> {
   let sandboxS = 0;
   let lastKeyboard = 0;
   let hornTap = 0;
+  /** How long I has been held toward the starter this press. */
+  let keyHold = 0;
+  /** This press already killed the engine or committed the starter. */
+  let keyPress = false;
+  const CRANK_HOLD = 0.33;
   const act = (a: Action | HotspotId) => {
     if (!started && a !== 'pause' && a !== 'help') return;
+    if (narrative.active && a !== 'pause' && a !== 'mute') return;
     first?.action(a);
     if (a === 'handbrake' || a === '4wd' || a === 'low' || a === 'lights' || a === 'wipers' || a === 'vent' || a === 'map' || a === 'tapeNext') cabin.reach(a);
     if (a === 'tape') cabin.reach('tape', { cassette: !!audio.tape && !audio.tape.playing });
@@ -377,22 +432,23 @@ async function boot(): Promise<void> {
       case 'gearUp': if (vehicle.gearMode === 'manual') vehicle.shiftBy(1); break;
       case 'gearDown': if (vehicle.gearMode === 'manual') vehicle.shiftBy(-1); break;
       case 'gearMode':
-        if (vehicle.engine === 'off') { ignition(); break; }
+        if (vehicle.engine === 'off') { crank(); break; }
         vehicle.gearMode = vehicle.gearMode === 'auto' ? 'manual' : 'auto';
         audio.click();
         ui.toast(vehicle.gearMode === 'auto' ? 'Коробка: автомат' : 'Коробка: вручную — Q ниже, E выше');
         break;
       case 'smoke': cabin.smoke(); break;
       case 'stub': cabin.stubOut(); break;
-      case 'vent': cabin.toggleVent(); audio.click(); ui.toast(cabin.ventOn ? 'Обдув стекла включён' : 'Обдув стекла выключен'); ui.clearHint('mist'); break;
+      case 'window': cabin.windWindow(); break;
+      case 'vent': cabin.toggleVent(); audio.click(0.65, cabin.ventOn); ui.toast(cabin.ventOn ? 'Обдув стекла включён' : 'Обдув стекла выключен'); ui.clearHint('mist'); break;
       case 'timeOfDay': if (sandbox) ui.toast(`Время суток: ${atmo.cycleClock()}`); else ui.toast('Время суток меняется только в песочнице'); break;
-      case 'lights': cabin.toggleLights(); audio.click(); ui.clearHint('lights'); break;
-      case 'wipers': cabin.toggleWipers(); audio.click(); ui.clearHint('wipers'); break;
+      case 'lights': cabin.toggleLights(); audio.click(0.65, cabin.lightsOn); ui.clearHint('lights'); break;
+      case 'wipers': cabin.toggleWipers(); audio.click(0.65, cabin.wipersOn); ui.clearHint('wipers'); break;
       case 'horn': hornTap = 0.25; break;
-      case 'map': ui.setMap(!ui.mapOpen, vehicle, progress()); audio.paper(); break;
-      case 'tape': if (audio.tape) { audio.click(); const on = audio.tape.toggle(); if (on) ui.toast(audio.tape.title, 3); } break;
+      case 'map': ui.setMap(!ui.mapOpen, vehicle, progress(), today?.route); audio.paper(); break;
+      case 'tape': if (audio.tape) { const on = audio.tape.toggle(); audio.click(0.6, on); if (on) ui.toast(audio.tape.title, 3); } break;
       case 'volUp': case 'volDown': if (audio.tape) { const v = audio.tape.setVolume(audio.tape.volume + (a === 'volUp' ? 0.1 : -0.1)); ui.toast(`Громкость радио · ${Math.round(v * 100)} %`, 1.2); } break;
-      case 'tapeNext': if (audio.tape) { audio.click(); ui.toast(audio.tape.next(), 3); } break;
+      case 'tapeNext': if (audio.tape) { audio.click(0.5); ui.toast(audio.tape.next(), 3); } break;
       case 'weather': ui.toast(`Погода: ${atmo.cyclePreset()}`); break;
       case 'mute': audio.setMuted(!audio.muted); ui.setMuted(audio.muted); break;
       case 'pause':
@@ -400,7 +456,7 @@ async function boot(): Promise<void> {
         if (!started) break;
         if (ui.mapOpen) { ui.setMap(false); break; }
         ui.setPaused(!ui.paused);
-        input.enabled = !ui.paused && !mission.finished;
+        input.enabled = !ui.paused && !mission.finished && !narrative.active;
         void (ui.paused ? audio.ctx?.suspend() : audio.ctx?.resume());
         audio.score?.hold(ui.paused);
         break;
@@ -429,15 +485,27 @@ async function boot(): Promise<void> {
   // a dropped file must not navigate away from the game
   addEventListener('dragover', (e) => e.preventDefault());
   addEventListener('drop', (e) => e.preventDefault());
-  const ignition = () => {
+  /** Turn the key to start. A second press while the starter is still turning does nothing. */
+  const crank = (hand = true) => {
     if (vehicle.engine !== 'off') return;
-    cabin.reach('start');
+    if (hand) cabin.reach('start');
     trackEvent('engine_start');
-    const crank = audio.starter();
-    vehicle.startEngine(crank);
+    const dur = audio.starter();
+    vehicle.startEngine(dur);
     // the sound runs on the audio clock: catch on its last chuff even if frames lag
-    setTimeout(() => vehicle.catchStart(), crank * 1000);
+    setTimeout(() => vehicle.catchStart(), dur * 1000);
     ui.clearHint('start');
+  };
+  /** The same key back: the engine dies, on the move as well as parked. */
+  const killEngine = () => {
+    if (vehicle.engine !== 'running') return;
+    cabin.reach('start');
+    vehicle.engine = 'off';
+    ui.toast('Мотор заглушен');
+  };
+  const ignition = () => {
+    if (vehicle.engine === 'running') killEngine();
+    else crank();
   };
 
   // the day's roadside encounters: riders, favours, a nail in a tyre
@@ -459,7 +527,7 @@ async function boot(): Promise<void> {
   let letters: Letters | null = null;
   let news: RadioNews | null = null;
   /** The cab has one passenger seat: whoever of the day's stories has someone in it. */
-  const seatTaken = () => !!(encounters?.riding || cases?.riding || roadStop?.riding || story?.aboard);
+  const seatTaken = () => !!(aliaRide?.riding || encounters?.riding || cases?.riding || roadStop?.riding || story?.aboard);
   const newEncounters = (resume?: DaySave) => {
     wearTold.steer = wearTold.rad = false;
     // mending at the roadside: never at an addressee's door, with the GAI about, or with a flat (the spare comes first)
@@ -502,6 +570,15 @@ async function boot(): Promise<void> {
     // Muha's story, from where the last finished day left it
     story?.dispose();
     story = new MuhaStory(world, mission, police, {
+      meetScene: (done, cancel) => meetMuha(bond => {
+        done(bond);
+        // The first meeting has no cargo transaction: commit it now so reload/restart cannot
+        // repeat the introduction. Later chapters retain their existing end-of-day saves.
+        if (story) profile.muha = { ...story.state };
+        saveProfile(profile);
+        checkpoint();
+      }, cancel),
+      hospitalScene: receiveAtHospital,
       choice: (who, line, opts, pick) => { audio.paper(); ui.choice(who, line, opts, pick); },
       closeChoice: () => ui.closeChoice(),
       choiceOpen: () => ui.choiceOpen,
@@ -509,7 +586,7 @@ async function boot(): Promise<void> {
       hint: (id, text, keys) => ui.hint(id, text, keys),
       toast: (text) => ui.toast(text, 3),
       blackout: (title, text, sec, mid, done, stamp) => { audio.stamp(); ui.blackout(title, text, sec, mid, done, stamp); },
-      fine: (amount, note) => { mission.record('fine', amount); ui.toast(`Штраф ${rub(amount)} · ${note}`, 3); },
+      fine: (amount, note) => { mission.record('fine', amount); ui.toast(`Протокол · ${note}`, 3); },
       boom: (level) => audio.boombox(level),
       shout: (level) => audio.shout(level),
       slam: (level) => audio.doorSlam(level),
@@ -562,6 +639,7 @@ async function boot(): Promise<void> {
 
   /** Between days, and on the morning drive before the route sheet: no riders, no Muha, no roadside stop. */
   const endDaySystems = () => {
+    aliaRide?.dispose(); aliaRide = null;
     encounters?.dispose(); encounters = null;
     cases?.dispose(); cases = null;
     story?.dispose(); story = null;
@@ -591,15 +669,15 @@ async function boot(): Promise<void> {
 
   // ---- the morning: from the family's yard to the post office, where the route sheet waits
   let morning = false;
+  let eveningReturn = false;
+  let aliaRide: AliaRide | null = null;
   /** The board was opened at the post office door after the morning drive: the van stays where it stopped. */
   let fromMorning = false;
-  /** The word at the porch in the mornings: өләсәй's, while the grandfather is in hospital… */
-  const MORNING = [
-    'Чай попил, улым? Беги, Зинаида ждать не любит.',
-    'Перемячи в дорогу, в газетке. Одну Зинаиде Павловне дай — она любит.',
-    'Картатай из Уфы звонил, на почту, Зинаиде: кормят, говорит, как в санатории. Велел тебе не гнать.',
-    'Куртку возьми! Черёмуха цветёт — значит, холода. Зинаида, поди, уже мешки разложила.',
-    'Әсәй с ночной пришла, спит. Тихонько со двора, не газуй под окнами.',
+  /** The word at the porch in the mornings: өләсәй's, while the grandfather is away on his Ufa voucher… */
+  /** …and for the week he spends with his sister, once the voucher is over (GRANDPA_SISTER). */
+  const SISTER = [
+    'Картатай от Хадии звонил. Путёвка кончилась, неделю у сестры — и домой. Велел не гнать.',
+    'Хадия-апа его кормит, как на свадьбу. Завтра вечерним автобусом. Я встречу, ты на работе будешь.',
   ];
   /**
    * …and once he is home, his or hers, by turns — those that fit the day: the jacket in a cold spell,
@@ -611,7 +689,7 @@ async function boot(): Promise<void> {
     ['Картатай', 'Масло проверил? Проверь. Я в твои годы не проверял — потом мост менял.'],
     ['Өләсәй', 'Перемячи в дорогу, в газетке. Одну Зинаиде Павловне дай — она любит.'],
     ['Картатай', 'Нине Петровне — поклон. Скажи, Урал ещё живой, на лавке сидит, всех пересидит.', (t) => t.stops.has('sosnovka')],
-    ['Өләсәй', 'Куртку возьми! Черёмуховые холода — это тебе не армия, тут простудишься. Картатай вон без куртки — и что? Кашляет.', (t) => t.cold],
+    ['Өләсәй', 'Куртку возьми! На улице холодно — простудишься. Картатай вон без куртки — и что? Кашляет.', (t) => t.cold],
     ['Картатай', 'В Берёзовку поедешь — Степанычу привет. Скажи, в субботу — на рыбалку, на зорьке. Я сказал.', (t) => t.stops.has('khutor')],
     ['Өләсәй', 'Дождевик под сиденье положила. По радио гроза — в низине не стой, проскакивай.', (t) => t.wet],
     ['Өләсәй', 'Әсәй с ночной пришла, спит. Тихонько со двора, не газуй под окнами.'],
@@ -652,14 +730,14 @@ async function boot(): Promise<void> {
   const placeHome = () => { const h = world.homePose; vehicle.place(h.x, h.z, h.yaw, ground); };
   /**
    * The grandfather in the van's right-hand seat (and so not at the gate at home), or out of it.
-   * From the first working day's evening he is in hospital in Ufa: not at home either.
+   * From the first working day's evening he is away in Ufa: not at home either.
    */
   const seatGrandpa = (on: boolean) => {
     grandpaSeat.visible = on;
-    if (world.home.grandpa) world.setAway(world.home.grandpa, on || inHospital());
+    if (world.home.grandpa) world.setAway(world.home.grandpa, on || awayInUfa());
   };
-  /** In hospital in Ufa: from the first morning's goodbye at the post office until he is home (GRANDPA_HOME). */
-  const inHospital = () => profile.day < GRANDPA_HOME && (profile.runs >= 1 || seenOff);
+  /** Away on the Ufa voucher: from the first morning's goodbye at the post office until he is home (GRANDPA_HOME). */
+  const awayInUfa = () => profile.day < GRANDPA_HOME && (profile.runs >= 1 || seenOff);
   /** The grandfather has been seen off at the post office this morning (he waits on its porch for the bus). */
   let seenOff = false;
   /** «Первый чистый лист» is due as the first route begins (after the goodbye and the keys). */
@@ -670,7 +748,7 @@ async function boot(): Promise<void> {
   /** The first working morning's drive with the grandfather (FirstMorning.ts); null on any other. */
   let first: FirstMorning | null = null;
   /**
-   * The season's last morning (Summer.ts): Timur drives to the Ufa bus at the post office with the
+   * The season's last morning (Summer.ts): Timur drives to the post office with the
    * grandfather in the passenger seat — his next word in `i`, seconds of driving to it in `t`.
    */
   let departure: { i: number; t: number } | null = null;
@@ -678,11 +756,50 @@ async function boot(): Promise<void> {
    * In the yard by the house: өләсәй's word at the porch, then the drive into town (or straight to
    * the counter). The first working morning the grandfather rides along and shows the way.
    */
+  const startAlia = (day: number, shift: AliaShift) => {
+    aliaRide?.dispose(); aliaRide = null;
+    if (aliaShift(day, profile.alia) !== shift) return;
+    aliaRide = new AliaRide(world, ground, day, shift, profile.alia, {
+      choice: (who, text, options, pick) => ui.choice(who, text, options, pick),
+      closeChoice: () => ui.closeChoice(), choiceOpen: () => ui.choiceOpen || ui.storyOpen || ui.boardOpen,
+      say: (who, text) => { ui.dialogue(who, text); aliaSeat.speak(4); },
+      hint: text => ui.hint('alia', text, 'Пробел'), clearHint: () => ui.clearHint('alia'),
+      seat: on => { aliaSeat.visible = on; },
+      complete: state => { profile.alia = state; saveProfile(profile); },
+    });
+  };
+  const prepareEvening = () => {
+    morning = false; eveningReturn = true; fromMorning = false;
+    first = null; birth = null; seatGrandpa(false); showPorch(false);
+    reset(); mission.relocate(vehicle.x, vehicle.z);
+    atmo.setClock(18.5); input.enabled = true;
+    ui.hideEnd(); ui.clearHint();
+    startAlia(profile.returnEvening!, 'evening');
+    ui.hint('homeward', aliaRide ? 'Вечер · домой в Урманлы. У своих ворот остановитесь и затяните ручник. Алия ждёт у остановки в Ключевске.' : 'Вечер · домой в Урманлы. У своих ворот остановитесь и затяните ручник.', 'M');
+  };
+  const startEvening = async () => {
+    if (!profile.returnEvening) { toMorning(); return; }
+    today = boardFor(profile.returnEvening, profile.trust);
+    if (!started) await begin(false, [], {evening:true});
+    else startDay([], 'evening');
+  };
+  const skipEvening = () => {
+    delete profile.returnEvening; saveProfile(profile); toMorning();
+  };
+  const finishEvening = () => {
+    aliaRide?.dispose(); aliaRide = null; eveningReturn = false;
+    profile.damage = vehicle.damage; profile.fuel = vehicle.fuel;
+    profile.wear = {steer:vehicle.steerWear,rad:vehicle.radWear,pull:vehicle.pullDir};
+    delete profile.returnEvening; saveProfile(profile);
+    input.enabled = false; ui.clearHint('homeward');
+    ui.blackout('Урманлы · дома', 'Мотор стих. За воротами горит свет, из дома зовут пить чай.', 2.5, () => {}, toMorning, 'Дома');
+  };
   const morningStart = () => {
     morning = true;
     fromMorning = false;
     vehicle.handbrake = true;
     const firstDay = profile.runs === 0;
+    if (!firstDay && !departure && !morningCase(profile.day, profile.cases)) startAlia(profile.day, 'morning');
     seenOff = firstSheetDue = false;
     showPorch(false);
     birth = null;
@@ -744,12 +861,14 @@ async function boot(): Promise<void> {
         if (!morning) return;
         audio.paper();
         const [who, line] = day === GRANDPA_HOME
-          ? ['Картатай', 'Ну что, почтальон. Мне теперь — на лавке сидеть, кур считать. А ты — езжай. Вечером расскажешь, как там Нина Петровна.']
-          : day > GRANDPA_HOME ? morningHome(day) : ['Өләсәй', MORNING[(day - 1) % MORNING.length]];
+          ? ['Картатай', 'Ну что, почтальон. Месяц грязей, неделя у Хадии — хватит. Мне теперь на лавке сидеть, кур считать. А ты — езжай. Вечером расскажешь, как там Нина Петровна.']
+          : day > GRANDPA_HOME ? morningHome(day)
+          : day >= GRANDPA_SISTER ? ['Өләсәй', SISTER[day - GRANDPA_SISTER]]
+          : ['Өләсәй', morningAway(day, today)];
         ui.choice(who, line, ['Поехали — до почты своим ходом', 'Сразу к почте'], (i) => {
           if (!morning) return;
           if (i === 1) { reset(); vehicle.handbrake = true; atPostDoor(); return; }
-          ui.hint('morning', 'Почта — в Ключевске: по улице и лесом до трассы, там направо — мимо поста ГАИ, в посёлок. Встань у дверей, где Зинаида Павловна, и затяни ручник — там путевой лист.', 'Пробел');
+          ui.hint('morning', 'Почта — в Ключевске: по улице и лесом до трассы, там направо — мимо поста ГАИ, в посёлок. Заезжай на стоянку у дверей и затяни ручник — там путевой лист.', 'Пробел');
         });
       };
       const mc = morningCase(day, profile.cases);
@@ -796,27 +915,27 @@ async function boot(): Promise<void> {
     if (Math.hypot(h.x - vehicle.x, h.z - vehicle.z) < 26 && Math.abs(vehicle.speedKmh) < 2) {
       birth = null;
       ui.clearHint('birth');
-      ui.dialogue(R.arrive[0], R.arrive[1], null);
-      world.hospital.nurse.wave = 4;
+      if (!receiveAtHospital(R.arrive[0], R.arrive[1])) ui.dialogue(R.arrive[0], R.arrive[1], null);
       audio.chime();
       // a smooth ride is remembered (the bumps are counted)
       morningExtra = [R.label, R.money, Math.max(2, R.trust - Math.floor(b.bumps / 2))];
-      setTimeout(() => ui.hint('morning', 'Теперь — к почте, через дорогу. Встань у дверей и затяни ручник.', 'Пробел'), 3000);
+      setTimeout(() => ui.hint('morning', 'Теперь — к почте, через дорогу. Заезжай на стоянку у дверей и затяни ручник.', 'Пробел'), 3000);
     }
   };
   /**
    * At the post office door: Zinaida's word, and the day's orders on the counter. The first
-   * morning the grandfather gets out here for the Ufa bus: the goodbye, then she gives Timur the
-   * keys, and as the first route begins, its song.
+   * morning they go inside together: the grandfather sits beside Timur while Zinaida hires him.
+   * Only the completed scene unlocks the first route; the grandfather then waits for the Ufa bus.
    */
   const atPostDoor = () => {
+    aliaRide?.dispose(); aliaRide = null;
     morning = false;
     fromMorning = true;
     ui.clearHint('morning');
     ui.closeChoice();
     audio.paper();
     if (departure) {
-      // the last drive is over: in the cab at the door, the keys go back to the grandfather
+      // the last drive is over: in the cab at the door, the grandfather reads Timur’s notes in the route book
       departure = null;
       ui.clearHint('departure');
       input.enabled = false;
@@ -829,19 +948,24 @@ async function boot(): Promise<void> {
     if (first) {
       const f = first;
       first = null;
-      f.arrive();
-      grandpaSeat.speak(4);
+      // The in-engine scene owns the next line; do not start a cab voice it would interrupt.
+      f.arrive(false);
       input.enabled = false;
       vehicle.handbrake = true;
-      setTimeout(() => {
-        // out of the cab and onto the porch, to wait for the bus; at home he is not any more
-        grandpaSeat.visible = false;
-        seenOff = true;
-        showPorch(true);
-        if (world.home.grandpa) world.setAway(world.home.grandpa, true);
-        const page = (eyebrow: string, text: string, opts?: Parameters<typeof ui.storyPage>[2]) => { audio.paper(); ui.storyPage(eyebrow, text, opts); };
-        farewellPages(page, () => keysPage(page, () => { ui.hideStory(); firstSheetDue = true; openBoard(); }));
-      }, 3400);
+      vehicle.engine = 'off';
+      grandpaSeat.visible = false;
+      seenOff = true;
+      showPorch(false);
+      if (world.home.grandpa) world.setAway(world.home.grandpa, true);
+      hiring ??= new PostOfficeHiring(world, camera, kind => kind === 'door' ? audio.doorSlam(.5) : audio.paper());
+      const retry = () => ui.choice('Зинаида Павловна', 'Закончим оформление, Тимур.', ['Вернуться к столу'], () => { ui.closeChoice(); runHiring(); });
+      const runHiring = () => {
+        const ok = narrative.play(hiring!.script(() => {
+          showPorch(true); firstSheetDue = true; openBoard();
+        }, retry), [cabin.group, rain.group]);
+        if (!ok) retry();
+      };
+      runHiring();
       return;
     }
     ui.dialogue('Зинаида Павловна', ZINAIDA[(profile.day - 1) % ZINAIDA.length], null);
@@ -850,8 +974,15 @@ async function boot(): Promise<void> {
   /** The next day (or the first after a reload): it starts in the yard at home. */
   const toMorning = () => {
     ui.hideEnd();
+    if (profile.returnEvening) {
+      input.enabled = false;
+      ui.choice('Вечер · Ключевск', 'Почта сдана. Можно доехать домой своим ходом или сразу перейти к следующему утру.',
+        ['Доехать домой', 'Следующее утро'], i => { if (i === 0) void startEvening(); else skipEvening(); });
+      return;
+    }
+    atmo.setClock(null);
     if (seasonFinaleDue(profile, profile.day)) {
-      // the season's end: the evening at the gate, then (the box full) the last drive to the Ufa bus
+      // the season's end: the evening at the gate, then the shared drive to the post office
       input.enabled = false;
       playFinaleEvening(profile, finaleHooks, () => {
         ui.hideStory();
@@ -887,17 +1018,8 @@ async function boot(): Promise<void> {
     void begin(false, s.planned, { resume: s });
   };
 
-  /** Morning: the day's orders on the counter — and once a year, in July, the summer's pages before them. */
+  /** Morning: the day's orders on the counter. */
   const openBoard = () => {
-    const dp = dateParts(profile.day);
-    if (summerDue(profile, dp.y, dp.m)) {
-      input.enabled = false;
-      playSummer(profile, dp.y, {
-        page: (eyebrow, text, opts) => { audio.paper(); ui.storyPage(eyebrow, text, opts); },
-        done: () => { saveProfile(profile); ui.setGarage(profile); ui.hideStory(); openBoard(); },
-      });
-      return;
-    }
     openBoardNow();
   };
   const openBoardNow = () => {
@@ -911,7 +1033,7 @@ async function boot(): Promise<void> {
       note: [today.note,
         police.ambush ? 'Шофера с утра говорят: гаишники сегодня не на посту — с радаром в деревне перед развилкой. Там шестьдесят.' : null,
         police.strict ? 'На посту ГАИ, говорят, капитан из области с проверкой. Сегодня там всё строго.' : null,
-        muhaHelps() ? 'Женька Муха — грузчиком при почте: мешки в буханке ещё до тебя. «Давай, почтальон, не опаздывай!»' : null, letter?.note].filter(Boolean).join('<br>') || null,
+        muhaHelps() ? 'Женька Муха — грузчиком при почте: мешки в вездеходе ещё до тебя. «Давай, почтальон, не опаздывай!»' : null, letter?.note].filter(Boolean).join('<br>') || null,
       onRepair: (kind) => ui.onRepair?.(kind),
       onGo: (ids) => {
         // the waybill goes out whole; the requests are the ones taken
@@ -933,13 +1055,13 @@ async function boot(): Promise<void> {
     return `Сегодня: ${parts.join('; ')}.${fragile} Можно в любом порядке. Карта — M.`;
   };
 
-  const begin = async (free = false, orders: Order[] = [], at: { home?: boolean; resume?: DaySave } = {}) => {
+  const begin = async (free = false, orders: Order[] = [], at: { home?: boolean; evening?: boolean; resume?: DaySave } = {}) => {
     if (started) return;
     started = true;
     sandbox = free;
-    const quiet = !!at.home;
+    const quiet = !!at.home || !!at.evening;
     // the morning's drive to the post office, before the route sheet, has no roadside encounters and no Muha yet
-    if (!free) { mission = newMission(orders); atmo.setDayWeather(today.weather); dayWorld(); snowNow = today.snow; if (!quiet) newEncounters(at.resume); else if (at.home) endDaySystems(); if (!quiet && muhaHelps()) mission.addTime(-90); }
+    if (!free) { mission = newMission(orders); atmo.setDayWeather(today.weather); dayWorld(); snowNow = today.snow; if (!quiet) newEncounters(at.resume); else endDaySystems(); if (!quiet && muhaHelps()) mission.grantHeadStart(90); }
     else { atmo.setDayWeather(null); story?.dispose(); story = null; }
     if (at.resume) mission.restore(at.resume);
     policeDay();
@@ -977,6 +1099,8 @@ async function boot(): Promise<void> {
     ui.hideTitle();
     // back into the cab
     if (title) { title.dispose(); title = null; }
+    if (prologueVan) { scene.remove(prologueVan.group); prologueVan = null; }
+    audio.stopVillage(1.0);
     head.add(camera);
     camera.position.set(0, 0, 0);
     camera.rotation.set(0, 0, 0);
@@ -991,19 +1115,20 @@ async function boot(): Promise<void> {
     // between the songs, the presenter (only on a working day: the sandbox's radio just plays)
     if (audio.tape) audio.tape.onBreak = () => {
       // (not while the grandfather is talking: the drive home and the first morning)
-      const text = !sandbox && !ui.choiceOpen && !first && !prologue ? news?.next() ?? null : null;
+      const text = !sandbox && !narrative.active && !ui.choiceOpen && !first && !aliaRide?.riding && !prologue ? news?.next() ?? null : null;
       if (!text) return 0;
       ui.dialogue('Радио «Заречье» · 101,7', text, null);
       voice.note('Радио «Заречье»', text, 'radio');
       audio.tape!.presenterClip = voice.bufferNow(text);
       return text.length;
     };
-    // the first morning the grandfather teaches the ignition: the engine waits for Enter
-    if (!(at.home && profile.runs === 0)) setTimeout(ignition, 700);
+    // the first morning the grandfather teaches the ignition: the engine waits for I
+    if (!(at.home && profile.runs === 0)) setTimeout(crank, 700);
     if (sandbox) {
       setTimeout(() => ui.hint('intro', 'Песочница: без графика и ГАИ. Погода — K, время суток — T, обдув стекла — B, закурить — J, телепорт — в паузе (Esc). Есть три объезда по грунтовке и охотничья просека в тупик.', 'K'), 3000);
       return;
     }
+    if (at.evening) { prepareEvening(); return; }
     if (at.home) { placeHome(); mission.relocate(vehicle.x, vehicle.z); morningStart(); return; }
     if (at.resume) {
       const v = at.resume.van;
@@ -1020,7 +1145,35 @@ async function boot(): Promise<void> {
   };
   // ---- the prologue: home from the army, the drive with the grandfather, the keys
   let prologue: Prologue | null = null;
+  let prologueCam = false;
+  let prologueVan: VehicleModel | null = null;
   const runPrologue = () => {
+    ui.hideTitle();
+    if (title) { title.dispose(); title = null; }
+    audio.musicVolume(0.22, 2.5);
+    audio.startVillage(0.42);
+    atmo.setDayWeather(today.weather || 'Золотая осень');
+    dayWorld();
+    placeHome();
+    seatGrandpa(false);
+
+    // Keep the interior driving cabin hidden during the exterior cinematic prologue
+    cabin.group.visible = false;
+
+    // Classic post van standing in the yard with Hunyuan 3D wheels, transparent glass and interior
+    prologueVan = buildUaz('post');
+    scene.add(prologueVan.group);
+    const h = world.homePose;
+    const sy = Math.sin(h.yaw), cy = Math.cos(h.yaw);
+    const yFront = ground.height(h.x - sy * 1.3, h.z - cy * 1.3);
+    const yRear = ground.height(h.x + sy * 1.3, h.z + cy * 1.3);
+    const pitch = -Math.atan2(yFront - yRear, 2.6);
+    prologueVan.group.position.set(h.x, (yFront + yRear) / 2, h.z);
+    prologueVan.group.rotation.set(pitch, h.yaw, 0, 'YXZ');
+    prologueVan.group.visible = true;
+
+    prologueCam = true;
+
     prologue = new Prologue({
       page: (eyebrow, text, opts) => { input.enabled = false; audio.paper(); ui.storyPage(eyebrow, text, opts); },
       finish: () => {
@@ -1028,6 +1181,16 @@ async function boot(): Promise<void> {
         profile.prologue = true;
         saveProfile(profile);
         ui.hideStory();
+        prologueCam = false;
+
+        // Clean up exterior prologue van
+        if (prologueVan) {
+          scene.remove(prologueVan.group);
+          prologueVan = null;
+        }
+        audio.music(null, 1.8);
+        audio.stopVillage(2.0);
+
         // the next morning, at home: the first working day's drive to the post office
         toMorning();
       },
@@ -1038,6 +1201,7 @@ async function boot(): Promise<void> {
   ui.onNewGame = () => {
     if (started || ui.boardOpen || ui.storyOpen) return;
     wipeCareer();
+    ui.hideTitle();
     runPrologue();
   };
   // «В главное меню» from the pause: the day saved where the van stands, and the page starts over at the title
@@ -1049,6 +1213,7 @@ async function boot(): Promise<void> {
   };
   ui.onStart = () => {
     if (started || ui.boardOpen || ui.storyOpen) return;
+    ui.hideTitle();
     if (!profile.prologue) { runPrologue(); return; }
     const s = saved();
     if (s) resumeDay(s); else toMorning();
@@ -1057,6 +1222,7 @@ async function boot(): Promise<void> {
     if (started || ui.boardOpen || ui.storyOpen) return;
     clearDay();
     ui.setResume(null);
+    ui.hideTitle();
     toMorning();
   };
   ui.onStartSandbox = () => void begin(true);
@@ -1065,9 +1231,12 @@ async function boot(): Promise<void> {
    * orders; or the orders taken at the door after the morning drive, the van where it stopped
    * ('here'); or the next morning in the yard at home, before any orders ('home').
    */
-  const startDay = (orders: Order[], at: 'post' | 'here' | 'home' = 'post') => {
+  const startDay = (orders: Order[], at: 'post' | 'here' | 'home' | 'evening' = 'post') => {
     const home = at === 'home';
+    eveningReturn = false; atmo.setClock(null);
+    aliaRide?.dispose(); aliaRide = null;
     // a scene still playing ends now (the camera back in the cab)
+    narrative.cancel();
     cut.finish();
     atmo.setDayWeather(today.weather); dayWorld();
     snowNow = today.snow;
@@ -1082,7 +1251,7 @@ async function boot(): Promise<void> {
     cabin.repair();
     if (vehicle.damage > 0.3) cabin.crack(clamp(vehicle.damage, 0.2, 0.9));
     world.resetEvents();
-    if (at === 'post') reset(); else if (home) placeHome();
+    if (at === 'post' || at === 'evening') reset(); else if (home) placeHome();
     held = false;
     policeDay();
     seatGrandpa(false);
@@ -1091,24 +1260,25 @@ async function boot(): Promise<void> {
     else if (at !== 'here') showPorch(false);
     mission = newMission(orders);
     mission.relocate(vehicle.x, vehicle.z);
-    if (!sandbox && !home && muhaHelps()) mission.addTime(-90);
+    if (!sandbox && !home && muhaHelps()) mission.grantHeadStart(90);
     if (!home && morningExtra) { mission.extra(...morningExtra); morningExtra = null; }
     vehicle.flat = false;
     ui.closeChoice();
-    if (!sandbox) { if (home) endDaySystems(); else newEncounters(); }
+    if (!sandbox) { if (home || at === 'evening') endDaySystems(); else newEncounters(); }
     ui.hideEnd();
     ui.setPaused(false);
     ui.ritual(null, 'near', 0);
     void audio.ctx?.resume();
     input.enabled = true;
-    if (!(home && profile.runs === 0)) setTimeout(ignition, 600);
+    if (!(home && profile.runs === 0)) setTimeout(crank, 600);
+    if (at === 'evening') { prepareEvening(); return; }
     if (home) { morningStart(); return; }
     morning = false;
     if (!sandbox) setTimeout(() => ui.hint('intro', dayIntro(orders), 'M'), 2600);
     checkpoint();
   };
   // the morning's drive has no orders yet: «заново» is the yard again
-  ui.onRestart = () => (morning ? startDay([], 'home') : startDay(mission.planned));
+  ui.onRestart = () => { if (eveningReturn) void startEvening(); else if (morning) startDay([], 'home'); else startDay(mission.planned); };
   input.onAnyKey = () => { lastKeyboard = performance.now(); ui.setTouchMode(false); };
   window.addEventListener('pointerdown', (e) => { if (e.pointerType === 'touch') ui.setTouchMode(true); }, { capture: true });
 
@@ -1122,7 +1292,7 @@ async function boot(): Promise<void> {
     const hit = ray.intersectObjects(cabin.hotspots.map((h) => h.mesh), false)[0];
     return hit ? cabin.hotspots.find((h) => h.mesh === hit.object)!.id : null;
   };
-  input.onClick = (x, y) => { const id = pick(x, y); if (id) act(id); else if (started && cabin.wipeAt(ray)) audio.click(); };
+  input.onClick = (x, y) => { if (narrative.active) return; const id = pick(x, y); if (id) act(id); else if (started && cabin.wipeAt(ray)) audio.click(); };
 
   const progress = () => {
     const done = mission.stops.filter((s) => s.done).length;
@@ -1162,8 +1332,38 @@ async function boot(): Promise<void> {
     frame++;
 
     input.update(dt, Math.abs(vehicle.vx));
+    // I: a third of a second turns the key far enough for the starter; letting go sooner springs it back.
+    // Once it bites, the recording finishes on its own. A running engine dies on the press, without a hold.
+    {
+      const live = started && input.enabled && !narrative.active && !ui.mapOpen && !ui.helpOpen && !ui.choiceOpen && !ui.boardOpen && !ui.storyOpen;
+      if (!input.ignitionDown || !live) {
+        if (!input.ignitionDown && keyHold > 0.04 && vehicle.engine === 'off') audio.click(0.22, false);
+        keyHold = 0;
+        keyPress = false;
+        cabin.keyTurn = 0;
+      } else if (vehicle.engine === 'running') {
+        if (!keyPress) { killEngine(); keyPress = true; }
+        cabin.keyTurn = 0;
+      } else if (vehicle.engine === 'cranking') {
+        keyPress = true;
+        cabin.keyTurn = 0;
+      } else if (!keyPress) {
+        if (keyHold === 0) {
+          cabin.reach('start', { until: () => input.ignitionDown || vehicle.engine === 'cranking' });
+          audio.click(0.3);
+        }
+        keyHold += dt;
+        cabin.keyTurn = Math.min(1, keyHold / CRANK_HOLD);
+        if (keyHold >= CRANK_HOLD) {
+          keyPress = true;
+          keyHold = 0;
+          cabin.keyTurn = 0;
+          crank(false);
+        }
+      }
+    }
     if (held) vehicle.handbrake = true;
-    const controls = held || cut.active ? { steer: 0, gas: 0, brake: 0 }
+    const controls = held || cut.active || narrative.active ? { steer: 0, gas: 0, brake: 0 }
       : started && input.enabled && !ui.mapOpen ? { steer: input.steer, gas: input.gas, brake: input.brake } : { steer: 0, gas: 0, brake: 0 };
     // the first morning, while the grandfather asks to pull in at the post: the van eases off by itself
     // bees loose in the cab twitch the wheel
@@ -1173,8 +1373,8 @@ async function boot(): Promise<void> {
       controls.gas = 0;
       controls.brake = Math.max(controls.brake, clamp((Math.abs(vehicle.speedKmh) - assist) / 20, 0.15, 0.6));
     }
-    vehicle.update(dt, controls, ground, world.colliders);
-    if (started && !sandbox) {
+    if (!narrative.active) vehicle.update(dt, controls, ground, world.colliders);
+    if (started && !sandbox && !narrative.active) {
       fuelStop.update(dt, vehicle, world.inFuelBay(vehicle.x, vehicle.z), profile);
       if (!fuelHinted && vehicle.fuel < 0.12) { fuelHinted = true; ui.hint('fuel', 'Стрелка бензобака у нуля. На нуле мотор тянет на парах — заправка (АЗС) у дороги, просто заезжай и стой у колонки.'); }
     } else if (started) {
@@ -1189,7 +1389,7 @@ async function boot(): Promise<void> {
       if (!porch.waved && !morning && !ui.storyOpen && !ui.boardOpen && Math.abs(vehicle.speedKmh) > 3) { porch.waved = true; world.postGrandpa.wave = 4.5; }
       else if (d > 160) showPorch(false);
     }
-    const horn = input.horn || hornTap > 0;
+    const horn = !narrative.active && (input.horn || hornTap > 0);
     cabin.setHorn(horn);
     if (horn && !hornWas) audio.hornOn();
     if (!horn && hornWas) audio.hornOff();
@@ -1208,10 +1408,19 @@ async function boot(): Promise<void> {
     const idle = vehicle.engine === 'running' ? 0.0012 * (1 + Math.sin(t * 3.1)) : 0;
     const jx = (Math.random() - 0.5) * (shake * 0.02 + rough * 0.006);
     const jy = (Math.random() - 0.5) * (shake * 0.03 + rough * 0.01) + Math.sin(t * 26) * idle;
-    head.position.set(EYE.x + sway.x + jx, EYE.y + jy, EYE.z + sway.y);
+    const windowLean = cabin.windowLean;
+    head.position.set(EYE.x + sway.x + jx - windowLean * .10, EYE.y + jy - windowLean * .045, EYE.z + sway.y - windowLean * .10);
     if (!started) {
       titleT += dt;
-      if (title) {
+      if (prologueCam) {
+        // Real in-engine 3D render framing the Bukhanka in the family yard (Angle 1)
+        const cp = world.yardPoint(3.4, 7.6);
+        const lp = world.yardPoint(-1.6, -1.0);
+        camera.position.set(cp.x + Math.sin(t * 0.12) * 0.08, cp.y + 1.42 + Math.cos(t * 0.16) * 0.03, cp.z);
+        camera.lookAt(lp.x, lp.y + 1.25, lp.z);
+        ui.setTitleFade(0, '#000000');
+        audio.updateVillage(dt);
+      } else if (title) {
         titleS = title.update(dt, camera);
         ui.setTitleFade(title.fade, `#${atmo.state.fogColor.getHexString()}`);
       }
@@ -1220,11 +1429,12 @@ async function boot(): Promise<void> {
       ui.setSoundWaiting(audio.musicWaiting);
     } else {
       const back = input.lookBack ? 2.6 : 0;
-      head.rotation.set(input.lookPitch + EYE_PITCH + jy * 0.4, damp(head.rotation.y, input.lookYaw + back, 10, dt) + sway.x * 0.5, -vehicle.roll * 0.3 + jx * 0.6);
+      head.rotation.set(input.lookPitch * (1 - windowLean) + EYE_PITCH + jy * 0.4 - windowLean * .7, damp(head.rotation.y, (input.lookYaw + back) * (1 - windowLean) + windowLean * .9, 10, dt) + sway.x * 0.5, -vehicle.roll * 0.3 + jx * 0.6 + windowLean * .035);
     }
 
     // a scene outside the cab has the camera
     cut.update(dt);
+    narrative.update(dt);
     camera.getWorldPosition(camWorld);
     if (sandbox && frame % 15 === 0) sandboxS = ground.main.nearestS(vehicle.x, vehicle.z);
     atmo.update(dt, started ? (sandbox ? sandboxS : mission.routeS) : titleS, camWorld);
@@ -1252,12 +1462,12 @@ async function boot(): Promise<void> {
     world.setAtmosphere(atmo.state.dark, atmo.state.wet, atmo.state.skyColor, atmo.state.fogColor);
     world.setSnow(snowNow);
     world.update(dt, t, camWorld);
-    country.update(dt, started ? { x: vehicle.x, z: vehicle.z, speed: Math.abs(vehicle.vx) } : { x: camWorld.x, z: camWorld.z, speed: 0 }, { rain: atmo.state.rain, dark: atmo.state.dark, snow: snowNow });
-    const life = world.updateLife(dt, t, vehicle.x, vehicle.z, pvx, pvz, atmo.state.dark, vehicle.yaw);
+    country.update(narrative.active ? 0 : dt, started ? { x: vehicle.x, z: vehicle.z, speed: Math.abs(vehicle.vx) } : { x: camWorld.x, z: camWorld.z, speed: 0 }, { rain: atmo.state.rain, dark: atmo.state.dark, snow: snowNow });
+    const life = world.updateLife(narrative.active ? 0 : dt, t, vehicle.x, vehicle.z, pvx, pvz, atmo.state.dark, vehicle.yaw);
     // falling snow melts on the warm glass: the wipers have work in winter too
     const onGlass = Math.max(atmo.state.rain, atmo.state.snow * 0.5);
     cabin.update(dt, vehicle, onGlass, atmo.state.dark);
-    grandpaSeat.update(dt);
+    grandpaSeat.update(dt); aliaSeat.update(dt);
     world.honk = horn;
     world.setWeather(atmo.state.rain);
     world.watch = police.state === 'pursuit' ? { x: police.patrol.x, z: police.patrol.z } : null;
@@ -1282,8 +1492,8 @@ async function boot(): Promise<void> {
     fx.update(dt);
 
     if (started) {
-      if (!sandbox) { encounters?.update(dt, vehicle, mission.routeS); cases?.update(dt, vehicle); story?.update(dt, vehicle); roadside?.update(dt, vehicle); roadStop?.update(dt, vehicle); }
-      if (!sandbox) mission.update(dt, vehicle, horn, { lights: cabin.lightsOn, wipers: cabin.wipersOn, rain: Math.max(atmo.state.rain, atmo.state.snow * 0.5), dark: atmo.state.dark });
+      if (!sandbox && !narrative.active) { encounters?.update(dt, vehicle, mission.routeS); cases?.update(dt, vehicle); story?.update(dt, vehicle); if (!narrative.active) { roadside?.update(dt, vehicle); roadStop?.update(dt, vehicle); } }
+      if (!sandbox && !narrative.active) mission.update(dt, vehicle, horn, { lights: cabin.lightsOn, wipers: cabin.wipersOn, rain: Math.max(atmo.state.rain, atmo.state.snow * 0.5), dark: atmo.state.dark });
       const m = ground.marks;
       const s = sandbox ? sandboxS : mission.routeS;
       const near = (a: number, b: number, fade = 120) => clamp(Math.min(s - a + fade, b - s + fade) / fade, 0, 1);
@@ -1296,6 +1506,7 @@ async function boot(): Promise<void> {
       const tag = hs >= 0 ? ground.homeRoad.zoneAt(hs).tag : bs >= 0 ? ground.stub.zoneAt(bs).tag : ground.main.zoneAt(s).tag;
       const homeVillage = hs < 0 ? 0 : clamp((hs - ground.homeMarks.village + 60) / 60, 0, 1);
       audio.update(dt, vehicle, {
+        windowOpening: cabin.windowOpening,
         rain: atmo.state.rain, wind: atmo.state.wind, dusk: atmo.state.dark, wet: atmo.state.wet,
         village: hs >= 0 ? Math.max(homeVillage, clamp(1 - hs / 80, 0, 1)) : Math.max(near(0, m.town), ...world.hamlets.map(([a, b]) => near(a, b)), nearB(ground.branch.kaiStart, ground.branch.end)),
         forest: forestAmb = damp(forestAmb, tag === 'forest' || tag === 'bor' ? 1 : 0, 0.6, dt), river: clamp(1 - ground.waterDist(vehicle.x, vehicle.z) / 140, 0, 1),
@@ -1304,7 +1515,7 @@ async function boot(): Promise<void> {
       });
       audio.life(dt, life);
       // (the sandbox too: its radar and chases are the real thing, its fines on no record)
-      police.update(dt, t, vehicle.x, vehicle.z, pvx, pvz, vehicle.yaw);
+      if (!narrative.active && !eveningReturn) police.update(dt, t, vehicle.x, vehicle.z, pvx, pvz, vehicle.yaw);
       // the morning: stopped on the handbrake at the post office door, the route sheet
       if (morning && first) first.update(dt, vehicle);
       // the last drive: the grandfather's words on the way, while the van is moving
@@ -1319,8 +1530,10 @@ async function boot(): Promise<void> {
         }
       }
       if (birth) birthUpdate(dt);
+      if (!sandbox && !narrative.active && !ui.paused) aliaRide?.update(dt, vehicle);
+      if (eveningReturn && !aliaRide?.riding && !aliaRide?.busy && vehicle.handbrake && Math.abs(vehicle.speedKmh) < 1 && Math.hypot(vehicle.x-world.homePose.x,vehicle.z-world.homePose.z)<18) finishEvening();
       bees.update(dt, beeLevel);
-      if (morning && !birth && !ui.boardOpen && (!first || first.atDoor) && vehicle.handbrake && Math.abs(vehicle.speedKmh) < 1 && Math.hypot(world.postDoor.x - vehicle.x, world.postDoor.z - vehicle.z) < (first ? 22 : 16)) atPostDoor();
+      if (morning && !birth && !aliaRide?.riding && !aliaRide?.busy && !ui.boardOpen && (!first || first.atDoor) && vehicle.handbrake && Math.abs(vehicle.speedKmh) < 1 && Math.hypot(world.postDoor.x - vehicle.x, world.postDoor.z - vehicle.z) < (first ? 22 : 16)) atPostDoor();
       // the autosave on the road, every so often
       saveT -= dt;
       if (saveT < 0) { saveT = 20; checkpoint(); }
@@ -1335,20 +1548,22 @@ async function boot(): Promise<void> {
         const gear = vehicle.gear === -1 ? 'R' : vehicle.gear === 0 ? 'N' : String(vehicle.gear);
         ui.setChips({
           gear, auto: vehicle.gearMode === 'auto', fourWD: vehicle.fourWD, low: vehicle.low, handbrake: vehicle.handbrake,
-          lights: cabin.lightsOn, wipers: cabin.wipersOn, smoke: cabin.smoker.status, volume: audio.tape?.volume, engine: vehicle.engine, tape: audio.tape?.playing ? `▶ ${audio.tape.title}` : null,
+          lights: cabin.lightsOn, wipers: cabin.wipersOn, smoke: cabin.smoker.status, volume: audio.tape?.volume, engine: cabin.keyTurn > 0 && vehicle.engine === 'off' ? 'winding' : vehicle.engine, tape: audio.tape?.playing ? `▶ ${audio.tape.title}` : null,
         });
         ui.setWeather(atmo.state.name);
         const next = mission.nextStop;
         const len = ground.main.length;
         const sv = ground.main.nearestS(vehicle.x, vehicle.z);
+        const homeHit = eveningReturn ? ground.nearestRoad(vehicle.x,vehicle.z,40) : null;
+        const homeLeft = homeHit?.sample.road === ground.homeRoad ? ground.homeRoad.length-homeHit.s : Math.abs(sv-ground.marks.home)+ground.homeRoad.length;
         ui.setRoute({
-          next: morning ? (departure ? 'почты, к автобусу на Уфу' : 'почты, за путевым листом') : next?.name ?? null, dist: morning ? Math.max(0, mission.routeS - 40) : next ? next.s - mission.routeS : 0, progress: mission.routeS / len,
+          next: eveningReturn ? 'дома в Урманлы' : morning ? (departure ? 'почты, с картатаем' : 'почты, за путевым листом') : next?.name ?? null, dist: eveningReturn ? Math.max(0,homeLeft) : morning ? Math.max(0, mission.routeS - 40) : next ? next.s - mission.routeS : 0, progress: mission.routeS / len,
           stops: mission.stops.map((st) => ({ at: st.s / len, done: st.done })),
           left: mission.dueLeft, urgent: mission.urgentLabel, cargo: mission.fragileAboard ? mission.cargo : null,
           kmh: vehicle.speedKmh, limit: (sv > m.town + 170 && sv < m.town + 490) || world.hamlets.some(([a, b]) => sv > a - 20 && sv < b + 20) ? 60 : null,
           alert: police.alert,
         });
-        if (ui.mapOpen) ui.setMap(true, vehicle, progress());
+        if (ui.mapOpen) ui.setMap(true, vehicle, progress(), today?.route);
       }
       // hotspot tooltip on hover (desktop)
       if (input.pointer.inside && performance.now() - lastKeyboard > 400 && frame % 4 === 0) {
@@ -1367,14 +1582,14 @@ async function boot(): Promise<void> {
       ? 'radial-gradient(ellipse 70% 60% at 15% 100%, rgba(40,90,255,0.65), rgba(40,90,255,0) 70%)'
       : 'radial-gradient(ellipse 70% 60% at 85% 100%, rgba(255,40,30,0.6), rgba(255,40,30,0) 70%)';
     if (chasing && police.gap < 14) shake = Math.max(shake, (1 - police.gap / 14) * 0.22);
-    if (started) {
+    if (started && !narrative.active) {
       const fov = baseFov + clamp(Math.abs(vehicle.speedKmh) / 90, 0, 1) * 3 + (chasing ? near * 3 : 0);
       if (Math.abs(camera.fov - fov) > 0.05) { camera.fov = damp(camera.fov, fov, 3, dt); camera.updateProjectionMatrix(); }
     }
     ui.update(dt);
 
     cabin.group.updateMatrixWorld();
-    if (!cut.active) cabin.renderMirrors(renderer, scene, frame);
+    if (!cut.active && !narrative.active) cabin.renderMirrors(renderer, scene, frame);
     renderer.render(scene, camera);
   };
   tick();

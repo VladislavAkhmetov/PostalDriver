@@ -1,0 +1,31 @@
+import * as THREE from 'three';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { loadPaz, buildPaz, PAZ_HEAD } from '../world/Paz';
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene(); scene.background = new THREE.Color('#89958c');
+const camera = new THREE.PerspectiveCamera(38, innerWidth / innerHeight, 0.1, 100);
+const controls = new OrbitControls(camera, renderer.domElement); controls.target.set(0, 1.35, 0);
+const hemi = new THREE.HemisphereLight('#fff6df', '#586251', 2.6); scene.add(hemi);
+const sun = new THREE.DirectionalLight('#fff2d9', 2.2); sun.position.set(7, 9, 5); scene.add(sun);
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), new THREE.MeshLambertMaterial({ color: '#727e6e' }));
+ground.rotation.x = -Math.PI / 2; ground.position.y = -0.015; scene.add(ground);
+await loadPaz();
+const vehicle = buildPaz(), model = vehicle.group;
+scene.add(model);
+const views: Record<string, number[]> = { three: [10, 5.5, 11], front: [0, 2.2, 12], side: [13, 2.5, 0], rear: [-9, 4, -11], frontWheel: [3.1, 0.9, 3.0], rearWheel: [3, 0.9, -0.8] };
+const targets: Record<string, number[]> = { frontWheel: [1.12, .46, 2.23], rearWheel: [1.01, .46, -1.63] };
+function view(name: string): void { camera.position.fromArray(views[name]); controls.target.fromArray(targets[name] ?? [0, 1.4, 0]); controls.update(); }
+document.querySelectorAll<HTMLButtonElement>('[data-view]').forEach(button => button.onclick = () => view(button.dataset.view!));
+let night = false, rolling = false;
+document.getElementById('night')!.onclick = () => { night = !night; hemi.intensity = night ? 0.4 : 2.6; sun.intensity = night ? 0.1 : 2.2; PAZ_HEAD.emissiveIntensity = night ? 1.6 : 0; vehicle.tail.emissiveIntensity = night ? 0.9 : 0; scene.background = new THREE.Color(night ? '#222e3a' : '#89958c'); };
+document.getElementById('wheels')!.onclick = () => { rolling = !rolling; };
+document.getElementById('status')!.textContent = 'Готово';
+view('three');
+let before = performance.now();
+renderer.setAnimationLoop(now => { const dt = Math.min((now - before) / 1000, 0.05); before = now; if (rolling) for (const w of vehicle.axles) w.pivot.rotation.x += dt * 2; controls.update(); renderer.render(scene, camera); });
+addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });

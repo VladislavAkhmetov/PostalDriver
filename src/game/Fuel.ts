@@ -29,13 +29,12 @@ interface Hooks {
 
 /**
  * Filling up without a key or a menu: roll up beside the pump and stand still, and the tank fills —
- * on the post's coupons first, then out of Timur's own pocket; roll out and the stop is over.
+ * recorded on the post office's fuel sheet; roll out and the stop is over.
  */
 export class FuelStop {
   private liters = 0;
   private talon = 0;
   private paid = 0;
-  private owed = 0;
   private blocked = false;
   private was = false;
   private pumping = false;
@@ -56,7 +55,7 @@ export class FuelStop {
       return;
     }
     this.was = true;
-    if (this.blocked) { this.hooks.view(this.viewOf(v, this.why === 'broke' ? 'Денег не хватило' : 'Бак полный', false)); return; }
+    if (this.blocked) { this.hooks.view(this.viewOf(v, 'Бак полный', false)); return; }
     let pumping = false;
     let note = 'Остановись у колонки';
     if (stopped) {
@@ -64,30 +63,19 @@ export class FuelStop {
       if (room < 0.05) {
         this.why = 'full'; this.blocked = true;
         this.finish('full');
-      } else if (profile.talons < 0.01 && profile.money + (1 - this.owed) < PRICE * 0.1) {
-        this.why = 'broke'; this.blocked = true;
-        this.finish('broke');
       } else {
-        let dl = Math.min(PUMP_LPS * dt, room);
-        // coupons first
+        const dl = Math.min(PUMP_LPS * dt, room);
+        // Coupons are recorded first; any remainder is billed to the post office.
         const t = Math.min(dl, profile.talons);
         profile.talons -= t; this.talon += t;
-        let rest = dl - t;
-        if (rest > 0) {
-          rest = Math.min(rest, (profile.money + 1 - this.owed) / PRICE);
-          this.owed += rest * PRICE;
-          const whole = Math.min(profile.money, Math.floor(this.owed));
-          profile.money -= whole; this.paid += whole; this.owed -= whole;
-        }
-        dl = t + Math.max(0, rest);
         v.fuel = Math.min(1, v.fuel + dl / TANK_L);
         this.liters += dl;
         pumping = true;
-        note = t > 0 ? 'Заправка по талонам · А-76' : 'Талоны кончились — за свои';
+        note = 'Заправка по ведомости почты · А-76';
       }
     }
     if (pumping !== this.pumping) { this.pumping = pumping; this.hooks.pump(pumping); }
-    this.hooks.view(this.viewOf(v, this.blocked ? (this.why === 'broke' ? 'Денег не хватило' : 'Бак полный') : note, pumping));
+    this.hooks.view(this.viewOf(v, this.blocked ? ('Бак полный') : note, pumping));
   }
 
   private viewOf(v: Vehicle, note: string, pumping: boolean): FuelView {

@@ -1,18 +1,20 @@
 import * as THREE from 'three';
-import { drawPlate, plateFor } from './Plates';
+import { addPlate, plateFor } from './Plates';
 import { Bucket, boxGeo, mat } from '../core/geom';
 import { makeCanvas, toTex } from '../core/textures';
 import { buildCar, CAR_HEAD, CarKind, isCarKind } from './Cars';
 import { headlights, setHeadlightGlow } from './Headlights';
 import { buildUaz } from './Uaz';
 import { buildSoviet, isSovietKind, SovietKind } from './Soviet';
+import { buildKosmich } from './Kosmich';
+import { buildPaz, PAZ_HEAD } from './Paz';
 
 /**
- * Procedural Soviet traffic: ZIL-130, GAZ-53 (and its milk tanker), KamAZ-5320,
- * Moskvich-412, VAZ-2106 in GAI livery, PAZ-672, UAZ-452 and MTZ-80.
+ * Procedural Soviet traffic: "Zilok" (130), "Gazon" (53, milk tanker), KamAZ,
+ * patrol "Shestyorka" in GAI livery, "Pazik" and tractor, plus the modelled traffic.
  * Local forward is +Z; wheels sit on y = 0.
  */
-export type VehicleKind = 'zil' | 'gaz53' | 'milk' | 'kamaz' | 'moskvich' | 'gai' | 'paz' | 'tractor' | 'uaz' | CarKind | SovietKind;
+export type VehicleKind = 'zil' | 'gaz53' | 'milk' | 'kamaz' | 'kosmich404' | 'gai' | 'paz' | 'tractor' | 'uaz' | CarKind | SovietKind;
 
 export interface VehicleModel {
   group: THREE.Group;
@@ -34,7 +36,7 @@ export interface VehicleModel {
 }
 
 let shared: Record<string, THREE.Material> | null = null;
-const headMats: THREE.MeshLambertMaterial[] = [CAR_HEAD];
+const headMats: THREE.MeshLambertMaterial[] = [CAR_HEAD, PAZ_HEAD];
 const tails = new Set<THREE.MeshLambertMaterial>();
 
 function textTex(w: number, h: number, draw: (g: CanvasRenderingContext2D) => void, repeat = false): THREE.Texture {
@@ -77,9 +79,6 @@ function materials(): Record<string, THREE.Material> {
       g.fillStyle = '#ecece6'; g.fillRect(0, 0, 32, 8);
       g.fillStyle = '#1d4ea6'; g.font = font(8); g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('ГАИ', 16, 4.5);
     }) }),
-    // the old lorries, the bus and the tractor: mostly still on Soviet plates, some re-registered
-    ...Object.fromEntries(Array.from({ length: 6 }, (_, i) => [`plate${i}`, V({ map: textTex(128, 28, (g) => drawPlate(g, plateFor(i * 37 + 11, i < 4 ? 'soviet' : 'new'), 128, 28)) })])),
-    platePolice: V({ map: textTex(128, 28, (g) => drawPlate(g, plateFor(5, 'militia'), 128, 28)) }),
     tarp: V({ map: textTex(64, 32, (g) => {
       g.fillStyle = '#6a6e52'; g.fillRect(0, 0, 64, 32);
       g.fillStyle = 'rgba(0,0,0,0.2)'; for (let x = 0; x < 64; x += 8) g.fillRect(x, 0, 1, 32);
@@ -159,6 +158,11 @@ function axleGroup(r: number, w: number, track: number, hub: string, dual = fals
 type Add = (key: string, g: THREE.BufferGeometry, x: number, y: number, z: number, c: string, rx?: number, ry?: number, rz?: number) => void;
 
 export function buildVehicle(kind: VehicleKind, color: string, seed = 0): VehicleModel {
+  if (kind === 'paz') {
+    const m = buildPaz(seed);
+    tails.add(m.tail);
+    return m;
+  }
   if (isCarKind(kind)) {
     // modelled passenger cars (Cars.ts); their tail lamps join the night/brake glow
     const m = buildCar(kind, color, seed);
@@ -167,13 +171,18 @@ export function buildVehicle(kind: VehicleKind, color: string, seed = 0): Vehicl
   }
   if (isSovietKind(kind)) {
     // pixel-art VAZ, Bobik, LiAZ and ambulance (Soviet.ts); `color` names the paint variant
-    const m = buildSoviet(kind, color);
+    const m = buildSoviet(kind, color, seed);
     tails.add(m.tail);
     return m;
   }
   if (kind === 'uaz') {
-    // the modelled UAZ-452 (Uaz.ts): the gas service's orange or plain grey
-    const m = buildUaz(seed % 2 ? 'gas' : 'grey');
+    // the modelled Urman-452 (Uaz.ts): the gas service's orange or plain grey
+    const m = buildUaz(seed % 2 ? 'gas' : 'grey', seed);
+    tails.add(m.tail);
+    return m;
+  }
+  if (kind === 'kosmich404') {
+    const m = buildKosmich();
     tails.add(m.tail);
     return m;
   }
@@ -202,8 +211,9 @@ export function buildVehicle(kind: VehicleKind, color: string, seed = 0): Vehicl
     box(0.04, 0.04, 0.3, x + side * 0.12, y, z, DARK);
     box(0.04, 0.24, 0.16, x + side * 0.25, y + 0.05, z - 0.05, DARK);
   };
-  const plateKey = kind === 'gai' ? 'platePolice' : `plate${Math.abs(seed + kind.length) % 6}`;
-  const plate = (y: number, z: number, back = false) => add(plateKey, new THREE.PlaneGeometry(0.52, 0.12), 0, y, z, '#ffffff', 0, back ? Math.PI : 0);
+  const registration = plateFor(seed * 31 + kind.charCodeAt(0), kind === 'gai' ? 'patrol' : kind === 'tractor' ? 'tractor' : 'heavy');
+  const plates: { position: THREE.Vector3; rear: boolean }[] = [];
+  const plate = (y: number, z: number, rear = false) => plates.push({ position: new THREE.Vector3(0, y, z), rear });
   const roundLamp = (x: number, y: number, z: number, r = 0.11) => {
     add('chrome', new THREE.CylinderGeometry(r + 0.025, r + 0.025, 0.06, 10), x, y, z - 0.01, CHROME, Math.PI / 2);
     add('head', new THREE.CylinderGeometry(r, r, 0.07, 10), x, y, z, '#f4f0dc', Math.PI / 2);
@@ -276,6 +286,7 @@ export function buildVehicle(kind: VehicleKind, color: string, seed = 0): Vehicl
       else if (seed % 3 === 1) for (let i = 0; i < 8; i++) add('body', new THREE.SphereGeometry(0.32, 7, 5), -0.6 + (i % 3) * 0.6, 1.95 + (i > 5 ? 0.35 : 0), bz - 1.2 + Math.floor(i / 3) * 1.1, '#a8987a');
     }
     for (const s of [-1, 1]) { tail(s * (W / 2 - 0.2), 1.0, -fz - 0.02); box(0.5, 0.45, 0.02, s * (W / 2 - 0.35), 0.55, -fz + 1.0, DARK); }
+    box(0.34, 0.19, 0.20, 0, 0.85, -fz + 0.075, DARK);
     plate(0.85, -fz - 0.03, true);
     box(W - 0.1, 0.25, 0.03, 0, 0.95, -fz + 0.6, GRIME);
     axleDefs.push({ z: fz - 0.85, r: R, w: 0.3, track: W - 0.55, hub: zil ? '#4a5a6a' : '#5a6a4a' });
@@ -308,6 +319,7 @@ export function buildVehicle(kind: VehicleKind, color: string, seed = 0): Vehicl
     add('tarp', boxGeo(2.5, 2.2, 5.1), 0, 2.45, -fz + 2.6, '#ffffff');
     box(2.54, 0.14, 5.12, 0, 1.3, -fz + 2.6, '#4a4a3c');
     for (let z = -fz + 0.4; z < -fz + 5; z += 1.2) for (const s of [-1, 1]) box(0.03, 2.1, 0.03, s * 1.26, 2.45, z, '#3a3a30');
+    box(0.34, 0.19, 0.20, 0, 0.9, -fz + 0.075, DARK);
     plate(0.9, -fz - 0.03, true);
     axleDefs.push({ z: fz - 1.0, r: 0.55, w: 0.36, track: 2.0, hub: '#3a3a36' });
     axleDefs.push({ z: -fz + 1.95, r: 0.55, w: 0.3, track: 1.85, hub: '#3a3a36', dual: true });
@@ -398,63 +410,6 @@ export function buildVehicle(kind: VehicleKind, color: string, seed = 0): Vehicl
     axleDefs.push({ z: -fz + 0.85, r: 0.31, w: 0.19, track: 1.32, hub: '#c8c8c0' });
     rearZ = -fz + 0.85;
     spinAt = new THREE.Vector3(0, 1.48, -0.25);
-  } else if (kind === 'moskvich') {
-    // Moskvich-412: square three-box saloon with chrome bumpers
-    length = 4.25; width = 1.62;
-    const fz = length / 2;
-    const paint = color;
-    box(1.62, 0.5, length - 0.1, 0, 0.62, 0, paint);
-    box(1.6, 0.1, length - 0.3, 0, 0.92, 0, paint);
-    box(1.42, 0.46, 1.9, 0, 1.2, -0.18, paint);
-    box(1.36, 0.06, 1.75, 0, 1.45, -0.2, paint);
-    add('glass', boxGeo(1.3, 0.44, 0.04), 0, 1.18, 0.86, GLASS, -0.55);
-    add('glass', boxGeo(1.3, 0.4, 0.04), 0, 1.18, -1.2, GLASS, 0.6);
-    for (const s of [-1, 1]) {
-      add('glass', boxGeo(0.03, 0.34, 1.62), s * 0.715, 1.2, -0.18, GLASS);
-      box(0.04, 0.38, 0.06, s * 0.715, 1.2, -0.2, paint);
-      box(0.02, 0.44, 0.02, s * 0.815, 0.65, 0.05, '#1a1a18');
-      box(0.02, 0.44, 0.02, s * 0.815, 0.65, -0.95, '#1a1a18');
-      box(0.03, 0.03, 0.14, s * 0.82, 0.8, -0.15, CHROME, 'chrome');
-      box(0.03, 0.04, length - 0.4, s * 0.815, 0.95, 0, CHROME, 'chrome');
-      mirror(s * 0.72, 1.0, 0.75, s);
-      box(0.02, 0.18, length - 0.3, s * 0.815, 0.44, 0, GRIME);
-      tail(s * 0.6, 0.72, -fz - 0.02, 0.32, 0.13);
-      add('head', boxGeo(0.3, 0.15, 0.04), s * 0.56, 0.72, fz + 0.02, '#f4f0dc');
-    }
-    box(1.66, 0.13, 0.12, 0, 0.45, fz + 0.03, CHROME, 'chrome');
-    box(1.66, 0.13, 0.12, 0, 0.45, -fz - 0.03, CHROME, 'chrome');
-    box(1.1, 0.2, 0.04, 0, 0.72, fz + 0.01, DARK);
-    plate(0.45, fz + 0.1);
-    plate(0.66, -fz - 0.03, true);
-    for (const z of [fz - 0.8, -fz + 0.85]) for (const s of [-1, 1]) arch(s * 0.66, z, 0.31, 0.24, DARK);
-    axleDefs.push({ z: fz - 0.8, r: 0.31, w: 0.19, track: 1.32, hub: '#9a9a94' });
-    axleDefs.push({ z: -fz + 0.85, r: 0.31, w: 0.19, track: 1.32, hub: '#9a9a94' });
-    rearZ = -fz + 0.85;
-  } else if (kind === 'paz') {
-    // PAZ-672 country bus: rounded nose, split screen, cream and red
-    length = 7.2; width = 2.42;
-    const fz = length / 2;
-    box(2.42, 1.1, length, 0, 1.05, 0, color);
-    box(2.42, 0.95, length - 0.5, 0, 2.08, -0.2, '#e8e0c8');
-    add('body', new THREE.CylinderGeometry(1.21, 1.21, length - 0.7, 14, 1, false, Math.PI / 2, Math.PI).scale(1, 1, 0.28), 0, 2.55, -0.25, '#e8e0c8', Math.PI / 2, 0, 0);
-    box(2.44, 0.12, length + 0.02, 0, 1.57, 0, '#b02a20');
-    for (const s of [-1, 1]) {
-      add('glass', boxGeo(0.04, 0.62, length - 1.4), s * 1.215, 2.12, -0.4, GLASS);
-      for (let z = -fz + 0.9; z < fz - 1.2; z += 1.05) box(0.05, 0.66, 0.06, s * 1.22, 2.12, z, '#e8e0c8');
-      add('glass', boxGeo(1.0, 0.78, 0.04), s * 0.56, 2.15, fz - 0.28, GLASS, -0.3);
-      roundLamp(s * 0.85, 0.98, fz + 0.01, 0.12);
-      tail(s * 1.0, 0.95, -fz - 0.01);
-    }
-    add('glass', boxGeo(0.04, 1.75, 0.95), 1.215, 1.5, fz - 1.4, '#4a5660');
-    box(2.42, 0.22, 0.16, 0, 0.55, fz + 0.03, '#3a3a38');
-    box(1.0, 0.3, 0.05, 0, 1.2, fz + 0.01, '#d8d0b8');
-    box(1.2, 0.16, 0.05, 0, 2.62, fz - 0.4, '#1a1a18');
-    plate(0.55, fz + 0.12);
-    plate(0.9, -fz - 0.02, true);
-    axleDefs.push({ z: fz - 1.3, r: 0.47, w: 0.3, track: 1.9, hub: '#5a5a56' });
-    axleDefs.push({ z: -fz + 1.65, r: 0.47, w: 0.26, track: 1.8, hub: '#5a5a56', dual: true });
-    for (const z of [fz - 1.3, -fz + 1.65]) for (const s of [-1, 1]) arch(s * 0.98, z, 0.47, 0.5, DARK);
-    rearZ = -fz + 1.65;
   } else {
     // MTZ-80 "Belarus" with a 2PTS-4 trailer
     length = 9.2; width = 2.2;
@@ -479,7 +434,7 @@ export function buildVehicle(kind: VehicleKind, color: string, seed = 0): Vehicl
     box(2.1, 0.08, 3.9, 0, 1.85, tz, '#8a7a5a');
     if (seed % 2) for (let i = 0; i < 6; i++) add('body', new THREE.SphereGeometry(0.45, 7, 5), -0.5 + (i % 2), 2.0, tz - 1.4 + Math.floor(i / 2) * 1.2, '#c8b070');
     for (const s of [-1, 1]) tail(s * 0.95, 1.1, -fz - 0.02);
-    plate(1.1, -fz - 0.03, true);
+    plate(1.45, tz - 2.02, true);
     axleDefs.push({ z: fz - 0.6, r: 0.42, w: 0.26, track: 1.24, hub: '#c84a2a' });
     axleDefs.push({ z: fz - 2.6, r: 0.78, w: 0.42, track: 1.7, hub: '#c84a2a' });
     axleDefs.push({ z: tz + 1.1, r: 0.48, w: 0.3, track: 1.7, hub: '#5a5a56' });
@@ -491,6 +446,7 @@ export function buildVehicle(kind: VehicleKind, color: string, seed = 0): Vehicl
   tails.add(tailMat);
   const beacons = beaconDefs.map(() => new THREE.MeshLambertMaterial({ color: '#2a4aa8', emissive: '#4a7aff', emissiveIntensity: 0.05 }));
   const group = b.build({ ...M, tail: tailMat }, `veh:${kind}`);
+  for (const { position, rear } of plates) addPlate(group, registration, position, rear);
   beaconDefs.forEach((d, i) => {
     const m = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.1, 0.16, 8), beacons[i]);
     m.position.set(d.x, d.y, d.z);
